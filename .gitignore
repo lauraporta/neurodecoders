@@ -84,3 +84,6 @@ venv/
 
 # data
 data/*
+
+# output
+output/*
