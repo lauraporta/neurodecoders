@@ -8,7 +8,7 @@ import os
 from image_datasets import ImageDataset
 from sta import STA
 from simulate_response import SimulateResponse
-from create_simulated_neural_responses import plot_sta_and_spikes
+from create_simulated_neural_responses import plot_sta_and_spikes, plot_response_heatmaps, plot_response_heatmaps_all, plot_response_histograms, plot_neural_correlations
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -147,7 +147,7 @@ def main():
             
             # Generate responses
             simulator = SimulateResponse(device, images, stas, n_neurons)
-            firing_rates, dot_products = simulator.simulate_neural_responses()
+            firing_rates, dot_products, adaptation_states = simulator.simulate_neural_responses()
             
             # Save the data
             os.makedirs("output", exist_ok=True)
@@ -156,15 +156,38 @@ def main():
                        f"output/simulated_neural_data_{n_neurons}neurons_{n_images}images_{timestamp}.npz")
             
             # Create and display the plots
-            fig1, fig2 = plot_sta_and_spikes(images, firing_rates, dot_products, 
-                                           simulator.selected_stas, simulator.rf_coords,
-                                           n_plot_images=n_plot_images,
-                                           n_top_neurons=n_plot_neurons)
-            
-            # Display the plots in Streamlit
+            fig1, fig2 = plot_sta_and_spikes(
+                images=images,
+                responses=firing_rates,
+                dot_products=dot_products,
+                adaptation_states=adaptation_states,
+                stas=simulator.selected_stas,
+                coords=simulator.rf_coords,
+                n_plot_images=n_plot_images,
+                n_top_neurons=n_plot_neurons
+            )
             st.pyplot(fig1)
             st.pyplot(fig2)
-            
+
+            # # Create and display the heatmap plot (top neurons/images)
+            # fig3 = plot_response_heatmaps(
+            #     firing_rates, dot_products, adaptation_states,
+            #     n_plot_images=n_plot_images, n_plot_neurons=n_plot_neurons
+            # )
+            # st.pyplot(fig3)
+
+            # Create and display the all-neuron/image heatmap
+            fig4 = plot_response_heatmaps_all(firing_rates, dot_products, adaptation_states)
+            st.pyplot(fig4)
+
+            # Create and display the histogram plot
+            fig5 = plot_response_histograms(firing_rates, dot_products, adaptation_states)
+            st.pyplot(fig5)
+
+            # Create and display the neural correlation plot
+            fig6 = plot_neural_correlations(firing_rates)
+            st.pyplot(fig6)
+
             st.success("Data generated and visualized successfully!")
     
     # Add some information about the visualization
