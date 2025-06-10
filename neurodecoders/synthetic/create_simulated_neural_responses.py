@@ -23,19 +23,29 @@ def save_output(images, responses, stas, coords, filename):
              stas=stas,
              rf_coords=coords)
 
-def plot_sta_and_spikes(images, responses, dot_products, stas, coords):
+def plot_sta_and_spikes(images, responses, dot_products, stas, coords, n_plot_images=5, n_top_neurons=5):
     n_images, n_neurons = responses.shape
-    n_plot_images = 5  # Number of images per panel
-    n_top_neurons = 5  # Number of top neurons to show
     
-    # Sort neurons by firing rate for the first image
-    sort_idx = np.argsort(responses[0])[::-1]  # Descending order
+    # First sort images by their maximum firing rate
+    image_max_responses = np.max(responses, axis=1)
+    image_sort_idx = np.argsort(image_max_responses)[::-1]  # Descending order
+    # Convert tensor to numpy for sorting
+    images_np = images.cpu().numpy()
+    sorted_images = torch.from_numpy(images_np[image_sort_idx]).to(images.device)
+    sorted_responses = responses[image_sort_idx]
+    sorted_dot_products = dot_products[image_sort_idx]
+    
+    # Then sort neurons by their response to the highest responding image
+    neuron_sort_idx = np.argsort(sorted_responses[0])[::-1]  # Descending order
     # Take only top n_top_neurons
-    sort_idx = sort_idx[:n_top_neurons]
-    sorted_responses = responses[:, sort_idx]
-    sorted_dot_products = dot_products[:, sort_idx]
-    sorted_stas = stas[sort_idx]
-    sorted_coords = coords[sort_idx]
+    neuron_sort_idx = neuron_sort_idx[:n_top_neurons]
+    sorted_responses = sorted_responses[:, neuron_sort_idx]
+    sorted_dot_products = sorted_dot_products[:, neuron_sort_idx]
+    sorted_stas = stas[neuron_sort_idx]
+    sorted_coords = coords[neuron_sort_idx]
+    
+    # Find global max for y-axis scaling
+    y_max = max(np.max(sorted_responses), np.max(sorted_dot_products))
     
     # Create first figure for images and responses
     fig1 = plt.figure(figsize=(20, 10))  # Wider figure for side-by-side layout
@@ -48,8 +58,9 @@ def plot_sta_and_spikes(images, responses, dot_products, stas, coords):
     for i in range(n_plot_images):
         # Plot image with receptive fields
         ax_img = fig1.add_subplot(gs[i, 0])
-        img_raw = images[i][0].cpu().numpy()
-        img_raw = (img_raw * 0.5) + 0.5
+        img_raw = sorted_images[i][0].cpu().numpy()
+        # Convert from [-1, 1] to [0, 1] for display
+        img_raw = (img_raw + 1) / 2
         img_raw = np.clip(img_raw, 0, 1)
         ax_img.imshow(img_raw, cmap='gray')
         
@@ -64,7 +75,7 @@ def plot_sta_and_spikes(images, responses, dot_products, stas, coords):
                            alpha=0.8)
             ax_img.add_patch(rect)
         ax_img.axis('off')
-        ax_img.set_title(f"Image {i}")
+        ax_img.set_title(f"Image {image_sort_idx[i]} (Max Response: {image_max_responses[image_sort_idx[i]]:.2f})")
         
         # Plot firing rates for all neurons
         ax_resp = fig1.add_subplot(gs[i, 1])
@@ -77,10 +88,11 @@ def plot_sta_and_spikes(images, responses, dot_products, stas, coords):
                        c=colors[:n_top_neurons], s=100, marker='x',
                        label='Dot Product')
         
-        ax_resp.set_title(f"Neural Responses to Image {i}")
-        ax_resp.set_xlabel("Neuron (sorted by firing rate)")
+        ax_resp.set_title(f"Neural Responses to Image {image_sort_idx[i]}")
+        ax_resp.set_xlabel("Neuron (sorted by response to highest image)")
         ax_resp.set_ylabel("Response")
         ax_resp.set_xticks(range(n_top_neurons))
+        ax_resp.set_ylim(0, y_max)  # Set consistent y-axis limit
         # Only show legend for the first plot to avoid overcrowding
         if i == 0:
             ax_resp.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
@@ -92,8 +104,9 @@ def plot_sta_and_spikes(images, responses, dot_products, stas, coords):
     for i in range(n_plot_images):
         # Plot image with receptive fields
         ax_img = fig1.add_subplot(gs[i, 2])
-        img_raw = images[i + n_plot_images][0].cpu().numpy()
-        img_raw = (img_raw * 0.5) + 0.5
+        img_raw = sorted_images[i + n_plot_images][0].cpu().numpy()
+        # Convert from [-1, 1] to [0, 1] for display
+        img_raw = (img_raw + 1) / 2
         img_raw = np.clip(img_raw, 0, 1)
         ax_img.imshow(img_raw, cmap='gray')
         
@@ -108,7 +121,7 @@ def plot_sta_and_spikes(images, responses, dot_products, stas, coords):
                            alpha=0.8)
             ax_img.add_patch(rect)
         ax_img.axis('off')
-        ax_img.set_title(f"Image {i + n_plot_images}")
+        ax_img.set_title(f"Image {image_sort_idx[i + n_plot_images]} (Max Response: {image_max_responses[image_sort_idx[i + n_plot_images]]:.2f})")
         
         # Plot firing rates for all neurons
         ax_resp = fig1.add_subplot(gs[i, 3])
@@ -121,14 +134,13 @@ def plot_sta_and_spikes(images, responses, dot_products, stas, coords):
                        c=colors[:n_top_neurons], s=100, marker='x',
                        label='Dot Product')
         
-        ax_resp.set_title(f"Neural Responses to Image {i + n_plot_images}")
-        ax_resp.set_xlabel("Neuron (sorted by firing rate)")
+        ax_resp.set_title(f"Neural Responses to Image {image_sort_idx[i + n_plot_images]}")
+        ax_resp.set_xlabel("Neuron (sorted by response to highest image)")
         ax_resp.set_ylabel("Response")
         ax_resp.set_xticks(range(n_top_neurons))
+        ax_resp.set_ylim(0, y_max)  # Set consistent y-axis limit
     
     plt.tight_layout()
-    plt.savefig('responses.png', bbox_inches='tight', dpi=300)
-    plt.close(fig1)
     
     # Create second figure for STAs
     fig2 = plt.figure(figsize=(15, 3))
@@ -143,17 +155,18 @@ def plot_sta_and_spikes(images, responses, dot_products, stas, coords):
             img_sta = sta[0]  # Take first channel if 3D
         else:
             img_sta = sta
-        img_sta = (img_sta - img_sta.min()) / (img_sta.max() - img_sta.min())
+        # Convert from [-1, 1] to [0, 1] for display
+        img_sta = (img_sta + 1) / 2
         ax_sta.imshow(img_sta, cmap='gray')
         for spine in ax_sta.spines.values():
             spine.set_edgecolor(colors[i])
             spine.set_linewidth(3)
-        ax_sta.set_title(f"N{i}", color=colors[i], fontsize=8)
+        ax_sta.set_title(f"N{neuron_sort_idx[i]}", color=colors[i], fontsize=8)
         ax_sta.axis('off')
     
     plt.tight_layout()
-    plt.savefig('stas.png', bbox_inches='tight', dpi=300)
-    plt.close(fig2)
+    
+    return fig1, fig2
 
 
 def main():
@@ -169,7 +182,7 @@ def main():
     firing_rates, dot_products = simulator.simulate_neural_responses()
 
     print("Plotting example results...")
-    plot_sta_and_spikes(images, firing_rates, dot_products, simulator.selected_stas, simulator.rf_coords)
+    fig1, fig2 = plot_sta_and_spikes(images, firing_rates, dot_products, simulator.selected_stas, simulator.rf_coords)
 
     print("Saving dataset...")
     os.makedirs("output", exist_ok=True)
