@@ -170,8 +170,8 @@ def plot_sta_and_spikes(images, responses, dot_products, stas, coords, n_plot_im
 
 
 def main():
-    n_images = 30
-    n_neurons = 30
+    n_images = 1000
+    n_neurons = 1000
 
     print("Loading data and model...")
     images = ImageDataset().get_data("mnist", n_images)
