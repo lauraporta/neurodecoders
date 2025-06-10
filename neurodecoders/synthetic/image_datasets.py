@@ -19,13 +19,12 @@ class ImageDataset:
             transforms.Resize((224, 224)),
             transforms.Grayscale(num_output_channels=1),
             transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5], std=[0.5])
+            transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize to [-1, 1] with mean=0.5
         ])
         dataset = dataset_class(root='./data', train=True, download=True, transform=transform)
         loader = torch.utils.data.DataLoader(dataset, batch_size=n_images, shuffle=True)
         images, _ = next(iter(loader))
-        # normalize images to 0-1
-        images = (images - images.min()) / (images.max() - images.min())
+        # No need for additional normalization since ToTensor and Normalize already give us [-1, 1]
         return images[:n_images]
     
 

@@ -37,7 +37,7 @@ class SimulateResponse:
                 dot = F.relu(torch.sum(patch_flat * sta_flat) / len(patch_flat))
                 noise = noise_level * dot * torch.randn(1, device=self.device)
                 baseline = 0.01 * torch.randn(1, device=self.device)
-                firing_rate = torch.clamp(dot + noise + baseline, min=0).item() * 200
+                firing_rate = torch.clamp(dot + noise + baseline, min=0).item()
                 firing_rates[i, n] = firing_rate
                 dot_products[i, n] = dot.item()
                     

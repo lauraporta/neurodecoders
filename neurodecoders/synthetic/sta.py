@@ -15,6 +15,16 @@ class STA:
                 layer = int(type.split(",")[1])
                 sta = self.from_model(model, layer)
                 return sta[:length]
+            elif "ResNet" in type:
+                model = torchvision.models.resnet18(pretrained=True)
+                layer = int(type.split(",")[1])
+                sta = self.from_model(model, layer)
+                return sta[:length]
+            elif "VGG" in type:
+                model = torchvision.models.vgg16(pretrained=True)
+                layer = int(type.split(",")[1])
+                sta = self.from_model(model, layer)
+                return sta[:length]
             else:
                 raise ValueError(f"Model {type} not found")
         elif "binary_patterns" in type:
@@ -30,7 +40,7 @@ class STA:
         else:
             raise ValueError(f"Type {type} not found")
     
-    def from_model(model, layer):
+    def from_model(self, model, layer):
         with torch.no_grad():
             weights = model.features[layer].weight.data.cpu().numpy()
             weights = weights[:, :1, :, :]
@@ -64,8 +74,8 @@ class STA:
                                               persistence=persistence, 
                                               lacunarity=lacunarity)
             
-            # Normalize the pattern
-            patterns[i] = (patterns[i] - patterns[i].min()) / (patterns[i].max() - patterns[i].min())
+            # Normalize the pattern to [-1, 1]
+            patterns[i] = 2 * (patterns[i] - patterns[i].min()) / (patterns[i].max() - patterns[i].min()) - 1
             
         return patterns
     
@@ -87,7 +97,7 @@ class STA:
             # Generate periodic pattern
             pattern = np.sin(freq_x * X + phase_x) * np.sin(freq_y * Y + phase_y)
             
-            # Normalize the pattern
-            patterns[i] = (pattern - pattern.min()) / (pattern.max() - pattern.min())
+            # Normalize the pattern to [-1, 1]
+            patterns[i] = 2 * (pattern - pattern.min()) / (pattern.max() - pattern.min()) - 1
             
         return patterns
