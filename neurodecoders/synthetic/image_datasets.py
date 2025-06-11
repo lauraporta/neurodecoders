@@ -5,7 +5,7 @@ import torch
 
 
 class ImageDataset:
-
+    # check that it is not RGB
     def get_data(self, type: str, n_images: int):
         if type == "cifar10":
             return self.load_dataset(torchvision.datasets.CIFAR10, n_images)

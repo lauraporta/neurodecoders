@@ -55,12 +55,12 @@ class SimulateResponse:
                 patch_flat = patch.reshape(-1)
                 
                 # Compute dot product
-                dot = torch.sum(torch.abs(patch_flat * sta_flat)) / len(patch_flat)
+                dot = torch.sum(patch_flat * sta_flat) / len(patch_flat)
                 dot_products[i, n] = dot.item()
                 
                 # Apply threshold and non-linearity
                 # Use a steeper non-linearity for more sparsity
-                response = F.relu(dot - thresholds[n])
+                response = F.elu(dot - thresholds[n]) + 1
                 response = max_rates[n] * response
                 
                 # Apply adaptation from previous response (decrease response)
@@ -71,7 +71,7 @@ class SimulateResponse:
                 
                 # Add noise
                 poisson_noise = torch.sqrt(response) * torch.randn(1, device=self.device) * noise_level
-                
+                # try dropout noise
                 
                 # Final firing rate
                 firing_rate = torch.clamp(response + poisson_noise, min=0, max=max_rates[n]).item()
