@@ -1,11 +1,7 @@
 import torch
-import torchvision
-import torchvision.transforms as transforms
-import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from tqdm import tqdm
 import os
 from image_datasets import ImageDataset
 from sta import STA
@@ -24,9 +20,7 @@ def save_output(images, responses, stas, coords, adaptation_states, filename):
              rf_coords=coords,
              adaptation_states=adaptation_states)
 
-def plot_sta_and_spikes(images, responses, dot_products, adaptation_states, stas, coords, n_plot_images=5, n_top_neurons=5):
-    n_images, n_neurons = responses.shape
-    
+def plot_sta_and_spikes(images, responses, dot_products, adaptation_states, stas, coords, n_plot_images=5, n_top_neurons=5):    
     # First sort images by their maximum firing rate
     image_max_responses = np.max(responses, axis=1)
     image_sort_idx = np.argsort(image_max_responses)[::-1]  # Descending order
@@ -51,7 +45,7 @@ def plot_sta_and_spikes(images, responses, dot_products, adaptation_states, stas
     y_max = np.max(sorted_responses)  # Only use firing rates for y_max now
     
     # Create first figure for images and responses
-    fig1 = plt.figure(figsize=(20, 15))  # Taller figure for adaptation plots
+    fig1 = plt.figure(figsize=(30, 20))  # Increased from (20, 15)
     gs = fig1.add_gridspec(n_plot_images, 9)  # 9 columns: 4 for first set, 4 for second set, 1 for spacing
     
     # Colors for different neurons
@@ -179,7 +173,7 @@ def plot_sta_and_spikes(images, responses, dot_products, adaptation_states, stas
     plt.tight_layout()
     
     # Create second figure for STAs
-    fig2 = plt.figure(figsize=(15, 3))
+    fig2 = plt.figure(figsize=(20, 4))  # Increased from (15, 3)
     gs_sta = fig2.add_gridspec(1, n_top_neurons)
     
     # Plot all STAs in a grid
@@ -221,23 +215,23 @@ def plot_response_heatmaps(responses, dot_products, adaptation_states, n_plot_im
     sorted_dot_products = sorted_dot_products[:n_plot_images, :][:, neuron_sort_idx]
     sorted_adaptation = sorted_adaptation[:n_plot_images, :][:, neuron_sort_idx]
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    im1 = axes[0].imshow(sorted_responses, aspect='auto', cmap='viridis')
+    fig, axes = plt.subplots(1, 3, figsize=(20, 8))  # Increased from (15, 5)
+    im1 = axes[0].imshow(sorted_responses.T, aspect='auto', cmap='viridis')
     axes[0].set_title('Firing Rates (Hz)')
-    axes[0].set_xlabel('Neuron')
-    axes[0].set_ylabel('Image')
+    axes[0].set_xlabel('Image')
+    axes[0].set_ylabel('Neuron')
     plt.colorbar(im1, ax=axes[0])
 
-    im2 = axes[1].imshow(sorted_dot_products, aspect='auto', cmap='viridis', vmin=0, vmax=1)
+    im2 = axes[1].imshow(sorted_dot_products.T, aspect='auto', cmap='viridis', vmin=0, vmax=1)
     axes[1].set_title('Dot Products')
-    axes[1].set_xlabel('Neuron')
-    axes[1].set_ylabel('Image')
+    axes[1].set_xlabel('Image')
+    axes[1].set_ylabel('Neuron')
     plt.colorbar(im2, ax=axes[1])
 
-    im3 = axes[2].imshow(sorted_adaptation, aspect='auto', cmap='viridis', vmin=0, vmax=1)
+    im3 = axes[2].imshow(sorted_adaptation.T, aspect='auto', cmap='viridis', vmin=0, vmax=1)
     axes[2].set_title('Adaptation States')
-    axes[2].set_xlabel('Neuron')
-    axes[2].set_ylabel('Image')
+    axes[2].set_xlabel('Image')
+    axes[2].set_ylabel('Neuron')
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
@@ -247,23 +241,23 @@ def plot_response_heatmaps_all(responses, dot_products, adaptation_states):
     """
     Plot heatmaps of firing rates, dot products, and adaptation states for all images and neurons.
     """
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-    im1 = axes[0].imshow(responses, aspect='auto', cmap='viridis')
+    fig, axes = plt.subplots(1, 3, figsize=(25, 8))  # Increased from (18, 5)
+    im1 = axes[0].imshow(responses.T, aspect='auto', cmap='viridis')
     axes[0].set_title('Firing Rates (Hz)')
-    axes[0].set_xlabel('Neuron')
-    axes[0].set_ylabel('Image')
+    axes[0].set_xlabel('Image')
+    axes[0].set_ylabel('Neuron')
     plt.colorbar(im1, ax=axes[0])
 
-    im2 = axes[1].imshow(dot_products, aspect='auto', cmap='viridis', vmin=0, vmax=1)
+    im2 = axes[1].imshow(dot_products.T, aspect='auto', cmap='viridis', vmin=0, vmax=1)
     axes[1].set_title('Dot Products')
-    axes[1].set_xlabel('Neuron')
-    axes[1].set_ylabel('Image')
+    axes[1].set_xlabel('Image')
+    axes[1].set_ylabel('Neuron')
     plt.colorbar(im2, ax=axes[1])
 
-    im3 = axes[2].imshow(adaptation_states, aspect='auto', cmap='viridis', vmin=0, vmax=1)
+    im3 = axes[2].imshow(adaptation_states.T, aspect='auto', cmap='viridis', vmin=0, vmax=1)
     axes[2].set_title('Adaptation States')
-    axes[2].set_xlabel('Neuron')
-    axes[2].set_ylabel('Image')
+    axes[2].set_xlabel('Image')
+    axes[2].set_ylabel('Neuron')
     plt.colorbar(im3, ax=axes[2])
 
     plt.tight_layout()
@@ -271,7 +265,7 @@ def plot_response_heatmaps_all(responses, dot_products, adaptation_states):
 
 def plot_response_histograms(responses, dot_products, adaptation_states):
     """
-    Plot histograms of firing rates (log scale), dot products, and adaptation states across all neurons and images.
+    Plot histograms of firing rates, dot products, and adaptation states across all neurons and images.
     Neurons are sorted by their response to the first image.
     """
     # Sort neurons by their response to the first image
@@ -280,22 +274,21 @@ def plot_response_histograms(responses, dot_products, adaptation_states):
     sorted_dot_products = dot_products[:, neuron_sort_idx]
     sorted_adaptation = adaptation_states[:, neuron_sort_idx]
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(25, 8))  # Increased from (18, 5)
     
-    # Firing rate histogram with log scale
+    # Firing rate histogram
     axes[0].hist(sorted_responses.flatten(), bins=50, color='C0', alpha=0.8)
-    axes[0].set_yscale('log')
     axes[0].set_title('Firing Rate Distribution')
     axes[0].set_xlabel('Firing Rate (Hz)')
-    axes[0].set_ylabel('Count (log scale)')
+    axes[0].set_ylabel('Count')
 
-    # Dot product histogram with linear scale
+    # Dot product histogram
     axes[1].hist(sorted_dot_products.flatten(), bins=50, color='C1', alpha=0.8)
     axes[1].set_title('Dot Product Distribution')
     axes[1].set_xlabel('Dot Product')
     axes[1].set_ylabel('Count')
 
-    # Adaptation state histogram with linear scale
+    # Adaptation state histogram
     axes[2].hist(sorted_adaptation.flatten(), bins=50, color='C2', alpha=0.8)
     axes[2].set_title('Adaptation State Distribution')
     axes[2].set_xlabel('Adaptation State')
@@ -311,7 +304,7 @@ def plot_neural_correlations(responses):
     # Compute correlation matrix between neurons
     corr_matrix = np.corrcoef(responses.T)  # Transpose to get neuron-neuron correlations
     
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(15, 12))  # Increased from (10, 8)
     im = ax.imshow(corr_matrix, cmap='RdBu_r', vmin=-1, vmax=1)
     ax.set_title('Neural Firing Rate Correlations')
     ax.set_xlabel('Neuron')

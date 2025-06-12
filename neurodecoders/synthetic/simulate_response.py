@@ -29,10 +29,10 @@ class SimulateResponse:
         
         # Generate neuron-specific parameters with physiological constraints
         # Baseline rates: mostly very low (0.1-2 Hz), some higher
-        baselines = torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3) * 0.2
+        baselines = torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.01) * 0.01
         
-        # Thresholds: higher thresholds to create more sparsity
-        thresholds = 0.2 + 0.3 * torch.rand(self.n_neurons, device=self.device)
+        # Thresholds: log-normal distribution for more realistic, skewed thresholds
+        thresholds = torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3) * 0.3
         
         # Maximum firing rates: respecting physiological limits
         # Most neurons max out at 100-200 Hz, with some exceptions
@@ -50,15 +50,14 @@ class SimulateResponse:
             for n in range(self.n_neurons):
                 x, y = self.rf_coords[n]
                 patch = self.get_receptive_field(image, x, y, self.rf_size).unsqueeze(0)
-                sta = self.stas_tensor[n].unsqueeze(0)
+                sta = self.stas_tensor[n].unsqueeze(0) 
                 sta_flat = sta.reshape(-1)
                 patch_flat = patch.reshape(-1)
                 
                 # Compute dot product
-                dot = torch.sum(patch_flat * sta_flat) / len(patch_flat)
+                dot = torch.sum(torch.abs(patch_flat * sta_flat)) / len(patch_flat) - 0.1
                 dot_products[i, n] = dot.item()
                 
-                # Apply threshold and non-linearity
                 # Use a steeper non-linearity for more sparsity
                 response = F.elu(dot - thresholds[n]) + 1
                 response = max_rates[n] * response
@@ -66,19 +65,20 @@ class SimulateResponse:
                 # Apply adaptation from previous response (decrease response)
                 response = response * adaptation_state[n]
                 
-                # Add baseline 
+                # Add noise before baseline
+                # Subtle multiplicative noise: jitter response by up to ±10%
+                if noise_level > 0:
+                    response = response * (1.0 + 0.2 * noise_level * (torch.rand(1, device=self.device)))
+                
+                # Add baseline firing rate
                 response = response + baselines[n]
                 
-                # Add noise
-                poisson_noise = torch.sqrt(response) * torch.randn(1, device=self.device) * noise_level
-                # try dropout noise
-                
                 # Final firing rate
-                firing_rate = torch.clamp(response + poisson_noise, min=0, max=max_rates[n]).item()
+                firing_rate = torch.clamp(response, min=0, max=max_rates[n]).item()
                 
                 # Update adaptation based on current response for next image
                 # Decrease adaptation state (stronger adaptation for higher responses)
-                adaptation_factor = 0.5 * (firing_rate / max_rates[n])  # How much to decrease by
+                adaptation_factor = 0.1 * (firing_rate / max_rates[n])  # How much to decrease by
                 adaptation_state[n] = adaptation_state[n] * (1.0 - adaptation_factor)  # Decrease adaptation state
                 
                 firing_rates[i, n] = firing_rate

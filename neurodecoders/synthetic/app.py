@@ -8,7 +8,10 @@ import os
 from image_datasets import ImageDataset
 from sta import STA
 from simulate_response import SimulateResponse
-from create_simulated_neural_responses import plot_sta_and_spikes, plot_response_heatmaps, plot_response_heatmaps_all, plot_response_histograms, plot_neural_correlations
+from create_simulated_neural_responses import plot_sta_and_spikes, plot_response_heatmaps_all, plot_response_histograms, plot_neural_correlations
+
+# Configure Streamlit page to use wide mode
+st.set_page_config(layout="wide")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -168,13 +171,6 @@ def main():
             )
             st.pyplot(fig1)
             st.pyplot(fig2)
-
-            # # Create and display the heatmap plot (top neurons/images)
-            # fig3 = plot_response_heatmaps(
-            #     firing_rates, dot_products, adaptation_states,
-            #     n_plot_images=n_plot_images, n_plot_neurons=n_plot_neurons
-            # )
-            # st.pyplot(fig3)
 
             # Create and display the all-neuron/image heatmap
             fig4 = plot_response_heatmaps_all(firing_rates, dot_products, adaptation_states)

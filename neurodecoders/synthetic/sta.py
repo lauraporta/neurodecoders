@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import torchvision
 from noise import pnoise2  # for Perlin noise
+import scipy.ndimage
 
 
 class STA:
@@ -10,6 +11,7 @@ class STA:
 
     def get_simulated_sta(self, type = "from_model:Alexnet,1", length = 1000):
         if "from_model" in type:
+            # We have to specify the patch size here as well!
             if "Alexnet" in type:
                 model = torchvision.models.alexnet(pretrained=True)
                 layer = int(type.split(",")[1])
@@ -44,11 +46,13 @@ class STA:
         with torch.no_grad():
             weights = model.features[layer].weight.data.cpu().numpy()
             weights = weights[:, :1, :, :]
-            import scipy.ndimage
+            
             resized_filters = np.array([
                 scipy.ndimage.zoom(w, (1, 63 / w.shape[1], 63 / w.shape[2]), order=1) / np.linalg.norm(w)
                 for w in weights
             ])
+            #  rescale from -1 to 1
+            resized_filters = 2 * (resized_filters - resized_filters.min()) / (resized_filters.max() - resized_filters.min()) - 1
             return resized_filters
             
     def make_binary_patterns(self, sta_shape, n_patterns):
