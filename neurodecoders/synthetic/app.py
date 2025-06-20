@@ -15,12 +15,13 @@ st.set_page_config(layout="wide")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def save_output(images, responses, stas, coords, filename):
+def save_output(images, responses, stas, coords, adaptation_states, filename):
     np.savez(filename,
              images=images.cpu().numpy(),
              responses=responses,
              stas=stas,
-             rf_coords=coords)
+             rf_coords=coords,
+             adaptation_states=adaptation_states)
 
 def main():
     st.title("Neural Response Visualization")
@@ -141,7 +142,7 @@ def main():
         help="Number of images to show in each panel"
     )
     
-    # Add a button to generate new data
+    # Add Generate New Data button above large dataset section
     if st.sidebar.button("Generate New Data"):
         with st.spinner("Generating neural responses..."):
             # Load data and model
@@ -155,7 +156,7 @@ def main():
             # Save the data
             os.makedirs("output", exist_ok=True)
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-            save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords,
+            save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states,
                        f"output/simulated_neural_data_{n_neurons}neurons_{n_images}images_{timestamp}.npz")
             
             # Create and display the plots
@@ -186,6 +187,107 @@ def main():
 
             st.success("Data generated and visualized successfully!")
     
+    # Large dataset generation parameters
+    st.sidebar.header("Large Dataset Generation")
+    
+    large_n_images = st.sidebar.number_input(
+        "Large Dataset - Number of Images",
+        min_value=100,
+        max_value=10000,
+        value=1000,
+        step=100,
+        help="Number of images for large dataset generation"
+    )
+    
+    large_n_neurons = st.sidebar.number_input(
+        "Large Dataset - Number of Neurons", 
+        min_value=100,
+        max_value=10000,
+        value=1000,
+        step=100,
+        help="Number of neurons for large dataset generation"
+    )
+    
+    # Add Generate Large Dataset button below the large dataset section
+    if st.sidebar.button("Generate Large Dataset", type="primary"):
+        # Progress tracking
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        try:
+            # Step 1: Loading data and model
+            status_text.text("Step 1/4: Loading data and model...")
+            progress_bar.progress(25)
+            
+            images = ImageDataset().get_data(dataset_type, large_n_images)
+            stas = STA().get_simulated_sta(sta_type)
+            
+            # Step 2: Generating responses
+            status_text.text("Step 2/4: Generating neural responses...")
+            progress_bar.progress(50)
+            
+            simulator = SimulateResponse(device, images, stas, large_n_neurons)
+            firing_rates, dot_products, adaptation_states = simulator.simulate_neural_responses()
+            
+            # Step 3: Creating visualizations
+            status_text.text("Step 3/4: Creating visualizations...")
+            progress_bar.progress(75)
+            
+            # Create output directory
+            os.makedirs("output", exist_ok=True)
+            timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            
+            # Save the dataset
+            filename = f"output/simulated_neural_data_{large_n_neurons}neurons_{large_n_images}images_{timestamp}.npz"
+            save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states, filename)
+            
+            # Create and save visualizations
+            fig1 = plot_response_heatmaps_all(firing_rates, dot_products, adaptation_states)
+            fig1.savefig(f"output/heatmaps_all_{timestamp}.png", dpi=300, bbox_inches='tight')
+            
+            fig2 = plot_response_histograms(firing_rates, dot_products, adaptation_states)
+            fig2.savefig(f"output/response_histograms_{timestamp}.png", dpi=300, bbox_inches='tight')
+            
+            fig3 = plot_neural_correlations(firing_rates)
+            fig3.savefig(f"output/neural_correlations_{timestamp}.png", dpi=300, bbox_inches='tight')
+            
+            # Step 4: Complete
+            status_text.text("Step 4/4: Complete!")
+            progress_bar.progress(100)
+            
+            # Display results
+            st.success(f"Large dataset generated successfully!")
+            st.info(f"""
+            **Generated Files:**
+            - Dataset: `{filename}`
+            - Heatmaps: `output/heatmaps_all_{timestamp}.png`
+            - Histograms: `output/response_histograms_{timestamp}.png`
+            - Correlations: `output/neural_correlations_{timestamp}.png`
+            
+            **Dataset Statistics:**
+            - Images: {large_n_images}
+            - Neurons: {large_n_neurons}
+            - Total responses: {large_n_images * large_n_neurons:,}
+            - Mean firing rate: {firing_rates.mean():.2f} Hz
+            - Max firing rate: {firing_rates.max():.2f} Hz
+            """)
+            
+            # Show sample visualizations
+            st.subheader("Sample Visualizations")
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.image(f"output/heatmaps_all_{timestamp}.png", caption="Response Heatmaps")
+            
+            with col2:
+                st.image(f"output/response_histograms_{timestamp}.png", caption="Response Distributions")
+            
+            st.image(f"output/neural_correlations_{timestamp}.png", caption="Neural Correlations")
+            
+        except Exception as e:
+            st.error(f"Error generating dataset: {str(e)}")
+            st.exception(e)
+    
     # Add some information about the visualization
     st.markdown("""
     ### About the Visualization
@@ -213,6 +315,18 @@ def main():
     
     For pattern-based STAs, you can adjust the patch size (must be an odd number).
     For model-based STAs, you can choose which layer's features to use as STAs.
+    
+    ### Large Dataset Generation
+    
+    Use the "Generate Large Dataset" button to create datasets with many neurons and images for training neural decoders.
+    The generated .npz files contain:
+    - `images`: Input images (N, 1, H, W)
+    - `responses`: Neural firing rates (N, C)
+    - `stas`: Spatiotemporal averages (C, H, W)
+    - `rf_coords`: Receptive field coordinates (C, 2)
+    - `adaptation_states`: Adaptation states (N, C)
+    
+    These files can be loaded directly into your training scripts.
     """)
 
 if __name__ == "__main__":

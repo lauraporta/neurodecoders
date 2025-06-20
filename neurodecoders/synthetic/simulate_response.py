@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import torch.nn.functional as F
 from tqdm import tqdm
+import logging
 
 
 class SimulateResponse:
@@ -55,7 +56,9 @@ class SimulateResponse:
                 patch_flat = patch.reshape(-1)
                 
                 # Compute dot product
-                dot = torch.sum(torch.abs(patch_flat * sta_flat)) / len(patch_flat) - 0.1
+                # Since images are already normalized to [-1, 1], use simple mean dot product
+                # This should give reasonable values regardless of STA magnitude
+                dot = torch.mean(patch_flat * sta_flat)
                 dot_products[i, n] = dot.item()
                 
                 # Use a steeper non-linearity for more sparsity
