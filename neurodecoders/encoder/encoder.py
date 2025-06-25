@@ -2,7 +2,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.loggers import TensorBoardLogger
 import matplotlib.pyplot as plt
 import glob
 import os
@@ -64,6 +67,132 @@ class SimpleEncoder(nn.Module):
         x = self.fc(x)
         return F.softplus(x)  # Non-negative firing rates
 
+# ---- Lightning Module ----
+class EncoderLightningModule(pl.LightningModule):
+    def __init__(self, out_neurons: int, learning_rate: float = 1e-3, weight_decay: float = 1e-5):
+        super().__init__()
+        self.save_hyperparameters()
+        self.model = SimpleEncoder(out_neurons)
+        self.loss_fn = nn.MSELoss()
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        
+        # Store training history for plotting
+        self.train_losses = []
+        self.val_losses = []
+
+    def forward(self, x):
+        return self.model(x)
+
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        pred = self.model(x)
+        loss = self.loss_fn(pred, y)
+        
+        # Log training loss
+        self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        pred = self.model(x)
+        loss = self.loss_fn(pred, y)
+        
+        # Log validation loss
+        self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        x, y = batch
+        pred = self.model(x)
+        loss = self.loss_fn(pred, y)
+        
+        # Log test loss
+        self.log('test_loss', loss, on_step=False, on_epoch=True)
+        return loss
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(
+            self.parameters(), 
+            lr=self.learning_rate, 
+            weight_decay=self.weight_decay
+        )
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=2, verbose=True
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val_loss",
+                "frequency": 1
+            }
+        }
+
+    def on_train_epoch_end(self):
+        # Store losses for plotting
+        train_loss = self.trainer.callback_metrics.get('train_loss_epoch', 0)
+        val_loss = self.trainer.callback_metrics.get('val_loss', 0)
+        
+        if isinstance(train_loss, torch.Tensor):
+            train_loss = train_loss.item()
+        if isinstance(val_loss, torch.Tensor):
+            val_loss = val_loss.item()
+            
+        self.train_losses.append(train_loss)
+        self.val_losses.append(val_loss)
+
+# ---- Data Module ----
+class NeuralDataModule(pl.LightningDataModule):
+    def __init__(self, images, firing_rates, train_split=0.7, val_split=0.15, 
+                 batch_size=32, num_workers=0):
+        super().__init__()
+        self.images = images
+        self.firing_rates = firing_rates
+        self.train_split = train_split
+        self.val_split = val_split
+        self.batch_size = batch_size
+        self.num_workers = num_workers
+        
+        # Create full dataset
+        self.full_dataset = NeuralDataset(images, firing_rates)
+        self.setup_splits()
+
+    def setup_splits(self):
+        """Setup train/val/test splits"""
+        total_size = len(self.full_dataset)
+        train_size = int(self.train_split * total_size)
+        val_size = int(self.val_split * total_size)
+        test_size = total_size - train_size - val_size
+
+        self.train_dataset, self.val_dataset, self.test_dataset = random_split(
+            self.full_dataset, 
+            [train_size, val_size, test_size], 
+            generator=torch.Generator().manual_seed(42)
+        )
+
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset, 
+            batch_size=self.batch_size, 
+            shuffle=True,
+            num_workers=self.num_workers
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset, 
+            batch_size=self.batch_size,
+            num_workers=self.num_workers
+        )
+
+    def test_dataloader(self):
+        return DataLoader(
+            self.test_dataset, 
+            batch_size=self.batch_size,
+            num_workers=self.num_workers
+        )
+
 def load_latest_data():
     """Load the latest neural data file"""
     files = glob.glob('output/simulated_neural_data_1000neurons_1000images_*.npz')
@@ -123,97 +252,88 @@ def visualize_data(firing_rates):
     plt.tight_layout()
     plt.show()
 
-def create_data_loaders(images, firing_rates, train_split=0.7, val_split=0.15, batch_size=32):
-    """Create train/val/test data loaders"""
-    print("Splitting data into train/val/test...")
-    full_dataset = NeuralDataset(images, firing_rates)
-    total_size = len(full_dataset)
-    train_size = int(train_split * total_size)
-    val_size = int(val_split * total_size)
-    test_size = total_size - train_size - val_size
-
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        full_dataset, [train_size, val_size, test_size], generator=torch.Generator().manual_seed(42))
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+def train_model_lightning(
+    images, 
+    firing_rates, 
+    train_split=0.7, 
+    val_split=0.15, 
+    batch_size=32, 
+    learning_rate=1e-3, 
+    epochs=30, 
+    early_stopping_patience=5,
+    enable_progress_bar=True,
+    log_every_n_steps=50,
+    callbacks=None
+):
+    """
+    Train encoder using PyTorch Lightning
     
-    return train_loader, val_loader, test_loader
-
-def train_model(model, train_loader, val_loader, device, epochs=30, learning_rate=1e-3, early_stopping_patience=5):
-    """Train the encoder model"""
-    print("Initializing model...")
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
-    loss_fn = nn.MSELoss()
-
-    # Training loop
-    train_losses = []
-    val_losses = []
-    best_val_loss = float('inf')
-    patience_counter = 0
-
-    print("Starting training...")
-    for epoch in range(epochs):
-        model.train()
-        total_loss = 0
-        for x, y in train_loader:
-            x, y = x.to(device), y.to(device)
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item() * x.size(0)
-        avg_train_loss = total_loss / len(train_loader.dataset)
-        train_losses.append(avg_train_loss)
-        print(f"Epoch {epoch+1}: Train Loss = {avg_train_loss:.4f}")
-
-        model.eval()
-        total_loss = 0
-        with torch.no_grad():
-            for x, y in val_loader:
-                x, y = x.to(device), y.to(device)
-                pred = model(x)
-                loss = loss_fn(pred, y)
-                total_loss += loss.item() * x.size(0)
-        avg_val_loss = total_loss / len(val_loader.dataset)
-        val_losses.append(avg_val_loss)
-        print(f"Epoch {epoch+1}: Validation Loss = {avg_val_loss:.4f}")
-        
-        # Learning rate scheduling
-        scheduler.step(avg_val_loss)
-        
-        # Early stopping
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            patience_counter = 0
-        else:
-            patience_counter += 1
-            if patience_counter >= early_stopping_patience:
-                print(f"Early stopping at epoch {epoch+1}")
-                break
-
-    return train_losses, val_losses
-
-def evaluate_model(model, test_loader, device):
-    """Evaluate the model on test set"""
-    print("Evaluating on test set...")
-    model.eval()
-    total_loss = 0
-    loss_fn = nn.MSELoss()
+    Returns:
+        trainer: The trained trainer object
+        model: The trained model
+        data_module: The data module
+    """
+    # Create data module
+    data_module = NeuralDataModule(
+        images=images,
+        firing_rates=firing_rates,
+        train_split=train_split,
+        val_split=val_split,
+        batch_size=batch_size
+    )
     
-    with torch.no_grad():
-        for x, y in test_loader:
-            x, y = x.to(device), y.to(device)
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            total_loss += loss.item() * x.size(0)
-    avg_test_loss = total_loss / len(test_loader.dataset)
-    print(f"Test Loss = {avg_test_loss:.4f}")
+    # Create model
+    model = EncoderLightningModule(
+        out_neurons=firing_rates.shape[1],
+        learning_rate=learning_rate
+    )
     
-    return avg_test_loss
+    # Setup callbacks
+    if callbacks is None:
+        callbacks = []
+    
+    # Add default callbacks
+    callbacks.extend([
+        EarlyStopping(
+            monitor='val_loss',
+            patience=early_stopping_patience,
+            mode='min',
+            verbose=True
+        ),
+        ModelCheckpoint(
+            monitor='val_loss',
+            dirpath='data/lightning_checkpoints',
+            filename='encoder-{epoch:02d}-{val_loss:.4f}',
+            save_top_k=3,
+            mode='min',
+            verbose=True
+        ),
+        LearningRateMonitor(logging_interval='epoch')
+    ])
+    
+    # Setup logger
+    logger = TensorBoardLogger("data/lightning_logs", name="encoder")
+    
+    # Create trainer
+    trainer = pl.Trainer(
+        max_epochs=epochs,
+        callbacks=callbacks,
+        logger=logger,
+        enable_progress_bar=enable_progress_bar,
+        log_every_n_steps=log_every_n_steps,
+        accelerator='auto',  # Automatically detect GPU/CPU
+        devices='auto',
+        deterministic=False,
+        enable_checkpointing=True
+    )
+    
+    # Train the model
+    trainer.fit(model, data_module)
+    
+    # Test the model
+    trainer.test(model, data_module)
+    
+    return trainer, model, data_module
 
 def plot_training_results(train_losses, val_losses):
     """Plot training results"""
@@ -277,6 +397,8 @@ def save_predictions(model, images, firing_rates, input_file_path, output_dir='d
 
 def main():
     """Main function to run the encoder training"""
+    print("=== Neural Encoder Training with PyTorch Lightning ===")
+    
     # Load data
     print("Loading data...")
     images, firing_rates, data_file = load_latest_data()
@@ -287,21 +409,28 @@ def main():
     # Visualize data
     visualize_data(firing_rates)
     
-    # Create data loaders
-    train_loader, val_loader, test_loader = create_data_loaders(images, firing_rates)
+    # Train with Lightning
+    trainer, model, data_module = train_model_lightning(
+        images=images,
+        firing_rates=firing_rates,
+        epochs=30,
+        learning_rate=1e-3,
+        early_stopping_patience=5
+    )
     
-    # Initialize model
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = SimpleEncoder(out_neurons=firing_rates.shape[1]).to(device)
+    # Plot training results
+    plot_training_results(model.train_losses, model.val_losses)
     
-    # Train model
-    train_losses, val_losses = train_model(model, train_loader, val_loader, device)
+    # Save predictions
+    save_predictions(model, images, firing_rates, data_file)
     
-    # Evaluate model
-    test_loss = evaluate_model(model, test_loader, device)
+    # Save final model
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    model_path = f'data/lightning_encoder_model_{timestamp}.pth'
+    torch.save(model.state_dict(), model_path)
+    print(f"Model saved to: {model_path}")
     
-    # Plot results
-    plot_training_results(train_losses, val_losses)
+    print("=== Lightning Training Complete ===")
 
 if __name__ == "__main__":
     main()

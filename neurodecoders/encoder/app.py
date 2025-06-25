@@ -8,12 +8,15 @@ import glob
 import datetime
 import os
 import sys
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.loggers import TensorBoardLogger
 
 # Add the encoder directory to the path so we can import from it
 sys.path.append(os.path.dirname(__file__))
 
 # Import the encoder functionality
-from encoder import SimpleEncoder, NeuralDataset
+from encoder import SimpleEncoder, NeuralDataset, train_model_lightning
 
 # Configure Streamlit page
 st.set_page_config(
@@ -100,10 +103,10 @@ def plot_predictions_vs_actual(pred, actual, n_samples=10):
     plt.tight_layout()
     return fig
 
-def train_encoder(images, firing_rates, train_split=0.7, val_split=0.15, 
-                 batch_size=32, learning_rate=1e-3, epochs=30, early_stopping_patience=5,
-                 progress_callback=None, metrics_callback=None):
-    """Train the encoder model with real-time updates"""
+def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.15, 
+                           batch_size=32, learning_rate=1e-3, epochs=30, early_stopping_patience=5,
+                           progress_callback=None, metrics_callback=None):
+    """Train the encoder model using PyTorch Lightning with real-time updates"""
     
     # Handle 4D image input if present
     if images.ndim == 4:
@@ -119,122 +122,103 @@ def train_encoder(images, firing_rates, train_split=0.7, val_split=0.15,
     if N != N_r:
         raise ValueError(f"Mismatch: images have {N} samples but firing rates have {N_r}")
     
-    # Create dataset and split
-    full_dataset = NeuralDataset(images, firing_rates)
-    total_size = len(full_dataset)
-    train_size = int(train_split * total_size)
-    val_size = int(val_split * total_size)
-    test_size = total_size - train_size - val_size
+    # Create custom callbacks for Streamlit integration
+    class StreamlitProgressCallback(pl.Callback):
+        def __init__(self, progress_callback=None, metrics_callback=None):
+            super().__init__()
+            self.progress_callback = progress_callback
+            self.metrics_callback = metrics_callback
+            self.current_epoch = 0
+            self.total_epochs = 0
+        
+        def on_train_start(self, trainer, pl_module):
+            self.total_epochs = trainer.max_epochs
+        
+        def on_train_epoch_end(self, trainer, pl_module):
+            self.current_epoch += 1
+            if self.progress_callback:
+                progress = self.current_epoch / self.total_epochs
+                self.progress_callback(progress, f"Epoch {self.current_epoch}/{self.total_epochs}")
+            
+            if self.metrics_callback:
+                train_loss = trainer.callback_metrics.get('train_loss_epoch', 0)
+                val_loss = trainer.callback_metrics.get('val_loss', 0)
+                best_val_loss = trainer.callback_metrics.get('val_loss', float('inf'))
+                
+                if isinstance(train_loss, torch.Tensor):
+                    train_loss = train_loss.item()
+                if isinstance(val_loss, torch.Tensor):
+                    val_loss = val_loss.item()
+                if isinstance(best_val_loss, torch.Tensor):
+                    best_val_loss = best_val_loss.item()
+                
+                self.metrics_callback(train_loss, val_loss, best_val_loss)
     
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        full_dataset, [train_size, val_size, test_size], 
-        generator=torch.Generator().manual_seed(42)
+    # Setup callbacks
+    callbacks = [
+        EarlyStopping(
+            monitor='val_loss',
+            patience=early_stopping_patience,
+            mode='min',
+            verbose=True
+        ),
+        ModelCheckpoint(
+            monitor='val_loss',
+            dirpath='data/lightning_checkpoints',
+            filename='encoder-{epoch:02d}-{val_loss:.4f}',
+            save_top_k=3,
+            mode='min',
+            verbose=True
+        ),
+        LearningRateMonitor(logging_interval='epoch'),
+        StreamlitProgressCallback(progress_callback, metrics_callback)
+    ]
+    
+    # Train with Lightning
+    trainer, model, data_module = train_model_lightning(
+        images=images,
+        firing_rates=firing_rates,
+        train_split=train_split,
+        val_split=val_split,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        epochs=epochs,
+        early_stopping_patience=early_stopping_patience,
+        enable_progress_bar=False,  # Disable Lightning's progress bar since we have Streamlit
+        callbacks=callbacks
     )
     
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    
-    # Initialize model
-    model = SimpleEncoder(out_neurons=C).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', factor=0.5, patience=2
-    )
-    loss_fn = nn.MSELoss()
-    
-    # Training loop
-    train_losses = []
-    val_losses = []
-    best_val_loss = float('inf')
-    patience_counter = 0
-    
-    for epoch in range(epochs):
-        # Training
-        model.train()
-        total_train_loss = 0
-        for x, y in train_loader:
-            x, y = x.to(device), y.to(device)
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            total_train_loss += loss.item() * x.size(0)
-        
-        avg_train_loss = total_train_loss / len(train_loader.dataset)
-        train_losses.append(avg_train_loss)
-        
-        # Validation
-        model.eval()
-        total_val_loss = 0
-        with torch.no_grad():
-            for x, y in val_loader:
-                x, y = x.to(device), y.to(device)
-                pred = model(x)
-                loss = loss_fn(pred, y)
-                total_val_loss += loss.item() * x.size(0)
-        
-        avg_val_loss = total_val_loss / len(val_loader.dataset)
-        val_losses.append(avg_val_loss)
-        
-        # Update progress and metrics in real-time
-        if progress_callback:
-            progress = (epoch + 1) / epochs
-            progress_callback(progress, f"Epoch {epoch+1}/{epochs}")
-        
-        if metrics_callback:
-            metrics_callback(avg_train_loss, avg_val_loss, best_val_loss)
-        
-        # Learning rate scheduling
-        scheduler.step(avg_val_loss)
-        
-        # Early stopping
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            patience_counter = 0
-            # Save best model to data folder
-            torch.save(model.state_dict(), 'data/best_encoder_model.pth')
-        else:
-            patience_counter += 1
-            if patience_counter >= early_stopping_patience:
-                if progress_callback:
-                    progress_callback(1.0, f"Early stopping at epoch {epoch+1}")
-                break
-    
-    # Load best model for evaluation
-    model.load_state_dict(torch.load('data/best_encoder_model.pth'))
-    
-    # Test set evaluation
+    # Get test predictions
     model.eval()
-    total_test_loss = 0
-    all_predictions = []
-    all_actuals = []
+    test_predictions = []
+    test_actuals = []
     
     with torch.no_grad():
-        for x, y in test_loader:
-            x, y = x.to(device), y.to(device)
+        for batch in data_module.test_dataloader():
+            x, y = batch
             pred = model(x)
-            loss = loss_fn(pred, y)
-            total_test_loss += loss.item() * x.size(0)
-            all_predictions.append(pred.cpu())
-            all_actuals.append(y.cpu())
+            test_predictions.append(pred.cpu().numpy())
+            test_actuals.append(y.cpu().numpy())
     
-    avg_test_loss = total_test_loss / len(test_loader.dataset)
+    test_predictions = np.concatenate(test_predictions, axis=0)
+    test_actuals = np.concatenate(test_actuals, axis=0)
+    
+    # Calculate test loss
+    test_loss = np.mean((test_predictions - test_actuals) ** 2)
     
     return {
         'model': model,
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'test_loss': avg_test_loss,
-        'predictions': torch.cat(all_predictions, dim=0).numpy(),
-        'actuals': torch.cat(all_actuals, dim=0).numpy(),
-        'epochs_trained': len(train_losses)
+        'train_losses': model.train_losses,
+        'val_losses': model.val_losses,
+        'test_loss': test_loss,
+        'predictions': test_predictions,
+        'actuals': test_actuals,
+        'epochs_trained': len(model.train_losses)
     }
 
 def main():
     st.title("🧠 Neural Encoder Dashboard")
-    st.markdown("Train a neural encoder to map images to firing rates")
+    st.markdown("Train a neural encoder to map images to firing rates using PyTorch Lightning")
     
     # Sidebar controls
     st.sidebar.header("📊 Data & Model Settings")
@@ -298,45 +282,19 @@ def main():
         val_loss_placeholder = metric_col2.empty()
         best_val_placeholder = metric_col3.empty()
         
-        # Create a placeholder for real-time loss plot
-        loss_plot_placeholder = st.empty()
-        
-        # Initialize loss history for plotting
-        train_losses = []
-        val_losses = []
-        
         def update_progress(progress, status):
             progress_bar.progress(progress)
             status_text.text(status)
         
         def update_metrics(train_loss, val_loss, best_val_loss):
-            nonlocal train_losses, val_losses
-            train_losses.append(train_loss)
-            val_losses.append(val_loss)
-            
-            # Update metric displays
             train_loss_placeholder.metric("Train Loss", f"{train_loss:.4f}")
             val_loss_placeholder.metric("Val Loss", f"{val_loss:.4f}")
             best_val_placeholder.metric("Best Val Loss", f"{best_val_loss:.4f}")
-            
-            # Update real-time loss plot
-            if len(train_losses) > 1:
-                fig, ax = plt.subplots(figsize=(10, 6))
-                ax.plot(train_losses, label='Train Loss', linewidth=2, color='blue')
-                ax.plot(val_losses, label='Validation Loss', linewidth=2, color='red')
-                ax.set_xlabel('Epoch')
-                ax.set_ylabel('MSE Loss')
-                ax.set_title('Training Progress (Real-time)')
-                ax.legend()
-                ax.grid(True, alpha=0.3)
-                plt.tight_layout()
-                loss_plot_placeholder.pyplot(fig)
-                plt.close(fig)
         
         try:
-            # Train the model with real-time updates
-            with st.spinner("Training encoder..."):
-                results = train_encoder(
+            # Train the model with Lightning
+            with st.spinner("Training encoder with PyTorch Lightning..."):
+                results = train_encoder_lightning(
                     images=images,
                     firing_rates=firing_rates,
                     train_split=train_split,
@@ -381,74 +339,14 @@ def main():
             np.save(training_info_path, model_info)
             st.info(f"Training info saved to: {training_info_path}")
             
+            # Save model
+            model_path = f'data/encoder_model_{timestamp}.pth'
+            torch.save(results['model'].state_dict(), model_path)
+            st.info(f"Model saved to: {model_path}")
+            
         except Exception as e:
             st.error(f"Training failed: {str(e)}")
             st.exception(e)
-    
-    # Model loading and inference
-    st.header("🔍 Model Inference")
-    
-    # Check for saved models in data folder
-    model_files = glob.glob('data/best_encoder_model.pth')
-    if model_files:
-        st.success("Found trained model!")
-        
-        if st.button("Load Model and Run Inference"):
-            try:
-                # Load model from data folder
-                model = SimpleEncoder(out_neurons=firing_rates.shape[1]).to(device)
-                model.load_state_dict(torch.load('data/best_encoder_model.pth'))
-                model.eval()
-                
-                # Run inference on a few samples
-                with torch.no_grad():
-                    # Handle image dimensions properly
-                    if images.ndim == 4:
-                        # Images are already [N, C, H, W], just take first 5
-                        sample_images = torch.tensor(images[:5], dtype=torch.float32).to(device)
-                    else:
-                        # Images are [N, H, W], add channel dimension
-                        sample_images = torch.tensor(images[:5, None, :, :], dtype=torch.float32).to(device)
-                    
-                    predictions = model(sample_images).cpu().numpy()
-                    actuals = firing_rates[:5]
-                
-                # Save predictions for all data
-                from encoder import save_predictions
-                predictions_file = save_predictions(model, images, firing_rates, data_file)
-                st.success(f"Predictions saved to: {predictions_file}")
-                
-                # Display results
-                st.subheader("Sample Predictions")
-                fig, axes = plt.subplots(2, 5, figsize=(20, 8))
-                
-                for i in range(5):
-                    # Show image - handle different dimensions
-                    if images.ndim == 4:
-                        img_display = images[i, 0]  # Take first channel if 4D
-                    else:
-                        img_display = images[i]
-                    
-                    axes[0, i].imshow(img_display, cmap='gray')
-                    axes[0, i].set_title(f'Sample {i+1}')
-                    axes[0, i].axis('off')
-                    
-                    # Show predictions vs actual
-                    axes[1, i].scatter(actuals[i], predictions[i], alpha=0.6)
-                    axes[1, i].plot([0, max(actuals[i].max(), predictions[i].max())], 
-                                  [0, max(actuals[i].max(), predictions[i].max())], 'r--')
-                    axes[1, i].set_xlabel('Actual')
-                    axes[1, i].set_ylabel('Predicted')
-                    axes[1, i].grid(True, alpha=0.3)
-                
-                plt.tight_layout()
-                st.pyplot(fig)
-                
-            except Exception as e:
-                st.error(f"Inference failed: {str(e)}")
-                st.exception(e)
-    else:
-        st.info("No trained model found. Train a model first to run inference.")
 
 if __name__ == "__main__":
     main() 

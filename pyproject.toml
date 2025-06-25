@@ -15,6 +15,7 @@ dependencies = [
     "tqdm",
     "streamlit",
     "noise",
+    "pytorch-lightning",
 ]
 
 license = {text = "BSD-3-Clause"}
