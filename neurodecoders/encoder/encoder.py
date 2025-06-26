@@ -292,14 +292,6 @@ def train_model_lightning(
             mode='min',
             verbose=True
         ),
-        ModelCheckpoint(
-            monitor='val_loss',
-            dirpath='data/lightning_checkpoints',
-            filename='encoder-{epoch:02d}-{val_loss:.4f}',
-            save_top_k=3,
-            mode='min',
-            verbose=True
-        ),
         LearningRateMonitor(logging_interval='epoch')
     ])
     
@@ -313,8 +305,8 @@ def train_model_lightning(
         logger=logger,
         enable_progress_bar=enable_progress_bar,
         log_every_n_steps=log_every_n_steps,
-        accelerator='auto',  # Automatically detect GPU/CPU
-        devices='auto',
+        accelerator='cpu' if torch.backends.mps.is_available() else 'auto',  # Force CPU on MPS to avoid compatibility issues
+        devices=1 if torch.backends.mps.is_available() else 'auto',
         deterministic=False,
         enable_checkpointing=True
     )
