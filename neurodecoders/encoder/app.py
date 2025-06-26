@@ -33,21 +33,44 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 os.makedirs('data', exist_ok=True)
 
 def load_data():
-    """Load the latest neural data file"""
+    """Load neural data file selected by user from dropdown"""
     try:
-        files = glob.glob('output/simulated_neural_data_*neurons_*images_*.npz')
+        # Find all synthdata files
+        files = glob.glob('data/synthdata_dataset-*.npz')
         if not files:
-            st.error("No neural data files found in output/ directory. Please generate data first using the synthetic dashboard.")
+            st.error("No neural data files found in data/ directory. Please generate data first using the synthetic dashboard.")
             return None, None, None
         
-        latest_file = max(files, key=os.path.getctime)
-        st.success(f"Loaded data from: {latest_file}")
+        # Create a mapping of display names to file paths
+        file_options = {}
+        for file_path in files:
+            # Extract meaningful info from filename for display
+            filename = os.path.basename(file_path)
+            # Remove the synthdata_dataset- prefix and .npz suffix
+            display_name = filename.replace('synthdata_dataset-', '').replace('.npz', '')
+            # Replace underscores with spaces for better readability
+            display_name = display_name.replace('_', ' ')
+            file_options[display_name] = file_path
         
-        data = np.load(latest_file)
+        # Sort by creation time (newest first) for the dropdown
+        sorted_files = sorted(file_options.items(), key=lambda x: os.path.getctime(x[1]), reverse=True)
+        
+        # Create dropdown
+        selected_display_name = st.selectbox(
+            "Select Dataset:",
+            options=[name for name, _ in sorted_files],
+            index=0,  # Default to newest file
+            help="Choose a synthetic dataset to load"
+        )
+        
+        # Get the selected file path
+        selected_file = file_options[selected_display_name]
+        
+        data = np.load(selected_file)
         images = data['images']
         firing_rates = data['responses']
         
-        return images, firing_rates, latest_file
+        return images, firing_rates, selected_file
     except Exception as e:
         st.error(f"Error loading data: {str(e)}")
         return None, None, None
@@ -91,14 +114,26 @@ def plot_predictions_vs_actual(pred, actual, n_samples=10):
     fig, axes = plt.subplots(2, 5, figsize=(20, 8))
     axes = axes.flatten()
     
-    for i in range(min(n_samples, len(axes))):
-        axes[i].scatter(actual[i], pred[i], alpha=0.6, s=20)
-        axes[i].plot([0, max(actual[i].max(), pred[i].max())], 
-                    [0, max(actual[i].max(), pred[i].max())], 'r--', alpha=0.8)
+    # Get the number of neurons (columns) in the data
+    n_neurons = min(pred.shape[1], actual.shape[1])
+    n_plots = min(n_samples, len(axes), n_neurons)
+    
+    for i in range(n_plots):
+        # Plot all samples for this neuron
+        axes[i].scatter(actual[:, i], pred[:, i], alpha=0.6, s=20)
+        
+        # Add diagonal line
+        max_val = max(actual[:, i].max(), pred[:, i].max())
+        axes[i].plot([0, max_val], [0, max_val], 'r--', alpha=0.8)
+        
         axes[i].set_xlabel('Actual Firing Rate')
         axes[i].set_ylabel('Predicted Firing Rate')
-        axes[i].set_title(f'Sample {i+1}')
+        axes[i].set_title(f'Neuron {i+1}')
         axes[i].grid(True, alpha=0.3)
+    
+    # Hide unused subplots
+    for i in range(n_plots, len(axes)):
+        axes[i].set_visible(False)
     
     plt.tight_layout()
     return fig
@@ -122,59 +157,7 @@ def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.1
     if N != N_r:
         raise ValueError(f"Mismatch: images have {N} samples but firing rates have {N_r}")
     
-    # Create custom callbacks for Streamlit integration
-    class StreamlitProgressCallback(pl.Callback):
-        def __init__(self, progress_callback=None, metrics_callback=None):
-            super().__init__()
-            self.progress_callback = progress_callback
-            self.metrics_callback = metrics_callback
-            self.current_epoch = 0
-            self.total_epochs = 0
-        
-        def on_train_start(self, trainer, pl_module):
-            self.total_epochs = trainer.max_epochs
-        
-        def on_train_epoch_end(self, trainer, pl_module):
-            self.current_epoch += 1
-            if self.progress_callback:
-                progress = self.current_epoch / self.total_epochs
-                self.progress_callback(progress, f"Epoch {self.current_epoch}/{self.total_epochs}")
-            
-            if self.metrics_callback:
-                train_loss = trainer.callback_metrics.get('train_loss_epoch', 0)
-                val_loss = trainer.callback_metrics.get('val_loss', 0)
-                best_val_loss = trainer.callback_metrics.get('val_loss', float('inf'))
-                
-                if isinstance(train_loss, torch.Tensor):
-                    train_loss = train_loss.item()
-                if isinstance(val_loss, torch.Tensor):
-                    val_loss = val_loss.item()
-                if isinstance(best_val_loss, torch.Tensor):
-                    best_val_loss = best_val_loss.item()
-                
-                self.metrics_callback(train_loss, val_loss, best_val_loss)
-    
-    # Setup callbacks
-    callbacks = [
-        EarlyStopping(
-            monitor='val_loss',
-            patience=early_stopping_patience,
-            mode='min',
-            verbose=True
-        ),
-        ModelCheckpoint(
-            monitor='val_loss',
-            dirpath='data/lightning_checkpoints',
-            filename='encoder-{epoch:02d}-{val_loss:.4f}',
-            save_top_k=3,
-            mode='min',
-            verbose=True
-        ),
-        LearningRateMonitor(logging_interval='epoch'),
-        StreamlitProgressCallback(progress_callback, metrics_callback)
-    ]
-    
-    # Train with Lightning
+    # Train with Lightning (using the existing callback structure)
     trainer, model, data_module = train_model_lightning(
         images=images,
         firing_rates=firing_rates,
@@ -184,9 +167,12 @@ def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.1
         learning_rate=learning_rate,
         epochs=epochs,
         early_stopping_patience=early_stopping_patience,
-        enable_progress_bar=False,  # Disable Lightning's progress bar since we have Streamlit
-        callbacks=callbacks
+        enable_progress_bar=False  # Disable Lightning's progress bar since we have Streamlit
     )
+    
+    # Update progress to 100% when training is complete
+    if progress_callback:
+        progress_callback(1.0, "Training completed!")
     
     # Get test predictions
     model.eval()
@@ -205,6 +191,12 @@ def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.1
     
     # Calculate test loss
     test_loss = np.mean((test_predictions - test_actuals) ** 2)
+    
+    # Update final metrics
+    if metrics_callback:
+        final_train_loss = model.train_losses[-1] if model.train_losses else 0
+        final_val_loss = model.val_losses[-1] if model.val_losses else 0
+        metrics_callback(final_train_loss, final_val_loss, final_val_loss)
     
     return {
         'model': model,
@@ -340,7 +332,7 @@ def main():
             st.info(f"Training info saved to: {training_info_path}")
             
             # Save model
-            model_path = f'data/encoder_model_{timestamp}.pth'
+            model_path = f'data/encoder_model_{os.path.splitext(os.path.basename(data_file))[0]}.pth'
             torch.save(results['model'].state_dict(), model_path)
             st.info(f"Model saved to: {model_path}")
             

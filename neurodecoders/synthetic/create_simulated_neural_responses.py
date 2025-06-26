@@ -12,7 +12,9 @@ import datetime
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def save_output(images, responses, stas, coords, adaptation_states, filename):
+def save_output(images, responses, stas, coords, adaptation_states, dataset_type, sta_type, n_neurons, n_images):
+
+    filename = f"data/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{n_neurons}_n_images-{n_images}_datetime-{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
     np.savez(filename,
              images=images.cpu().numpy(),
              responses=responses,
@@ -349,9 +351,8 @@ def main():
     fig5.savefig("output/neural_correlations.png")
 
     print("Saving dataset...")
-    os.makedirs("output", exist_ok=True)
-    save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states,
-                f"output/simulated_neural_data_{n_neurons}neurons_{n_images}images_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz")
+    os.makedirs("data", exist_ok=True)
+    save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states, "mnist", "perlin_noise_patterns,11,11", n_neurons, n_images)
     print("Done.")
 
 if __name__ == "__main__":

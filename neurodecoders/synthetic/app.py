@@ -8,20 +8,13 @@ import os
 from image_datasets import ImageDataset
 from sta import STA
 from simulate_response import SimulateResponse
-from create_simulated_neural_responses import plot_sta_and_spikes, plot_response_heatmaps_all, plot_response_histograms, plot_neural_correlations
+from create_simulated_neural_responses import plot_sta_and_spikes, plot_response_heatmaps_all, plot_response_histograms, plot_neural_correlations, save_output
 
 # Configure Streamlit page to use wide mode
 st.set_page_config(layout="wide")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def save_output(images, responses, stas, coords, adaptation_states, filename):
-    np.savez(filename,
-             images=images.cpu().numpy(),
-             responses=responses,
-             stas=stas,
-             rf_coords=coords,
-             adaptation_states=adaptation_states)
 
 def main():
     st.title("Neural Response Visualization")
@@ -157,7 +150,8 @@ def main():
             os.makedirs("output", exist_ok=True)
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states,
-                       f"output/simulated_neural_data_{n_neurons}neurons_{n_images}images_{timestamp}.npz")
+                        dataset_type, sta_type, n_neurons, n_images)
+                       
             
             # Create and display the plots
             fig1, fig2 = plot_sta_and_spikes(
@@ -238,8 +232,8 @@ def main():
             timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
             
             # Save the dataset
-            filename = f"output/simulated_neural_data_{large_n_neurons}neurons_{large_n_images}images_{timestamp}.npz"
-            save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states, filename)
+            save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states,
+                        dataset_type, sta_type, large_n_neurons, large_n_images)
             
             # Create and save visualizations
             fig1 = plot_response_heatmaps_all(firing_rates, dot_products, adaptation_states)
@@ -259,7 +253,7 @@ def main():
             st.success(f"Large dataset generated successfully!")
             st.info(f"""
             **Generated Files:**
-            - Dataset: `{filename}`
+            - Dataset: `data/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{large_n_neurons}_n_images-{large_n_images}_datetime-{timestamp}.npz`
             - Heatmaps: `output/heatmaps_all_{timestamp}.png`
             - Histograms: `output/response_histograms_{timestamp}.png`
             - Correlations: `output/neural_correlations_{timestamp}.png`

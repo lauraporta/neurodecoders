@@ -11,6 +11,8 @@ import glob
 import os
 import re
 import datetime
+from pathlib import Path
+
 
 # ---- Dataset class ----
 class NeuralDataset(Dataset):
@@ -84,7 +86,7 @@ class EncoderLightningModule(pl.LightningModule):
     def forward(self, x):
         return self.model(x)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch):
         x, y = batch
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
@@ -93,7 +95,7 @@ class EncoderLightningModule(pl.LightningModule):
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch):
         x, y = batch
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
@@ -102,7 +104,7 @@ class EncoderLightningModule(pl.LightningModule):
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch):
         x, y = batch
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
@@ -117,17 +119,7 @@ class EncoderLightningModule(pl.LightningModule):
             lr=self.learning_rate, 
             weight_decay=self.weight_decay
         )
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.5, patience=2, verbose=True
-        )
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss",
-                "frequency": 1
-            }
-        }
+        return optimizer
 
     def on_train_epoch_end(self):
         # Store losses for plotting
@@ -193,11 +185,11 @@ class NeuralDataModule(pl.LightningDataModule):
             num_workers=self.num_workers
         )
 
-def load_latest_data():
+def load_latest_data(dataset_to_load):
     """Load the latest neural data file"""
-    files = glob.glob('output/simulated_neural_data_1000neurons_1000images_*.npz')
+    files = glob.glob(dataset_to_load)
     if not files:
-        raise FileNotFoundError("No neural data files found in output/ directory")
+        raise FileNotFoundError("No neural data files found in data/ directory")
     
     latest_file = max(files, key=os.path.getctime)
     data = np.load(latest_file)
@@ -348,7 +340,7 @@ def plot_training_results(train_losses, val_losses):
     plt.tight_layout()
     plt.show()
 
-def save_predictions(model, images, firing_rates, input_file_path, output_dir='data'):
+def save_predictions(model, images, firing_rates, input_file_path, output_dir='data', dataset_to_load=None):
     """Save predicted neural responses with the same timestamp as input file"""
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
@@ -380,7 +372,7 @@ def save_predictions(model, images, firing_rates, input_file_path, output_dir='d
         predictions = model(input_images).cpu().numpy()
     
     # Save predictions with same timestamp
-    output_filename = f'predicted_neural_responses_{timestamp}.npz'
+    output_filename = f'encoder_predictions_{dataset_to_load.stem}.npz'
     output_path = os.path.join(output_dir, output_filename)
     
     np.savez(output_path,
@@ -395,13 +387,13 @@ def save_predictions(model, images, firing_rates, input_file_path, output_dir='d
     
     return output_path
 
-def main():
+def main(dataset_to_load):
     """Main function to run the encoder training"""
     print("=== Neural Encoder Training with PyTorch Lightning ===")
     
     # Load data
     print("Loading data...")
-    images, firing_rates, data_file = load_latest_data()
+    images, firing_rates, data_file = load_latest_data(dataset_to_load)
     
     # Preprocess data
     images, firing_rates = preprocess_data(images, firing_rates)
@@ -422,7 +414,7 @@ def main():
     plot_training_results(model.train_losses, model.val_losses)
     
     # Save predictions
-    save_predictions(model, images, firing_rates, data_file)
+    save_predictions(model, images, firing_rates, data_file, dataset_to_load)
     
     # Save final model
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -433,4 +425,5 @@ def main():
     print("=== Lightning Training Complete ===")
 
 if __name__ == "__main__":
-    main()
+    dataset_to_load = Path("data/synthdata_dataset-mnist_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_20250626_114534.npz")
+    main(dataset_to_load)
