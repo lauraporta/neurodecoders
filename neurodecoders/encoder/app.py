@@ -1,22 +1,19 @@
 import streamlit as st
 import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
 import glob
 import datetime
 import os
 import sys
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger
+from pathlib import Path
+import re
 
 # Add the encoder directory to the path so we can import from it
 sys.path.append(os.path.dirname(__file__))
 
 # Import the encoder functionality
-from encoder import SimpleEncoder, NeuralDataset, train_model_lightning
+from encoder import SimpleEncoder, train_model_lightning, save_predictions
 
 # Configure Streamlit page
 st.set_page_config(
@@ -339,6 +336,149 @@ def main():
         except Exception as e:
             st.error(f"Training failed: {str(e)}")
             st.exception(e)
+    
+    # Model loading and inference section
+    st.header("🔍 Model Inference")
+    
+    # Find all possible encoder model files
+    model_files = []
+    model_files.extend(glob.glob('data/best_encoder_model.pth'))
+    model_files.extend(glob.glob('data/encoder_model_*.pth'))
+    model_files.extend(glob.glob('data/lightning_encoder_model_*.pth'))
+    
+    if model_files:
+        st.success(f"Found {len(model_files)} trained model(s)!")
+        
+        # Create a mapping of display names to file paths
+        model_options = {}
+        for file_path in model_files:
+            # Extract meaningful info from filename for display
+            filename = os.path.basename(file_path)
+            # Remove the .pth suffix
+            display_name = filename.replace('.pth', '')
+            # Replace underscores with spaces for better readability
+            display_name = display_name.replace('_', ' ')
+            
+            # Try to extract neuron count from filename for better display
+            neuron_match = re.search(r'n_neurons-(\d+)', filename)
+            if neuron_match:
+                neuron_count = neuron_match.group(1)
+                display_name = f"{display_name} ({neuron_count} neurons)"
+            
+            model_options[display_name] = file_path
+        
+        # Sort by creation time (newest first) for the dropdown
+        sorted_models = sorted(model_options.items(), key=lambda x: os.path.getctime(x[1]), reverse=True)
+        
+        # Create dropdown
+        selected_model_name = st.selectbox(
+            "Select Model:",
+            options=[name for name, _ in sorted_models],
+            index=0,  # Default to newest model
+            help="Choose a trained encoder model to load"
+        )
+        
+        # Get the selected model path
+        selected_model_path = model_options[selected_model_name]
+        
+        if st.button("Load Model and Run Inference"):
+            try:
+                # Load state dict first to determine the model architecture
+                state_dict = torch.load(selected_model_path)
+                
+                # Handle state dicts that have "model." prefix (from Lightning modules)
+                if any(key.startswith('model.') for key in state_dict.keys()):
+                    # Strip the "model." prefix from all keys
+                    new_state_dict = {}
+                    for key, value in state_dict.items():
+                        if key.startswith('model.'):
+                            new_key = key[6:]  # Remove "model." prefix
+                            new_state_dict[new_key] = value
+                        else:
+                            new_state_dict[key] = value
+                    state_dict = new_state_dict
+                
+                # Determine the number of output neurons from the saved model
+                # Look for the final layer weights (fc.6.weight)
+                if 'fc.6.weight' in state_dict:
+                    out_neurons = state_dict['fc.6.weight'].shape[0]
+                elif 'model.fc.6.weight' in torch.load(selected_model_path):
+                    # If we still have the original state dict with model. prefix
+                    out_neurons = torch.load(selected_model_path)['model.fc.6.weight'].shape[0]
+                else:
+                    # Fallback to current dataset size
+                    out_neurons = firing_rates.shape[1]
+                
+                st.info(f"Loading model with {out_neurons} output neurons")
+                
+                # Create model with the correct number of output neurons
+                model = SimpleEncoder(out_neurons=out_neurons).to(device)
+                model.load_state_dict(state_dict)
+                model.eval()
+                
+                # Check if we have data loaded for inference
+                if images is None or firing_rates is None:
+                    st.warning("⚠️ No dataset loaded. Please load a dataset first to run inference.")
+                    st.stop()
+                
+                # Run inference on a few samples
+                with torch.no_grad():
+                    # Handle image dimensions properly
+                    if images.ndim == 4:
+                        # Images are already [N, C, H, W], just take first 5
+                        sample_images = torch.tensor(images[:5], dtype=torch.float32).to(device)
+                    else:
+                        # Images are [N, H, W], add channel dimension
+                        sample_images = torch.tensor(images[:5, None, :, :], dtype=torch.float32).to(device)
+                    
+                    predictions = model(sample_images).cpu().numpy()
+                    actuals = firing_rates[:5]
+                
+                # Save predictions for all data
+                dataset_path = Path(data_file)
+                predictions_file = save_predictions(model, images, firing_rates, data_file, dataset_to_load=dataset_path)
+                st.success(f"Predictions saved to: {predictions_file}")
+                
+                # Display results
+                st.subheader("Sample Predictions")
+                fig, axes = plt.subplots(2, 5, figsize=(20, 8))
+                
+                # Determine how many neurons to plot (minimum of model output and dataset)
+                n_neurons_to_plot = min(predictions.shape[1], actuals.shape[1])
+                
+                for i in range(5):
+                    # Show image - handle different dimensions
+                    if images.ndim == 4:
+                        img_display = images[i, 0]  # Take first channel if 4D
+                    else:
+                        img_display = images[i]
+                    
+                    axes[0, i].imshow(img_display, cmap='gray')
+                    axes[0, i].set_title(f'Sample {i+1}')
+                    axes[0, i].axis('off')
+                    
+                    # Show predictions vs actual (only for neurons that exist in both)
+                    if n_neurons_to_plot > 0:
+                        axes[1, i].scatter(actuals[i, :n_neurons_to_plot], predictions[i, :n_neurons_to_plot], alpha=0.6)
+                        max_val = max(actuals[i, :n_neurons_to_plot].max(), predictions[i, :n_neurons_to_plot].max())
+                        axes[1, i].plot([0, max_val], [0, max_val], 'r--')
+                        axes[1, i].set_xlabel('Actual')
+                        axes[1, i].set_ylabel('Predicted')
+                        axes[1, i].set_title(f'Neurons 1-{n_neurons_to_plot}')
+                    else:
+                        axes[1, i].text(0.5, 0.5, 'No compatible neurons', ha='center', va='center', transform=axes[1, i].transAxes)
+                        axes[1, i].set_title('No Data')
+                    
+                    axes[1, i].grid(True, alpha=0.3)
+                
+                plt.tight_layout()
+                st.pyplot(fig)
+                
+            except Exception as e:
+                st.error(f"Inference failed: {str(e)}")
+                st.exception(e)
+    else:
+        st.info("No trained model found. Train a model first to enable inference.")
 
 if __name__ == "__main__":
     main() 
