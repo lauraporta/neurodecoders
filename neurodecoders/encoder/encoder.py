@@ -61,13 +61,14 @@ class SimpleEncoder(nn.Module):
             nn.Linear(1024, 2048),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(2048, out_neurons)
+            nn.Linear(2048, out_neurons),
+            nn.ELU(),
         )
 
     def forward(self, x):
         x = self.conv(x).squeeze(-1).squeeze(-1)
         x = self.fc(x)
-        return F.softplus(x)  # Non-negative firing rates
+        return x + 1
 
 # ---- Lightning Module ----
 class EncoderLightningModule(pl.LightningModule):
