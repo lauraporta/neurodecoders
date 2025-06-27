@@ -3,7 +3,6 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import glob
-import datetime
 import os
 import sys
 from pathlib import Path
@@ -13,7 +12,7 @@ from skimage.transform import resize
 sys.path.append(os.path.dirname(__file__))
 
 # Import the decoder functionality
-from decoder import SimpleDecoder, DecoderLightningModule, DecoderDataModule, train_model_lightning, save_predictions
+from decoder import DecoderLightningModule, train_model_lightning, save_predictions
 
 # Configure Streamlit page
 st.set_page_config(
@@ -77,11 +76,21 @@ def plot_training_curves(train_losses, val_losses):
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(train_losses, label='Train Loss', linewidth=2)
     ax.plot(val_losses, label='Validation Loss', linewidth=2)
+    
+    # Add horizontal dashed gray line at poor/good threshold (MSE = 0.01)
+    ax.axhline(y=0.01, color='gray', linestyle='--', alpha=0.7, label='Poor/Good Threshold')
+    
     ax.set_xlabel('Epoch')
     ax.set_ylabel('MSE Loss')
     ax.set_title('Training and Validation Loss')
     ax.legend()
     ax.grid(True, alpha=0.3)
+    
+    
+    min_loss = min(min(train_losses), min(val_losses)) if train_losses and val_losses else 0.001
+    max_loss = max(max(train_losses), max(val_losses)) if train_losses and val_losses else 0.05
+    ax.set_ylim(max(min_loss * 0.5, 0.0001), max_loss * 1.5)  # Ensure threshold line is visible
+    
     plt.tight_layout()
     return fig
 
@@ -90,11 +99,20 @@ def plot_psnr_curves(train_psnr, val_psnr):
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(train_psnr, label='Train PSNR', linewidth=2)
     ax.plot(val_psnr, label='Validation PSNR', linewidth=2)
+    
+    # Add horizontal dashed gray line at poor/good threshold (PSNR = 25 dB)
+    ax.axhline(y=25, color='gray', linestyle='--', alpha=0.7, label='Poor/Good Threshold')
+    
     ax.set_xlabel('Epoch')
     ax.set_ylabel('PSNR (dB)')
     ax.set_title('Training and Validation PSNR')
     ax.legend()
     ax.grid(True, alpha=0.3)
+    
+    # Set y-axis to log scale and show full spectrum from 1 to 100 dB
+    ax.set_yscale('log')
+    ax.set_ylim(1, 100)
+    
     plt.tight_layout()
     return fig
 
@@ -103,11 +121,19 @@ def plot_correlation_curves(train_correlation, val_correlation):
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(train_correlation, label='Train Correlation', linewidth=2)
     ax.plot(val_correlation, label='Validation Correlation', linewidth=2)
+    
+    # Add horizontal dashed gray line at poor/good threshold (correlation = 0.5)
+    ax.axhline(y=0.5, color='gray', linestyle='--', alpha=0.7, label='Poor/Good Threshold')
+    
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Correlation')
     ax.set_title('Training and Validation Correlation')
     ax.legend()
     ax.grid(True, alpha=0.3)
+    
+    # Set y-axis to show full spectrum from -1 to 1
+    ax.set_ylim(-1, 1)
+    
     plt.tight_layout()
     return fig
 
@@ -139,12 +165,19 @@ def plot_reconstructions(original_images, reconstructed_images, n_samples=10):
     
     for i in range(n_samples):
         # Original image
-        axes[0, i].imshow(original_images[i], cmap='gray')
+        max_val = np.max(original_images[i])
+        min_val = np.min(original_images[i])
+        print(f"Original image {i} max: {max_val}, min: {min_val}")
+        axes[0, i].imshow(original_images[i], cmap='gray', vmin=-1, vmax=1)
         axes[0, i].set_title(f'Original {i+1}')
         axes[0, i].axis('off')
         
+        
         # Reconstructed image
-        axes[1, i].imshow(reconstructed_images[i], cmap='gray')
+        max_val = np.max(reconstructed_images[i])
+        min_val = np.min(reconstructed_images[i])
+        print(f"Reconstructed image {i} max: {max_val}, min: {min_val}")    
+        axes[1, i].imshow(reconstructed_images[i], cmap='gray', vmin=-1, vmax=1)
         axes[1, i].set_title(f'Reconstructed {i+1}')
         axes[1, i].axis('off')
     
@@ -236,9 +269,9 @@ def main():
     train_split = st.sidebar.slider("Training split", 0.5, 0.9, 0.7, 0.05)
     val_split = st.sidebar.slider("Validation split", 0.1, 0.3, 0.15, 0.05)
     batch_size = st.sidebar.selectbox("Batch size", [16, 32, 64, 128], index=1)
-    learning_rate = st.sidebar.selectbox("Learning rate", [1e-4, 5e-4, 1e-3, 5e-3], index=2)
+    learning_rate = st.sidebar.selectbox("Learning rate", [1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1, 5e-1, 1e-0, 5e-0], index=0)
     epochs = st.sidebar.slider("Epochs", 10, 100, 30)
-    early_stopping_patience = st.sidebar.slider("Early stopping patience", 3, 10, 5)
+    early_stopping_patience = st.sidebar.slider("Early stopping patience", 3, 50, 50)
     
 # Training section
     st.header("🚀 Train Decoder with PyTorch Lightning")
