@@ -65,7 +65,7 @@ class SimpleDecoder(nn.Module):
             
             # Final layer to get single channel
             nn.ConvTranspose2d(64, 1, kernel_size=3, stride=1, padding=1),
-            nn.Sigmoid()  # Output values between 0 and 1
+            nn.Tanh()  # Output values between -1 and 1
         )
 
     def forward(self, x):
