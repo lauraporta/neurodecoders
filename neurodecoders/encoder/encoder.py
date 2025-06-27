@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, random_split
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
 import matplotlib.pyplot as plt
 import glob
@@ -253,7 +253,6 @@ def train_model_lightning(
     batch_size=32, 
     learning_rate=1e-3, 
     epochs=30, 
-    early_stopping_patience=5,
     enable_progress_bar=True,
     log_every_n_steps=50,
     callbacks=None
@@ -285,14 +284,8 @@ def train_model_lightning(
     if callbacks is None:
         callbacks = []
     
-    # Add default callbacks
+    # Add default callbacks (without early stopping)
     callbacks.extend([
-        EarlyStopping(
-            monitor='val_loss',
-            patience=early_stopping_patience,
-            mode='min',
-            verbose=True
-        ),
         LearningRateMonitor(logging_interval='epoch')
     ])
     
@@ -400,7 +393,7 @@ def main(dataset_to_load):
         firing_rates=firing_rates,
         epochs=30,
         learning_rate=1e-3,
-        early_stopping_patience=5
+        enable_progress_bar=True
     )
     
     # Plot training results

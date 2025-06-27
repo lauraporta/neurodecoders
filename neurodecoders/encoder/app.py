@@ -136,7 +136,7 @@ def plot_predictions_vs_actual(pred, actual, n_samples=10):
     return fig
 
 def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.15, 
-                           batch_size=32, learning_rate=1e-3, epochs=30, early_stopping_patience=5,
+                           batch_size=32, learning_rate=1e-3, epochs=30,
                            progress_callback=None, metrics_callback=None):
     """Train the encoder model using PyTorch Lightning with real-time updates"""
     
@@ -163,7 +163,6 @@ def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.1
         batch_size=batch_size,
         learning_rate=learning_rate,
         epochs=epochs,
-        early_stopping_patience=early_stopping_patience,
         enable_progress_bar=False  # Disable Lightning's progress bar since we have Streamlit
     )
     
@@ -245,7 +244,6 @@ def main():
     batch_size = st.sidebar.selectbox("Batch Size", [16, 32, 64, 128], index=1)
     learning_rate = st.sidebar.selectbox("Learning Rate", [1e-4, 5e-4, 1e-3, 5e-3], index=2)
     epochs = st.sidebar.slider("Max Epochs", 10, 100, 30, 5)
-    early_stopping_patience = st.sidebar.slider("Early Stopping Patience", 3, 10, 5, 1)
     
     # Main content
     st.header("📈 Data Visualization")
@@ -291,7 +289,6 @@ def main():
                     batch_size=batch_size,
                     learning_rate=learning_rate,
                     epochs=epochs,
-                    early_stopping_patience=early_stopping_patience,
                     progress_callback=update_progress,
                     metrics_callback=update_metrics
                 )

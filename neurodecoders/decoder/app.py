@@ -167,7 +167,6 @@ def plot_reconstructions(original_images, reconstructed_images, n_samples=10):
         # Original image
         max_val = np.max(original_images[i])
         min_val = np.min(original_images[i])
-        print(f"Original image {i} max: {max_val}, min: {min_val}")
         axes[0, i].imshow(original_images[i], cmap='gray', vmin=-1, vmax=1)
         axes[0, i].set_title(f'Original {i+1}')
         axes[0, i].axis('off')
@@ -176,7 +175,6 @@ def plot_reconstructions(original_images, reconstructed_images, n_samples=10):
         # Reconstructed image
         max_val = np.max(reconstructed_images[i])
         min_val = np.min(reconstructed_images[i])
-        print(f"Reconstructed image {i} max: {max_val}, min: {min_val}")    
         axes[1, i].imshow(reconstructed_images[i], cmap='gray', vmin=-1, vmax=1)
         axes[1, i].set_title(f'Reconstructed {i+1}')
         axes[1, i].axis('off')
@@ -271,7 +269,6 @@ def main():
     batch_size = st.sidebar.selectbox("Batch size", [16, 32, 64, 128], index=1)
     learning_rate = st.sidebar.selectbox("Learning rate", [1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1, 5e-1, 1e-0, 5e-0], index=0)
     epochs = st.sidebar.slider("Epochs", 10, 100, 30)
-    early_stopping_patience = st.sidebar.slider("Early stopping patience", 3, 50, 50)
     
 # Training section
     st.header("🚀 Train Decoder with PyTorch Lightning")
@@ -344,7 +341,6 @@ def main():
                     batch_size=batch_size,
                     learning_rate=learning_rate,
                     epochs=epochs,
-                    early_stopping_patience=early_stopping_patience,
                     enable_progress_bar=False,
                     progress_callback=update_progress,
                     metrics_callback=update_metrics,

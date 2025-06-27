@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, random_split
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor
+from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import TensorBoardLogger
 import matplotlib.pyplot as plt
 import glob
@@ -78,7 +78,7 @@ class SimpleDecoder(nn.Module):
 
 # ---- Lightning Module ----
 class DecoderLightningModule(pl.LightningModule):
-    def __init__(self, in_neurons: int, image_size: int = 64, learning_rate: float = 1e-3, weight_decay: float = 1e-5):
+    def __init__(self, in_neurons, image_size=64, learning_rate=1e-3, weight_decay=1e-5):
         super().__init__()
         self.save_hyperparameters()
         self.model = SimpleDecoder(in_neurons, image_size)
@@ -412,7 +412,6 @@ def train_model_lightning(
     batch_size=32, 
     learning_rate=1e-3, 
     epochs=30, 
-    early_stopping_patience=5,
     enable_progress_bar=True,
     log_every_n_steps=50,
     callbacks=None,
@@ -452,12 +451,6 @@ def train_model_lightning(
     
     # Add default callbacks
     callbacks.extend([
-        EarlyStopping(
-            monitor='val_loss',
-            patience=early_stopping_patience,
-            mode='min',
-            verbose=True
-        ),
         LearningRateMonitor(logging_interval='epoch'),
         StreamlitCallback(
             progress_callback=progress_callback,
@@ -601,8 +594,7 @@ def main(dataset_to_load):
         firing_rates=firing_rates,
         images=images,
         epochs=30,
-        learning_rate=1e-3,
-        early_stopping_patience=5
+        learning_rate=1e-3
     )
     
     # Plot training results
@@ -612,7 +604,6 @@ def main(dataset_to_load):
     save_predictions(model, firing_rates, images, data_file, dataset_to_load)
     
     # Save final model
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     model_path = f'data/decoder_{dataset_to_load.stem}.pth'
     torch.save(model.state_dict(), model_path)
     print(f"Model saved to: {model_path}")
