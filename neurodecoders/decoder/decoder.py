@@ -46,25 +46,30 @@ class SimpleDecoder(nn.Module):
             nn.ReLU()
         )
         
-        # Transposed convolutional layers with adaptive upsampling
+        # Upsampling + Convolution layers to fix checkerboard artifacts
+        # This replaces ConvTranspose2d which can cause checkerboard patterns
+        # due to uneven overlap in the upsampling process
         self.deconv = nn.Sequential(
             # 8x8 -> 16x16
-            nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(512, 256, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
             
             # 16x16 -> 32x32
-            nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(256, 128, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
             
             # 32x32 -> 64x64
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+            nn.Upsample(scale_factor=2, mode='bilinear', align_corners=False),
+            nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             
             # Final layer to get single channel
-            nn.ConvTranspose2d(64, 1, kernel_size=3, stride=1, padding=1),
+            nn.Conv2d(64, 1, kernel_size=3, stride=1, padding=1),
             nn.Tanh()  # Output values between -1 and 1
         )
 
