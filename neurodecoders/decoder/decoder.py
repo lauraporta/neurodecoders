@@ -674,7 +674,7 @@ def main(dataset_to_load):
     plot_training_results(model.train_losses, model.val_losses)
     
     # Save predictions
-    save_predictions(model, firing_rates, images, data_file, dataset_to_load)
+    save_predictions(model, firing_rates, images, data_file, output_dir='data', dataset_to_load=dataset_to_load)
     
     # Save final model
     if isinstance(dataset_to_load, str):
