@@ -340,6 +340,10 @@ class StreamlitCallback(pl.Callback):
 
 def load_latest_data(dataset_to_load):
     """Load the latest neural data file"""
+    # Convert Path object to string if needed
+    if hasattr(dataset_to_load, '__str__'):
+        dataset_to_load = str(dataset_to_load)
+    
     files = glob.glob(dataset_to_load)
     if not files:
         raise FileNotFoundError("No neural data files found in data/ directory")
@@ -552,8 +556,19 @@ def save_predictions(model, firing_rates, images, input_file_path, output_dir='d
     else:
         raise ValueError(f"Unexpected prediction shape: {predictions.shape}")
     
+    # Handle dataset_to_load parameter
+    if dataset_to_load is not None:
+        # Convert to Path object if it's a string
+        if isinstance(dataset_to_load, str):
+            dataset_to_load = Path(dataset_to_load)
+        dataset_name = dataset_to_load.stem
+    else:
+        # Extract name from input_file_path if dataset_to_load is None
+        input_path = Path(input_file_path)
+        dataset_name = input_path.stem
+    
     # Save predictions with same timestamp
-    output_filename = f'decoder_predictions_{dataset_to_load.stem}.npz'
+    output_filename = f'decoder_predictions_{dataset_name}.npz'
     output_path = os.path.join(output_dir, output_filename)
     
     np.savez(output_path,
@@ -617,6 +632,8 @@ def main(dataset_to_load):
     save_predictions(model, firing_rates, images, data_file, dataset_to_load)
     
     # Save final model
+    if isinstance(dataset_to_load, str):
+        dataset_to_load = Path(dataset_to_load)
     model_path = f'data/decoder_{dataset_to_load.stem}.pth'
     torch.save(model.state_dict(), model_path)
     print(f"Model saved to: {model_path}")
