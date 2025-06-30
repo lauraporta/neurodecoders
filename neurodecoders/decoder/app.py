@@ -235,6 +235,7 @@ def load_trained_model(model_path):
         # Load trained weights
         model.load_state_dict(new_state_dict)
         model.eval()
+        model.to(device)
         
         return model
         
