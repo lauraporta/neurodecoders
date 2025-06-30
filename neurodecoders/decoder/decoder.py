@@ -429,6 +429,19 @@ def train_model_lightning(
         model: The trained model
         data_module: The data module
     """
+    # Check available devices
+    if torch.cuda.is_available():
+        device = "CUDA"
+        device_name = torch.cuda.get_device_name(0)
+    elif torch.backends.mps.is_available():
+        device = "MPS (Apple Silicon)"
+        device_name = "Apple Silicon GPU"
+    else:
+        device = "CPU"
+        device_name = "CPU"
+    
+    print(f"Training on: {device} - {device_name}")
+    
     # Create data module
     data_module = DecoderDataModule(
         firing_rates=firing_rates,
@@ -471,8 +484,8 @@ def train_model_lightning(
         logger=logger,
         enable_progress_bar=enable_progress_bar,
         log_every_n_steps=log_every_n_steps,
-        accelerator='cpu' if torch.backends.mps.is_available() else 'auto',  # Force CPU on MPS to avoid compatibility issues
-        devices=1 if torch.backends.mps.is_available() else 'auto',
+        accelerator='auto',  # Let Lightning automatically detect the best accelerator
+        devices='auto',      # Let Lightning automatically detect the number of devices
         deterministic=False,
         enable_checkpointing=False  # Disable checkpoints
     )
@@ -578,8 +591,6 @@ def save_predictions(model, firing_rates, images, input_file_path, output_dir='d
 def main(dataset_to_load):
     """Main function to run the decoder training"""
     print("=== Neural Decoder Training with PyTorch Lightning ===")
-    
-    print(f"Using device: {torch.cuda.current_device()}")
     
     # Load data
     print("Loading data...")
