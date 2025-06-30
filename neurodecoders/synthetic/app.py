@@ -18,6 +18,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def main():
     st.title("Neural Response Visualization")
+    st.info(f"Device in use: {device.type.upper()}")
     
     # Sidebar controls
     st.sidebar.header("Parameters")

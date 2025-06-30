@@ -245,7 +245,7 @@ def load_trained_model(model_path):
 def main():
     st.title("🧠 Neural Decoder Dashboard")
     st.markdown("Train a decoder to reconstruct images from neural responses using PyTorch Lightning")
-    
+    st.info(f"Device in use: {device.type.upper()}")
     # Load data first - moved to beginning of function
     st.sidebar.header("Training configuration")
     

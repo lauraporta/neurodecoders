@@ -284,7 +284,7 @@ def train_model_lightning(
     if callbacks is None:
         callbacks = []
     
-    # Add default callbacks (without early stopping)
+    # Add default callbacks
     callbacks.extend([
         LearningRateMonitor(logging_interval='epoch')
     ])

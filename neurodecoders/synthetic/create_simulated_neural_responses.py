@@ -321,7 +321,7 @@ def main():
     n_neurons = 1000
 
     print("Loading data and model...")
-    images = ImageDataset().get_data("mnist", n_images)
+    images = ImageDataset().get_data("cifar10", n_images=n_images)
     stas = STA().get_simulated_sta("perlin_noise_patterns,11,11")
 
     print("Generating responses...")

@@ -207,6 +207,7 @@ def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.1
 def main():
     st.title("🧠 Neural Encoder Dashboard")
     st.markdown("Train a neural encoder to map images to firing rates using PyTorch Lightning")
+    st.info(f"Device in use: {device.type.upper()}")
     
     # Sidebar controls
     st.sidebar.header("📊 Data & Model Settings")

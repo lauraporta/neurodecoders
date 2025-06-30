@@ -579,6 +579,8 @@ def main(dataset_to_load):
     """Main function to run the decoder training"""
     print("=== Neural Decoder Training with PyTorch Lightning ===")
     
+    print(f"Using device: {torch.cuda.current_device()}")
+    
     # Load data
     print("Loading data...")
     images, firing_rates, data_file = load_latest_data(dataset_to_load)
@@ -593,8 +595,8 @@ def main(dataset_to_load):
     trainer, model, data_module = train_model_lightning(
         firing_rates=firing_rates,
         images=images,
-        epochs=30,
-        learning_rate=1e-3
+        epochs=100,
+        learning_rate=1e-4
     )
     
     # Plot training results
@@ -611,5 +613,5 @@ def main(dataset_to_load):
     print("=== Lightning Training Complete ===")
 
 if __name__ == "__main__":
-    dataset_to_load = Path("data/synthdata_dataset-mnist_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_20250626_114534.npz")
+    dataset_to_load = Path("data/synthdata_dataset-mnist_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250630_164248.npz")
     main(dataset_to_load)

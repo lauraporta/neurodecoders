@@ -16,6 +16,7 @@ dependencies = [
     "streamlit",
     "noise",
     "pytorch-lightning",
+    "scikit-image",
 ]
 
 license = {text = "BSD-3-Clause"}
