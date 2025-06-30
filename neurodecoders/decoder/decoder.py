@@ -355,6 +355,40 @@ def load_latest_data(dataset_to_load):
     
     return images, firing_rates, latest_file
 
+def print_device_info():
+    """Print detailed information about available devices"""
+    print("\n=== Device Information ===")
+    
+    if torch.cuda.is_available():
+        print(f"CUDA available: True")
+        print(f"CUDA version: {torch.version.cuda}")
+        print(f"Number of CUDA devices: {torch.cuda.device_count()}")
+        
+        for i in range(torch.cuda.device_count()):
+            device_name = torch.cuda.get_device_name(i)
+            device_capability = torch.cuda.get_device_capability(i)
+            device_memory = torch.cuda.get_device_properties(i).total_memory / 1024**3  # Convert to GB
+            
+            print(f"\nDevice {i}: {device_name}")
+            print(f"  Compute Capability: {device_capability[0]}.{device_capability[1]}")
+            print(f"  Memory: {device_memory:.1f} GB")
+            
+            # Check for Tensor Cores
+            if device_capability[0] >= 7:
+                print(f"  Tensor Cores: Available (Volta+ architecture)")
+            else:
+                print(f"  Tensor Cores: Not available (pre-Volta architecture)")
+                
+    elif torch.backends.mps.is_available():
+        print("MPS (Apple Silicon) available: True")
+        print("Device: Apple Silicon GPU")
+    else:
+        print("CUDA available: False")
+        print("MPS available: False")
+        print("Using: CPU")
+    
+    print("=" * 30 + "\n")
+
 def preprocess_data(images, firing_rates):
     """Preprocess and validate the data"""
     print(f"Images shape: {images.shape}")
@@ -437,6 +471,14 @@ def train_model_lightning(
     if torch.cuda.is_available():
         device = "CUDA"
         device_name = torch.cuda.get_device_name(0)
+        
+        # Check if device supports Tensor Cores and enable them
+        if torch.cuda.get_device_capability(0)[0] >= 7:  # Volta architecture and newer
+            print(f"Tensor Cores detected on {device_name}. Enabling high precision matmul for optimal performance.")
+            torch.set_float32_matmul_precision('high')
+        else:
+            print(f"CUDA device {device_name} detected, but Tensor Cores not available.")
+            
     elif torch.backends.mps.is_available():
         device = "MPS (Apple Silicon)"
         device_name = "Apple Silicon GPU"
@@ -606,6 +648,9 @@ def save_predictions(model, firing_rates, images, input_file_path, output_dir='d
 def main(dataset_to_load):
     """Main function to run the decoder training"""
     print("=== Neural Decoder Training with PyTorch Lightning ===")
+    
+    # Print device information
+    print_device_info()
     
     # Load data
     print("Loading data...")
