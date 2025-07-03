@@ -12,7 +12,7 @@ import datetime
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def save_output(images, responses, stas, coords, adaptation_states, dataset_type, sta_type, n_neurons, n_images):
+def save_output(images, responses, stas, coords, adaptation_states, labels, dataset_type, sta_type, n_neurons, n_images):
 
     filename = f"data/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{n_neurons}_n_images-{n_images}_datetime-{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
     np.savez(filename,
@@ -20,7 +20,8 @@ def save_output(images, responses, stas, coords, adaptation_states, dataset_type
              responses=responses,
              stas=stas,
              rf_coords=coords,
-             adaptation_states=adaptation_states)
+             adaptation_states=adaptation_states,
+             labels=labels.cpu().numpy())
 
 def plot_sta_and_spikes(images, responses, dot_products, adaptation_states, stas, coords, n_plot_images=5, n_top_neurons=5):    
     # First sort images by their maximum firing rate
@@ -321,7 +322,7 @@ def main():
     n_neurons = 1000
 
     print("Loading data and model...")
-    images = ImageDataset().get_data("cifar10", n_images=n_images)
+    images, labels = ImageDataset().get_data("cifar10", n_images=n_images)
     stas = STA().get_simulated_sta("perlin_noise_patterns,11,11")
 
     print("Generating responses...")
@@ -338,6 +339,9 @@ def main():
         coords=simulator.rf_coords
     )
     
+    # Create output directory
+    os.makedirs("output", exist_ok=True)
+    
     # Add heatmap plot (all neurons, all images)
     fig3 = plot_response_heatmaps_all(firing_rates, dot_products, adaptation_states)
     fig3.savefig("output/heatmaps_all.png")
@@ -352,7 +356,7 @@ def main():
 
     print("Saving dataset...")
     os.makedirs("data", exist_ok=True)
-    save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states, "mnist", "perlin_noise_patterns,11,11", n_neurons, n_images)
+    save_output(images, firing_rates, simulator.selected_stas, simulator.rf_coords, adaptation_states, labels, "cifar10", "perlin_noise_patterns,11,11", n_neurons, n_images)
     print("Done.")
 
 if __name__ == "__main__":

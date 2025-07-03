@@ -23,9 +23,9 @@ class ImageDataset:
         ])
         dataset = dataset_class(root='./data', train=True, download=True, transform=transform)
         loader = torch.utils.data.DataLoader(dataset, batch_size=n_images, shuffle=True)
-        images, _ = next(iter(loader))
+        images, labels = next(iter(loader))
         # No need for additional normalization since ToTensor and Normalize already give us [-1, 1]
-        return images[:n_images]
+        return images[:n_images], labels[:n_images]
     
 
     

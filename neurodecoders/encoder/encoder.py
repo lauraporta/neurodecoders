@@ -188,9 +188,20 @@ class NeuralDataModule(pl.LightningDataModule):
 
 def load_latest_data(dataset_to_load):
     """Load the latest neural data file"""
-    files = glob.glob(dataset_to_load)
+    # If dataset_to_load is a Path object, convert to string
+    if hasattr(dataset_to_load, '__str__'):
+        dataset_to_load = str(dataset_to_load)
+    
+    # Check if it's a specific file or a pattern
+    if os.path.isfile(dataset_to_load):
+        # It's a specific file
+        files = [dataset_to_load]
+    else:
+        # It's a pattern, use glob
+        files = glob.glob(dataset_to_load)
+    
     if not files:
-        raise FileNotFoundError("No neural data files found in data/ directory")
+        raise FileNotFoundError(f"No neural data files found matching: {dataset_to_load}")
     
     latest_file = max(files, key=os.path.getctime)
     data = np.load(latest_file)
@@ -358,7 +369,7 @@ def save_predictions(model, images, firing_rates, input_file_path, output_dir='d
         predictions = model(input_images).cpu().numpy()
     
     # Save predictions with same timestamp
-    output_filename = f'encoder_predictions_{dataset_to_load.stem}.npz'
+    output_filename = f'encoder_predictions_{Path(input_file_path).stem}.npz'
     output_path = os.path.join(output_dir, output_filename)
     
     np.savez(output_path,
@@ -400,16 +411,18 @@ def main(dataset_to_load):
     plot_training_results(model.train_losses, model.val_losses)
     
     # Save predictions
-    save_predictions(model, images, firing_rates, data_file, dataset_to_load)
+    save_predictions(model, images, firing_rates, data_file, 'data', dataset_to_load)
     
-    # Save final model
+    # Save final model with dataset information
+    dataset_name = Path(data_file).stem
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_path = f'data/lightning_encoder_model_{timestamp}.pth'
+    model_path = f'data/encoder_model_{dataset_name}_datetime-{timestamp}.pth'
     torch.save(model.state_dict(), model_path)
     print(f"Model saved to: {model_path}")
     
     print("=== Lightning Training Complete ===")
 
 if __name__ == "__main__":
-    dataset_to_load = Path("data/synthdata_dataset-mnist_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_20250626_114534.npz")
+    # Use the new CIFAR-10 dataset with labels
+    dataset_to_load = Path("data/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250703_162151.npz")
     main(dataset_to_load)
