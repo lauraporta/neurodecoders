@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Launch script for neurodecoders Streamlit apps
-# This script launches all three apps on different ports
+# This script launches all four apps on different ports
 
 echo "🚀 Launching neurodecoders apps..."
 
@@ -20,6 +20,7 @@ launch_app() {
 launch_app "Synthetic Data Generator" "neurodecoders/synthetic/app.py" 8501
 launch_app "Neural Encoder" "neurodecoders/encoder/app.py" 8502  
 launch_app "Neural Decoder" "neurodecoders/decoder/app.py" 8503
+launch_app "MEI (Maximal Exciting Image)" "neurodecoders/extract_mei/app.py" 8504
 
 echo ""
 echo "🎉 All apps launched successfully!"
@@ -28,6 +29,7 @@ echo "📱 App URLs:"
 echo "   Synthetic Data Generator: http://localhost:8501"
 echo "   Neural Encoder:           http://localhost:8502"
 echo "   Neural Decoder:           http://localhost:8503"
+echo "   MEI (Maximal Exciting Image): http://localhost:8504"
 echo ""
 echo "💡 To stop all apps, run: pkill -f streamlit"
 echo ""
