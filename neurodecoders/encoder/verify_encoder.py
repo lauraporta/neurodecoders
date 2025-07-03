@@ -48,23 +48,53 @@ class EncoderVerifier:
             print(f"Error loading model: {e}")
             return
         
-        # Determine output neurons
-        if 'model.fc.6.weight' in state_dict:
-            out_neurons = state_dict['model.fc.6.weight'].shape[0]
-        elif 'fc.6.weight' in state_dict:
-            out_neurons = state_dict['fc.6.weight'].shape[0]
+        # Determine encoder type from model path
+        model_name = os.path.basename(model_path)
+        if 'resnet' in model_name.lower():
+            encoder_type = 'resnet'
+            print("Detected ResNet encoder")
         else:
-            # Find the last fc layer
-            fc_keys = [k for k in state_dict.keys() if 'fc' in k and 'weight' in k]
-            if not fc_keys:
-                print("No fc layers found in model")
-                return
-            last_fc_key = sorted(fc_keys)[-1]
-            out_neurons = state_dict[last_fc_key].shape[0]
+            encoder_type = 'simple'
+            print("Detected Simple encoder")
         
-        self.encoder = SimpleEncoder(out_neurons)
+        # Determine output neurons based on encoder type
+        if encoder_type == 'resnet':
+            # For ResNet, look for firing_head layers
+            if 'firing_head.6.weight' in state_dict:
+                out_neurons = state_dict['firing_head.6.weight'].shape[0]
+            elif 'model.firing_head.6.weight' in state_dict:
+                out_neurons = state_dict['model.firing_head.6.weight'].shape[0]
+            else:
+                # Find the last firing_head layer
+                firing_head_keys = [k for k in state_dict.keys() if 'firing_head' in k and 'weight' in k]
+                if not firing_head_keys:
+                    print("No firing_head layers found in ResNet model")
+                    return
+                last_firing_head_key = sorted(firing_head_keys)[-1]
+                out_neurons = state_dict[last_firing_head_key].shape[0]
+            
+            # Import and create ResNet encoder
+            from neurodecoders.encoder.resnet_encoder import ResNetEncoder
+            self.encoder = ResNetEncoder(out_neurons, resnet_type='resnet18')
+            
+        else:  # Simple encoder
+            # Determine output neurons for simple encoder
+            if 'model.fc.6.weight' in state_dict:
+                out_neurons = state_dict['model.fc.6.weight'].shape[0]
+            elif 'fc.6.weight' in state_dict:
+                out_neurons = state_dict['fc.6.weight'].shape[0]
+            else:
+                # Find the last fc layer
+                fc_keys = [k for k in state_dict.keys() if 'fc' in k and 'weight' in k]
+                if not fc_keys:
+                    print("No fc layers found in model")
+                    return
+                last_fc_key = sorted(fc_keys)[-1]
+                out_neurons = state_dict[last_fc_key].shape[0]
+            
+            self.encoder = SimpleEncoder(out_neurons)
         
-        # Handle nested model structure
+        # Handle nested model structure for both encoder types
         if any(k.startswith('model.') for k in state_dict.keys()):
             new_state_dict = {}
             for key, value in state_dict.items():
@@ -563,24 +593,43 @@ class EncoderVerifier:
 
 def main():
     """Main function to run encoder verification"""
-    # Find the latest encoder model
-    model_files = glob.glob("data/encoder_model_*.pth")
-    if not model_files:
-        print("No encoder models found in data/ directory")
-        return
-    
-    latest_model = max(model_files, key=os.path.getctime)
-    print(f"Using latest encoder model: {latest_model}")
-    
-    # Check for optional data_path argument
-    data_path = None
+    import re
+    # If a model path is provided as the first argument, use it
     if len(sys.argv) > 1:
-        data_path = sys.argv[1]
-        print(f"Using data file: {data_path}")
+        model_path = sys.argv[1]
+        print(f"Using specified encoder model: {model_path}")
+        # Try to infer the dataset file from the model filename
+        # Look for the dataset stem in the model filename
+        match = re.search(r'(synthdata_dataset-[^_]+_sta-[^_]+_n_neurons-\d+_n_images-\d+_datetime-\d+_\d+)', model_path)
+        if match:
+            dataset_stem = match.group(1)
+            # Find the matching .npz file
+            data_candidates = glob.glob(f"data/{dataset_stem}.npz")
+            if data_candidates:
+                data_path = data_candidates[0]
+                print(f"Inferred data file: {data_path}")
+            else:
+                print(f"Could not find data file for dataset stem: {dataset_stem}")
+                data_path = None
+        else:
+            print("Could not parse dataset stem from model filename. Please provide data file as second argument if needed.")
+            data_path = sys.argv[2] if len(sys.argv) > 2 else None
+    else:
+        # Fall back to previous behavior: use latest model
+        model_files = glob.glob("data/encoder_model_*.pth") + glob.glob("data/resnet_encoder_model_*.pth")
+        if not model_files:
+            print("No encoder models found in data/ directory")
+            return
+        model_path = max(model_files, key=os.path.getctime)
+        print(f"Using latest encoder model: {model_path}")
+        data_path = None
+        if len(sys.argv) > 1:
+            data_path = sys.argv[1]
+            print(f"Using data file: {data_path}")
     
     # Create verifier and run analysis
     verifier = EncoderVerifier()
-    results = verifier.run_full_analysis(latest_model, data_path)
+    results = verifier.run_full_analysis(model_path, data_path)
     
     return results
 
