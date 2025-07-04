@@ -359,18 +359,47 @@ class EncoderVerifier:
             X, y, test_size=0.3, random_state=42, stratify=y
         )
         
-        # Train Random Forest classifier
-        print("Training Random Forest classifier on predicted firing rates...")
-        rf_classifier = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-        rf_classifier.fit(X_train, y_train)
+        # Test multiple classifiers
+        from sklearn.svm import SVC
+        from sklearn.neural_network import MLPClassifier
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.preprocessing import StandardScaler
         
-        # Predictions
-        y_pred = rf_classifier.predict(X_test)
-        accuracy = accuracy_score(y_test, y_pred)
+        classifiers = {
+            'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1),
+            'SVM (RBF)': SVC(kernel='rbf', random_state=42),
+            'SVM (Linear)': SVC(kernel='linear', random_state=42),
+            'MLP (2 layers)': MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=500, random_state=42),
+            'MLP (3 layers)': MLPClassifier(hidden_layer_sizes=(200, 100, 50), max_iter=500, random_state=42)
+        }
         
-        print(f"Classification accuracy using predicted firing rates: {accuracy:.3f}")
-        print("\nClassification Report:")
-        print(classification_report(y_test, y_pred))
+        results = {}
+        
+        print("Testing different classifiers on PREDICTED firing rates:")
+        print("-" * 60)
+        
+        for name, clf in classifiers.items():
+            print(f"\nTraining {name}...")
+            
+            # For SVM and MLP, we need to scale the features
+            if name.startswith('SVM') or name.startswith('MLP'):
+                scaler = StandardScaler()
+                X_train_scaled = scaler.fit_transform(X_train)
+                X_test_scaled = scaler.transform(X_test)
+                
+                clf.fit(X_train_scaled, y_train)
+                y_pred = clf.predict(X_test_scaled)
+            else:
+                clf.fit(X_train, y_train)
+                y_pred = clf.predict(X_test)
+            
+            accuracy = accuracy_score(y_test, y_pred)
+            results[f'{name}_pred'] = accuracy
+            print(f"{name} accuracy: {accuracy:.3f}")
+        
+        print("\n" + "=" * 60)
+        print("Testing different classifiers on TRUE firing rates:")
+        print("-" * 60)
         
         # Compare with true firing rates
         X_true = self.true_firing_rates
@@ -378,50 +407,114 @@ class EncoderVerifier:
             X_true, y, test_size=0.3, random_state=42, stratify=y
         )
         
-        rf_true = RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1)
-        rf_true.fit(X_true_train, y_train_true)
-        y_pred_true = rf_true.predict(X_true_test)
-        accuracy_true = accuracy_score(y_test_true, y_pred_true)
+        for name, clf in classifiers.items():
+            print(f"\nTraining {name} on TRUE firing rates...")
+            
+            # For SVM and MLP, we need to scale the features
+            if name.startswith('SVM') or name.startswith('MLP'):
+                scaler = StandardScaler()
+                X_true_train_scaled = scaler.fit_transform(X_true_train)
+                X_true_test_scaled = scaler.transform(X_true_test)
+                
+                clf.fit(X_true_train_scaled, y_train_true)
+                y_pred_true = clf.predict(X_true_test_scaled)
+            else:
+                clf.fit(X_true_train, y_train_true)
+                y_pred_true = clf.predict(X_true_test)
+            
+            accuracy_true = accuracy_score(y_test_true, y_pred_true)
+            results[f'{name}_true'] = accuracy_true
+            print(f"{name} accuracy (TRUE): {accuracy_true:.3f}")
         
-        print(f"\nClassification accuracy using TRUE firing rates: {accuracy_true:.3f}")
-        print(f"Performance degradation: {((accuracy_true - accuracy) / accuracy_true * 100):.1f}%")
+        # Find best classifier for each type
+        pred_accuracies = {k: v for k, v in results.items() if k.endswith('_pred')}
+        true_accuracies = {k: v for k, v in results.items() if k.endswith('_true')}
         
-        # Feature importance analysis
-        feature_importance = rf_classifier.feature_importances_
-        top_neurons = np.argsort(feature_importance)[-10:]  # Top 10 neurons
+        best_pred_classifier = max(pred_accuracies.items(), key=lambda x: x[1])
+        best_true_classifier = max(true_accuracies.items(), key=lambda x: x[1])
         
-        print(f"\nTop 10 most important neurons for classification:")
-        for i, neuron_idx in enumerate(reversed(top_neurons)):
-            print(f"  {i+1}. Neuron {neuron_idx}: importance = {feature_importance[neuron_idx]:.4f}")
+        print("\n" + "=" * 60)
+        print("SUMMARY:")
+        print("-" * 60)
+        print(f"Best classifier for PREDICTED firing rates: {best_pred_classifier[0].replace('_pred', '')} ({best_pred_classifier[1]:.3f})")
+        print(f"Best classifier for TRUE firing rates: {best_true_classifier[0].replace('_true', '')} ({best_true_classifier[1]:.3f})")
         
-        # Plot feature importance
+        if best_true_classifier[1] > 0:
+            degradation = ((best_true_classifier[1] - best_pred_classifier[1]) / best_true_classifier[1]) * 100
+            print(f"Performance degradation: {degradation:.1f}%")
+        
+        # Plot comparison
         fig, axes = plt.subplots(1, 2, figsize=(15, 6))
         
-        # Feature importance histogram
-        axes[0].hist(feature_importance, bins=30, alpha=0.7, edgecolor='black')
-        axes[0].set_xlabel('Feature Importance')
-        axes[0].set_ylabel('Number of Neurons')
-        axes[0].set_title('Distribution of Feature Importance')
-        axes[0].grid(True, alpha=0.3)
+        # Predicted vs True comparison
+        classifier_names = [name.replace('_pred', '').replace('_true', '') for name in pred_accuracies.keys()]
+        pred_scores = list(pred_accuracies.values())
+        true_scores = list(true_accuracies.values())
         
-        # Top neurons importance
-        top_importance = feature_importance[top_neurons]
-        axes[1].barh(range(len(top_neurons)), top_importance)
-        axes[1].set_yticks(range(len(top_neurons)))
-        axes[1].set_yticklabels([f'Neuron {idx}' for idx in top_neurons])
-        axes[1].set_xlabel('Feature Importance')
-        axes[1].set_title('Top 10 Most Important Neurons')
+        x = np.arange(len(classifier_names))
+        width = 0.35
+        
+        axes[0].bar(x - width/2, pred_scores, width, label='Predicted', alpha=0.8)
+        axes[0].bar(x + width/2, true_scores, width, label='True', alpha=0.8)
+        axes[0].set_xlabel('Classifier')
+        axes[0].set_ylabel('Accuracy')
+        axes[0].set_title('Classification Accuracy: Predicted vs True Firing Rates')
+        axes[0].set_xticks(x)
+        axes[0].set_xticklabels(classifier_names, rotation=45, ha='right')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
+        axes[0].set_ylim(0, 1)
+        
+        # Add accuracy values on bars
+        for i, (pred, true) in enumerate(zip(pred_scores, true_scores)):
+            axes[0].text(i - width/2, pred + 0.01, f'{pred:.3f}', ha='center', va='bottom', fontsize=8)
+            axes[0].text(i + width/2, true + 0.01, f'{true:.3f}', ha='center', va='bottom', fontsize=8)
+        
+        # Performance degradation
+        degradations = [(true - pred) / true * 100 if true > 0 else 0 for pred, true in zip(pred_scores, true_scores)]
+        axes[1].bar(classifier_names, degradations, alpha=0.8, color='orange')
+        axes[1].set_xlabel('Classifier')
+        axes[1].set_ylabel('Performance Degradation (%)')
+        axes[1].set_title('Performance Degradation: (True - Predicted) / True')
+        axes[1].set_xticklabels(classifier_names, rotation=45, ha='right')
         axes[1].grid(True, alpha=0.3)
+        axes[1].axhline(y=0, color='black', linestyle='-', alpha=0.3)
+        
+        # Add degradation values on bars
+        for i, deg in enumerate(degradations):
+            axes[1].text(i, deg + 1, f'{deg:.1f}%', ha='center', va='bottom', fontsize=8)
         
         plt.tight_layout()
-        plt.savefig('data/encoder_classification_analysis.png', dpi=300, bbox_inches='tight')
+        plt.savefig('data/encoder_classifier_comparison.png', dpi=300, bbox_inches='tight')
         plt.show()
         
+        # Feature importance analysis for best classifier
+        print(f"\nFeature importance analysis for best classifier ({best_pred_classifier[0].replace('_pred', '')}):")
+        
+        # Retrain best classifier to get feature importance
+        best_clf_name = best_pred_classifier[0].replace('_pred', '')
+        best_clf = classifiers[best_clf_name]
+        
+        if hasattr(best_clf, 'feature_importances_'):
+            # For Random Forest
+            if name.startswith('SVM') or name.startswith('MLP'):
+                scaler = StandardScaler()
+                X_train_scaled = scaler.fit_transform(X_train)
+                best_clf.fit(X_train_scaled, y_train)
+            else:
+                best_clf.fit(X_train, y_train)
+            
+            feature_importance = best_clf.feature_importances_
+            top_neurons = np.argsort(feature_importance)[-10:]  # Top 10 neurons
+            
+            print(f"\nTop 10 most important neurons for classification:")
+            for i, neuron_idx in enumerate(reversed(top_neurons)):
+                print(f"  {i+1}. Neuron {neuron_idx}: importance = {feature_importance[neuron_idx]:.4f}")
+        
         return {
-            'accuracy_pred': accuracy,
-            'accuracy_true': accuracy_true,
-            'feature_importance': feature_importance,
-            'top_neurons': top_neurons
+            'results': results,
+            'best_pred_classifier': best_pred_classifier,
+            'best_true_classifier': best_true_classifier
         }
     
     def analyze_encoder_representations(self):
@@ -549,6 +642,241 @@ class EncoderVerifier:
         
         return suggestions
     
+    def analyze_feature_scaling_and_separability(self):
+        """Analyze feature scaling effects and investigate why linear SVM works well"""
+        print("\n=== FEATURE SCALING AND LINEAR SEPARABILITY ANALYSIS ===")
+        
+        if self.image_labels is None:
+            print("No image labels available. Skipping analysis.")
+            return None
+        
+        from sklearn.preprocessing import StandardScaler, MinMaxScaler
+        from sklearn.svm import SVC
+        from sklearn.metrics import accuracy_score
+        from sklearn.model_selection import train_test_split
+        import matplotlib.pyplot as plt
+        
+        # Prepare data
+        X_pred = self.predicted_firing_rates
+        X_true = self.true_firing_rates
+        y = self.image_labels
+        
+        X_train_pred, X_test_pred, y_train, y_test = train_test_split(
+            X_pred, y, test_size=0.3, random_state=42, stratify=y
+        )
+        
+        # Test different scaling methods
+        scalers = {
+            'No Scaling': None,
+            'StandardScaler': StandardScaler(),
+            'MinMaxScaler': MinMaxScaler()
+        }
+        
+        print("Testing different scaling methods with Linear SVM:")
+        print("-" * 60)
+        
+        scaling_results = {}
+        
+        for scaler_name, scaler in scalers.items():
+            if scaler is None:
+                X_train_scaled = X_train_pred
+                X_test_scaled = X_test_pred
+            else:
+                X_train_scaled = scaler.fit_transform(X_train_pred)
+                X_test_scaled = scaler.transform(X_test_pred)
+            
+            # Train linear SVM
+            svm = SVC(kernel='linear', random_state=42)
+            svm.fit(X_train_scaled, y_train)
+            y_pred = svm.predict(X_test_scaled)
+            accuracy = accuracy_score(y_test, y_pred)
+            
+            scaling_results[scaler_name] = accuracy
+            print(f"{scaler_name}: {accuracy:.3f}")
+        
+        # Analyze feature distributions
+        print(f"\nFeature distribution analysis:")
+        print("-" * 60)
+        
+        # Original feature statistics
+        pred_mean = np.mean(X_pred, axis=0)
+        pred_std = np.std(X_pred, axis=0)
+        pred_min = np.min(X_pred, axis=0)
+        pred_max = np.max(X_pred, axis=0)
+        
+        true_mean = np.mean(X_true, axis=0)
+        true_std = np.std(X_true, axis=0)
+        true_min = np.min(X_true, axis=0)
+        true_max = np.max(X_true, axis=0)
+        
+        print(f"Predicted firing rates:")
+        print(f"  Mean: {np.mean(pred_mean):.2f} ± {np.std(pred_mean):.2f}")
+        print(f"  Std: {np.mean(pred_std):.2f} ± {np.std(pred_std):.2f}")
+        print(f"  Range: [{np.mean(pred_min):.2f}, {np.mean(pred_max):.2f}]")
+        print(f"  Coefficient of variation: {np.mean(pred_std/pred_mean):.3f}")
+        
+        print(f"\nTrue firing rates:")
+        print(f"  Mean: {np.mean(true_mean):.2f} ± {np.std(true_mean):.2f}")
+        print(f"  Std: {np.mean(true_std):.2f} ± {np.std(true_std):.2f}")
+        print(f"  Range: [{np.mean(true_min):.2f}, {np.mean(true_max):.2f}]")
+        print(f"  Coefficient of variation: {np.mean(true_std/true_mean):.3f}")
+        
+        # Analyze linear separability
+        print(f"\nLinear separability analysis:")
+        print("-" * 60)
+        
+        # Use PCA to visualize separability in 2D
+        from sklearn.decomposition import PCA
+        
+        # Standardize for PCA
+        scaler = StandardScaler()
+        X_pred_scaled = scaler.fit_transform(X_pred)
+        X_true_scaled = scaler.fit_transform(X_true)
+        
+        # PCA to 2D
+        pca = PCA(n_components=2)
+        X_pred_2d = pca.fit_transform(X_pred_scaled)
+        X_true_2d = pca.fit_transform(X_true_scaled)
+        
+        # Calculate class separability metrics
+        def calculate_separability(X, y):
+            # Calculate Fisher's discriminant ratio
+            classes = np.unique(y)
+            if len(classes) < 2:
+                return 0
+            
+            # Calculate between-class and within-class scatter
+            overall_mean = np.mean(X, axis=0)
+            between_class_scatter = 0
+            within_class_scatter = 0
+            
+            for c in classes:
+                class_mask = (y == c)
+                class_data = X[class_mask]
+                class_mean = np.mean(class_data, axis=0)
+                class_size = np.sum(class_mask)
+                
+                # Between-class scatter
+                diff = class_mean - overall_mean
+                between_class_scatter += class_size * np.outer(diff, diff)
+                
+                # Within-class scatter
+                for sample in class_data:
+                    diff = sample - class_mean
+                    within_class_scatter += np.outer(diff, diff)
+            
+            # Fisher's discriminant ratio
+            if np.linalg.det(within_class_scatter) > 1e-10:
+                fisher_ratio = np.trace(np.linalg.inv(within_class_scatter) @ between_class_scatter)
+                return fisher_ratio
+            else:
+                return 0
+        
+        separability_pred = calculate_separability(X_pred_scaled, y)
+        separability_true = calculate_separability(X_true_scaled, y)
+        
+        print(f"Fisher's discriminant ratio (higher = better separability):")
+        print(f"  Predicted firing rates: {separability_pred:.3f}")
+        print(f"  True firing rates: {separability_true:.3f}")
+        print(f"  Ratio (pred/true): {separability_pred/separability_true:.3f}")
+        
+        # Analyze support vectors
+        print(f"\nSupport vector analysis:")
+        print("-" * 60)
+        
+        # Train linear SVM on scaled data
+        scaler = StandardScaler()
+        X_train_scaled = scaler.fit_transform(X_train_pred)
+        X_test_scaled = scaler.transform(X_test_pred)
+        
+        svm = SVC(kernel='linear', random_state=42)
+        svm.fit(X_train_scaled, y_train)
+        
+        n_support_vectors = len(svm.support_vectors_)
+        n_samples = len(X_train_scaled)
+        support_ratio = n_support_vectors / n_samples
+        
+        print(f"Number of support vectors: {n_support_vectors}")
+        print(f"Total training samples: {n_samples}")
+        print(f"Support vector ratio: {support_ratio:.3f}")
+        print(f"Margin size: {1/np.linalg.norm(svm.coef_[0]):.6f}")
+        
+        # Feature importance from SVM weights
+        feature_importance = np.abs(svm.coef_[0])
+        top_features = np.argsort(feature_importance)[-10:]
+        
+        print(f"\nTop 10 most important features (neurons) for linear SVM:")
+        for i, feat_idx in enumerate(reversed(top_features)):
+            print(f"  {i+1}. Neuron {feat_idx}: weight = {svm.coef_[0][feat_idx]:.4f}")
+        
+        # Plotting
+        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+        
+        # 1. Scaling comparison
+        scaler_names = list(scaling_results.keys())
+        scaler_accuracies = list(scaling_results.values())
+        axes[0, 0].bar(scaler_names, scaler_accuracies, alpha=0.8)
+        axes[0, 0].set_ylabel('Accuracy')
+        axes[0, 0].set_title('Linear SVM Performance with Different Scaling')
+        axes[0, 0].set_ylim(0, 1)
+        for i, acc in enumerate(scaler_accuracies):
+            axes[0, 0].text(i, acc + 0.01, f'{acc:.3f}', ha='center', va='bottom')
+        
+        # 2. Feature distribution comparison
+        axes[0, 1].hist(pred_std, bins=30, alpha=0.7, label='Predicted', edgecolor='black')
+        axes[0, 1].hist(true_std, bins=30, alpha=0.7, label='True', edgecolor='black')
+        axes[0, 1].set_xlabel('Feature Standard Deviation')
+        axes[0, 1].set_ylabel('Number of Features')
+        axes[0, 1].set_title('Feature Variance Distribution')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # 3. Feature importance distribution
+        axes[0, 2].hist(feature_importance, bins=30, alpha=0.7, edgecolor='black')
+        axes[0, 2].set_xlabel('SVM Feature Weight (Absolute)')
+        axes[0, 2].set_ylabel('Number of Features')
+        axes[0, 2].set_title('SVM Feature Importance Distribution')
+        axes[0, 2].grid(True, alpha=0.3)
+        
+        # 4. PCA visualization - Predicted
+        scatter = axes[1, 0].scatter(X_pred_2d[:, 0], X_pred_2d[:, 1], c=y, cmap='tab10', alpha=0.6)
+        axes[1, 0].set_xlabel('PC1')
+        axes[1, 0].set_ylabel('PC2')
+        axes[1, 0].set_title(f'Predicted Firing Rates (PCA)\nSeparability: {separability_pred:.3f}')
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # 5. PCA visualization - True
+        scatter = axes[1, 1].scatter(X_true_2d[:, 0], X_true_2d[:, 1], c=y, cmap='tab10', alpha=0.6)
+        axes[1, 1].set_xlabel('PC1')
+        axes[1, 1].set_ylabel('PC2')
+        axes[1, 1].set_title(f'True Firing Rates (PCA)\nSeparability: {separability_true:.3f}')
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        # 6. Feature correlation with labels
+        feature_correlations = []
+        for i in range(X_pred.shape[1]):
+            corr = np.corrcoef(X_pred[:, i], y)[0, 1]
+            feature_correlations.append(abs(corr))
+        
+        axes[1, 2].hist(feature_correlations, bins=30, alpha=0.7, edgecolor='black')
+        axes[1, 2].set_xlabel('|Correlation with Labels|')
+        axes[1, 2].set_ylabel('Number of Features')
+        axes[1, 2].set_title('Feature-Label Correlation Distribution')
+        axes[1, 2].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('data/encoder_feature_analysis.png', dpi=300, bbox_inches='tight')
+        plt.show()
+        
+        return {
+            'scaling_results': scaling_results,
+            'separability_pred': separability_pred,
+            'separability_true': separability_true,
+            'support_ratio': support_ratio,
+            'feature_importance': feature_importance,
+            'feature_correlations': feature_correlations
+        }
+    
     def run_full_analysis(self, model_path, data_path=None):
         """Run complete encoder analysis"""
         print("=== ENCODER VERIFICATION AND ANALYSIS ===")
@@ -580,6 +908,9 @@ class EncoderVerifier:
         
         # Representation analysis (PCA only, no t-SNE)
         results['representations'] = self.analyze_encoder_representations()
+        
+        # Feature scaling and separability analysis
+        results['feature_analysis'] = self.analyze_feature_scaling_and_separability()
         
         # Suggest improvements
         suggestions = self.suggest_improvements(results)
