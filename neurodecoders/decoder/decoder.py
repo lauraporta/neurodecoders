@@ -15,15 +15,24 @@ from pathlib import Path
 
 # ---- Dataset class ----
 class NeuralDecoderDataset(Dataset):
-    def __init__(self, firing_rates, images):
+    def __init__(self, firing_rates, images, device=None):
         self.firing_rates = torch.tensor(firing_rates, dtype=torch.float32)
         self.images = torch.tensor(images[:, None, :, :], dtype=torch.float32)  # Add channel dim
+        self.device = device
 
     def __len__(self):
         return len(self.firing_rates)
 
     def __getitem__(self, idx):
-        return self.firing_rates[idx], self.images[idx]
+        firing_rate = self.firing_rates[idx]
+        image = self.images[idx]
+        
+        # Move to device if specified
+        if self.device is not None:
+            firing_rate = firing_rate.to(self.device)
+            image = image.to(self.device)
+            
+        return firing_rate, image
 
 # ---- Model definition ----
 class SimpleDecoder(nn.Module):
@@ -224,7 +233,7 @@ class DecoderLightningModule(pl.LightningModule):
 # ---- Data Module ----
 class DecoderDataModule(pl.LightningDataModule):
     def __init__(self, firing_rates, images, train_split=0.7, val_split=0.15, 
-                 batch_size=32, num_workers=0):
+                 batch_size=32, num_workers=0, device=None):
         super().__init__()
         self.firing_rates = firing_rates
         self.images = images
@@ -232,9 +241,10 @@ class DecoderDataModule(pl.LightningDataModule):
         self.val_split = val_split
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.device = device
         
         # Create full dataset
-        self.full_dataset = NeuralDecoderDataset(firing_rates, images)
+        self.full_dataset = NeuralDecoderDataset(firing_rates, images, device)
         self.setup_splits()
 
     def setup_splits(self):
@@ -499,7 +509,8 @@ def train_model_lightning(
         images=images,
         train_split=train_split,
         val_split=val_split,
-        batch_size=batch_size
+        batch_size=batch_size,
+        device=device if device == "CUDA" else None  # Only pass device for CUDA, let Lightning handle others
     )
     
     # Create model

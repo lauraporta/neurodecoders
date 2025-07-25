@@ -237,6 +237,9 @@ def load_trained_model(model_path):
         model.eval()
         model.to(device)
         
+        # Verify model is on correct device
+        st.info(f"Model loaded on device: {next(model.parameters()).device}")
+        
         return model
         
     except Exception as e:
@@ -246,7 +249,18 @@ def load_trained_model(model_path):
 def main():
     st.title("🧠 Neural Decoder Dashboard")
     st.markdown("Train a decoder to reconstruct images from neural responses using PyTorch Lightning")
-    st.info(f"Device in use: {device.type.upper()}")
+    
+    # Display detailed device information
+    col1, col2 = st.columns(2)
+    with col1:
+        st.info(f"Device in use: {device.type.upper()}")
+    with col2:
+        if device.type == 'cuda':
+            st.info(f"GPU: {torch.cuda.get_device_name(0)}")
+        elif device.type == 'mps':
+            st.info("GPU: Apple Silicon")
+        else:
+            st.info("GPU: CPU (no GPU available)")
     # Load data first - moved to beginning of function
     st.sidebar.header("Training configuration")
     
@@ -383,6 +397,11 @@ def main():
                 with torch.no_grad():
                     for batch in data_module.test_dataloader():
                         x, y = batch
+                        # Ensure tensors are on the correct device
+                        if x.device != device:
+                            x = x.to(device)
+                        if y.device != device:
+                            y = y.to(device)
                         pred = model(x)
                         test_predictions.append(pred.cpu().numpy())
                         test_actuals.append(y.cpu().numpy())
