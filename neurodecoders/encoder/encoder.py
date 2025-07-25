@@ -391,14 +391,28 @@ def save_predictions(
         # Images are [N, H, W], add channel dimension
         input_images = torch.tensor(images[:, None, :, :], dtype=torch.float32)
 
-    # Run predictions
+    # Run predictions in batches to avoid GPU memory issues
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     model.eval()
 
+    batch_size = 32  # Process images in smaller batches
+    predictions_list = []
+    total_batches = (len(input_images) + batch_size - 1) // batch_size
+    
+    print(f"Running inference on {len(input_images)} images in {total_batches} batches...")
+    
     with torch.no_grad():
-        input_images = input_images.to(device)
-        predictions = model(input_images).cpu().numpy()
+        for i, batch_start in enumerate(range(0, len(input_images), batch_size)):
+            batch = input_images[batch_start:batch_start + batch_size].to(device)
+            batch_predictions = model(batch).cpu().numpy()
+            predictions_list.append(batch_predictions)
+            print(f"Processed batch {i+1}/{total_batches}")
+
+        # Clear GPU cache after inference
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    
+    predictions = np.concatenate(predictions_list, axis=0)
 
     # Save predictions with same timestamp
     output_filename = f"encoder_predictions_{Path(input_file_path).stem}.npz"
