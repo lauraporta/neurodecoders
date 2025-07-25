@@ -646,7 +646,7 @@ def save_predictions(
     firing_rates,
     images,
     input_file_path,
-    output_dir="data",
+    output_dir="workspace/predictions/decoder",
     dataset_to_load=None,
 ):
     """Save model predictions and reconstructed images"""

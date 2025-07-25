@@ -37,17 +37,17 @@ class EncoderVerifier:
         """Create a dedicated directory for saving verification plots"""
         import datetime
         from pathlib import Path
-        
+
         # Extract model name and timestamp for folder naming
         model_name = Path(model_path).stem
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+
         # Create plots directory in organized structure
         plots_base = "workspace/plots/verification"
         os.makedirs(plots_base, exist_ok=True)
         self.plots_dir = f"{plots_base}/{model_name}_{timestamp}"
         os.makedirs(self.plots_dir, exist_ok=True)
-        
+
         print(f"Plots will be saved to: {self.plots_dir}")
         return self.plots_dir
 
@@ -58,7 +58,7 @@ class EncoderVerifier:
             os.makedirs(plots_base, exist_ok=True)
             self.plots_dir = f"{plots_base}/default"
             os.makedirs(self.plots_dir, exist_ok=True)
-        
+
         full_path = os.path.join(self.plots_dir, filename)
         plt.savefig(full_path, dpi=dpi, bbox_inches=bbox_inches)
         plt.close()  # Close the figure to free memory
@@ -67,7 +67,7 @@ class EncoderVerifier:
     def load_encoder_and_data(self, model_path, data_path=None):
         """Load encoder model and corresponding data"""
         print(f"Loading encoder from: {model_path}")
-        
+
         # Setup plots directory
         self.setup_plots_directory(model_path)
 
@@ -160,14 +160,19 @@ class EncoderVerifier:
 
             # Extract dataset parameters from model filename more robustly
             import re
-            
+
             # Look for pattern: dataset-TYPE_sta-PATTERN_n_neurons-NUM_n_images-NUM_datetime-DATE
-            match = re.search(r'dataset-([^_]+)_sta-([^_]+(?:,[^_]+)*(?:,[^_]+)*)_n_neurons-(\d+)_n_images-(\d+)', model_name)
-            
+            match = re.search(
+                r"dataset-([^_]+)_sta-([^_]+(?:,[^_]+)*(?:,[^_]+)*)_n_neurons-(\d+)_n_images-(\d+)",
+                model_name,
+            )
+
             if match:
                 dataset_type, sta_pattern, n_neurons, n_images = match.groups()
-                print(f"Extracted: dataset={dataset_type}, sta={sta_pattern}, neurons={n_neurons}, images={n_images}")
-                
+                print(
+                    f"Extracted: dataset={dataset_type}, sta={sta_pattern}, neurons={n_neurons}, images={n_images}"
+                )
+
                 # Try different patterns in organized structure first, then legacy
                 patterns = [
                     f"workspace/datasets/synthetic/synthdata_dataset-{dataset_type}_sta-{sta_pattern}_n_neurons-{n_neurons}_n_images-{n_images}_datetime-*.npz",
@@ -180,10 +185,12 @@ class EncoderVerifier:
                     f"data/synthdata_dataset-{dataset_type}*.npz",
                 ]
             else:
-                print("Could not parse model filename, using fallback patterns")
+                print(
+                    "Could not parse model filename, using fallback patterns"
+                )
                 # Fallback patterns
                 patterns = [
-                    f"workspace/datasets/synthetic/synthdata_dataset-*.npz",
+                    "workspace/datasets/synthetic/synthdata_dataset-*.npz",
                     "data/synthdata_dataset-*.npz",
                 ]
 
@@ -202,7 +209,9 @@ class EncoderVerifier:
                 for dataset_dir in ["workspace/datasets/synthetic", "data"]:
                     if os.path.exists(dataset_dir):
                         print(f"  In {dataset_dir}:")
-                        for f in glob.glob(f"{dataset_dir}/synthdata_dataset-*.npz"):
+                        for f in glob.glob(
+                            f"{dataset_dir}/synthdata_dataset-*.npz"
+                        ):
                             print(f"    {f}")
                 return
 
@@ -222,7 +231,7 @@ class EncoderVerifier:
             # Load images
             self.images = data["images"]
             print(f"✓ Images loaded: shape {self.images.shape}")
-            
+
             # Validate image shape
             if len(self.images.shape) not in [3, 4]:
                 print(f"⚠️  Unexpected image shape: {self.images.shape}")
@@ -230,24 +239,28 @@ class EncoderVerifier:
 
             # Load responses
             self.true_firing_rates = data["responses"]
-            print(f"✓ Neural responses loaded: shape {self.true_firing_rates.shape}")
-            
+            print(
+                f"✓ Neural responses loaded: shape {self.true_firing_rates.shape}"
+            )
+
             # Validate shapes match
             if len(self.images) != len(self.true_firing_rates):
-                print(f"❌ Shape mismatch: {len(self.images)} images vs {len(self.true_firing_rates)} response vectors")
+                print(
+                    f"❌ Shape mismatch: {len(self.images)} images vs {len(self.true_firing_rates)} response vectors"
+                )
                 return
 
             # Extract image labels if available
             if "labels" in data:
                 self.image_labels = data["labels"]
                 print(f"Labels loaded: {len(self.image_labels)} labels")
-                
+
                 # Detect dataset type from labels
                 unique_labels = np.unique(self.image_labels)
                 n_classes = len(unique_labels)
                 print(f"Detected {n_classes} classes: {unique_labels}")
                 print(f"Label distribution: {np.bincount(self.image_labels)}")
-                
+
                 # Infer dataset type
                 filename = os.path.basename(data_path).lower()
                 if "mnist" in filename and n_classes == 10:
@@ -258,7 +271,7 @@ class EncoderVerifier:
                     print("Dataset type: CIFAR-100 (100 object classes)")
                 else:
                     print(f"Dataset type: Unknown ({n_classes} classes)")
-                    
+
             else:
                 # Try to infer from filename but warn about missing labels
                 filename = os.path.basename(data_path).lower()
@@ -269,11 +282,15 @@ class EncoderVerifier:
                     dataset_type = "CIFAR-10"
                 elif "cifar100" in filename:
                     dataset_type = "CIFAR-100"
-                    
+
                 self.image_labels = None
-                print(f"⚠️  No labels found in data file (inferred type: {dataset_type})")
+                print(
+                    f"⚠️  No labels found in data file (inferred type: {dataset_type})"
+                )
                 print("   Classification analysis will be skipped.")
-                print("   Consider regenerating the dataset to include labels.")
+                print(
+                    "   Consider regenerating the dataset to include labels."
+                )
 
             print(
                 f"Data loaded: {len(self.images)} images, {self.true_firing_rates.shape[1]} neurons"
@@ -1188,22 +1205,30 @@ class EncoderVerifier:
 
 def main():
     """Main function to run encoder verification"""
-    import re
     import argparse
+    import re
 
     # Use argparse for proper argument handling
-    parser = argparse.ArgumentParser(description="Verify encoder model performance")
-    parser.add_argument("--model", type=str, help="Path to the encoder model (.pth file)")
-    parser.add_argument("--data", type=str, help="Path to the data file (.npz file)")
-    
+    parser = argparse.ArgumentParser(
+        description="Verify encoder model performance"
+    )
+    parser.add_argument(
+        "--model", type=str, help="Path to the encoder model (.pth file)"
+    )
+    parser.add_argument(
+        "--data", type=str, help="Path to the data file (.npz file)"
+    )
+
     # Filter out Jupyter-specific arguments
     filtered_args = []
     for arg in sys.argv[1:]:
         if not arg.startswith("--f=") and not arg.startswith("-f"):
             filtered_args.append(arg)
-    
+
     # If we have positional arguments (old style), handle them
-    if filtered_args and not any(arg.startswith("--") for arg in filtered_args):
+    if filtered_args and not any(
+        arg.startswith("--") for arg in filtered_args
+    ):
         # Old-style positional arguments
         model_path = filtered_args[0] if len(filtered_args) > 0 else None
         data_path = filtered_args[1] if len(filtered_args) > 1 else None
@@ -1219,9 +1244,13 @@ def main():
             data_path = None
 
     # If model path is provided and looks valid, use it
-    if model_path and os.path.exists(model_path) and model_path.endswith('.pth'):
+    if (
+        model_path
+        and os.path.exists(model_path)
+        and model_path.endswith(".pth")
+    ):
         print(f"Using specified encoder model: {model_path}")
-        
+
         # Try to infer the dataset file from the model filename
         match = re.search(
             r"(synthdata_dataset-[^_]+_sta-[^_]+_n_neurons-\d+_n_images-\d+_datetime-\d+_\d+)",
@@ -1245,16 +1274,21 @@ def main():
             )
     else:
         # Fall back to automatic detection: use latest model from organized structure
-        model_dirs = ["workspace/models/encoders", "data"]  # Check organized structure first, then legacy
+        model_dirs = [
+            "workspace/models/encoders",
+            "data",
+        ]  # Check organized structure first, then legacy
         model_files = []
-        
+
         for model_dir in model_dirs:
             model_files.extend(glob.glob(f"{model_dir}/encoder_*.pth"))
             model_files.extend(glob.glob(f"{model_dir}/resnet_encoder_*.pth"))
-            model_files.extend(glob.glob(f"{model_dir}/lightning_encoder_*.pth"))
+            model_files.extend(
+                glob.glob(f"{model_dir}/lightning_encoder_*.pth")
+            )
             if model_files:
                 break
-                
+
         if not model_files:
             print("No encoder models found!")
             print("Checked directories:")
@@ -1262,7 +1296,7 @@ def main():
                 print(f"  {model_dir}")
                 if os.path.exists(model_dir):
                     for f in glob.glob(f"{model_dir}/*"):
-                        if f.endswith('.pth'):
+                        if f.endswith(".pth"):
                             print(f"    {f}")
             return
         model_path = max(model_files, key=os.path.getctime)
@@ -1281,26 +1315,28 @@ def verify_latest_encoder(data_dir="workspace/models/encoders"):
     This bypasses command line argument parsing and is more reliable in Jupyter environments.
     """
     print("=== ENCODER VERIFICATION AND ANALYSIS (Auto-detection) ===")
-    
+
     # Find latest encoder model
-    model_files = glob.glob(f"{data_dir}/encoder_*.pth") + glob.glob(
-        f"{data_dir}/resnet_encoder_*.pth"
-    ) + glob.glob(f"{data_dir}/lightning_encoder_*.pth")
-    
+    model_files = (
+        glob.glob(f"{data_dir}/encoder_*.pth")
+        + glob.glob(f"{data_dir}/resnet_encoder_*.pth")
+        + glob.glob(f"{data_dir}/lightning_encoder_*.pth")
+    )
+
     if not model_files:
         print(f"No encoder models found in {data_dir}/ directory")
         print(f"Available files in {data_dir}/:")
         for f in glob.glob(f"{data_dir}/*"):
             print(f"  {f}")
         return None
-    
+
     model_path = max(model_files, key=os.path.getctime)
     print(f"Found latest encoder model: {model_path}")
-    
+
     # Create verifier and run analysis
     verifier = EncoderVerifier()
     results = verifier.run_full_analysis(model_path, data_path=None)
-    
+
     return results
 
 

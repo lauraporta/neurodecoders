@@ -30,18 +30,20 @@ st.set_page_config(
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Create data directory if it doesn't exist
-os.makedirs("data", exist_ok=True)
+# Create workspace directories if they don't exist
+os.makedirs("workspace/datasets/synthetic", exist_ok=True)
+os.makedirs("workspace/models", exist_ok=True)
+os.makedirs("workspace/predictions", exist_ok=True)
 
 
 def load_data():
     """Load neural data file selected by user from dropdown"""
     try:
         # Find all synthdata files
-        files = glob.glob("data/synthdata_dataset-*.npz")
+        files = glob.glob("workspace/datasets/synthetic/synthdata_dataset-*.npz")
         if not files:
             st.error(
-                "No neural data files found in data/ directory. Please generate data first using the synthetic dashboard."
+                "No neural data files found in workspace/datasets/synthetic/ directory. Please generate data first using the synthetic dashboard."
             )
             return None, None, None
 
@@ -461,7 +463,7 @@ def main():
 
                 # Save the model
                 dataset_path = Path(input_file)
-                model_path = f"data/decoder_{dataset_path.stem}.pth"
+                model_path = f"workspace/models/decoder_{dataset_path.stem}.pth"
                 torch.save(model.state_dict(), model_path)
                 st.success(f"✅ Model saved to: {model_path}")
 
@@ -561,7 +563,7 @@ def main():
     st.header("📁 Load Trained Model")
 
     # Check for available model files - both old and new Lightning models
-    model_files = glob.glob("data/decoder_*.pth")
+    model_files = glob.glob("workspace/models/decoder_*.pth")
     model_files = sorted(list(set(model_files)))  # Remove duplicates
 
     if model_files:
@@ -580,7 +582,7 @@ def main():
             )
 
         if selected_model != "None" and load_button:
-            model_path = os.path.join("data", selected_model)
+            model_path = os.path.join("workspace/models", selected_model)
             with st.spinner("Loading model..."):
                 model = load_trained_model(model_path)
 
@@ -600,7 +602,7 @@ def main():
                         dataset_name = model_name.replace(
                             "decoder_", ""
                         ).replace(".pth", "")
-                        dataset_file = f"data/{dataset_name}.npz"
+                        dataset_file = f"workspace/datasets/synthetic/{dataset_name}.npz"
 
                         if os.path.exists(dataset_file):
                             # Load the original training data
@@ -726,7 +728,7 @@ def main():
                 else:
                     st.error("❌ Failed to load model")
     else:
-        st.info("No trained decoder models found in data/ directory")
+        st.info("No trained decoder models found in workspace/models/ directory")
 
 
 if __name__ == "__main__":

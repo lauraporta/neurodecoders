@@ -456,7 +456,6 @@ def main():
     fig5.savefig(f"{plots_dir}/neural_correlations.png")
 
     print("Saving dataset...")
-    os.makedirs("data", exist_ok=True)
     save_output(
         images,
         firing_rates,

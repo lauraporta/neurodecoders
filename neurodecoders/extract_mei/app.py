@@ -35,18 +35,20 @@ st.set_page_config(
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Create data directory if it doesn't exist
-os.makedirs("data", exist_ok=True)
+# Create workspace directories if they don't exist
+os.makedirs("workspace/datasets/synthetic", exist_ok=True)
+os.makedirs("workspace/models", exist_ok=True)
+os.makedirs("workspace/predictions/mei", exist_ok=True)
 
 
 def load_available_models():
     """Load available trained encoder models"""
     try:
         # Find all encoder model files
-        files = glob.glob("data/encoder_model_*.pth")
+        files = glob.glob("workspace/models/encoder_model_*.pth")
         if not files:
             st.error(
-                "No encoder model files found in data/ directory. Please train an encoder first."
+                "No encoder model files found in workspace/models/ directory. Please train an encoder first."
             )
             return {}
 
@@ -93,8 +95,8 @@ def infer_dataset_from_model(model_path):
             # Construct the expected dataset filename
             dataset_filename = f"synthdata_dataset-{dataset_identifier}.npz"
 
-            # Look for the dataset in the data directory
-            data_dir = "data"
+            # Look for the dataset in the workspace directory
+            data_dir = "workspace/datasets/synthetic"
             dataset_path = os.path.join(data_dir, dataset_filename)
 
             if os.path.exists(dataset_path):
@@ -102,8 +104,8 @@ def infer_dataset_from_model(model_path):
             else:
                 # Try alternative locations
                 alt_paths = [
-                    os.path.join("neurodecoders", "data", dataset_filename),
-                    os.path.join("..", "data", dataset_filename),
+                    os.path.join("neurodecoders", "workspace", "datasets", "synthetic", dataset_filename),
+                    os.path.join("..", "workspace", "datasets", "synthetic", dataset_filename),
                     dataset_filename,  # Try current directory
                 ]
 
@@ -115,7 +117,7 @@ def infer_dataset_from_model(model_path):
                 return None
         else:
             # For models without clear dataset identifier, try to find any dataset
-            data_dir = "data"
+            data_dir = "workspace/datasets/synthetic"
             if os.path.exists(data_dir):
                 dataset_files = [
                     f

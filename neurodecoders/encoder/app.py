@@ -28,8 +28,10 @@ st.set_page_config(
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Create data directory if it doesn't exist
-os.makedirs("data", exist_ok=True)
+# Create workspace directories if they don't exist
+os.makedirs("workspace/datasets/synthetic", exist_ok=True)
+os.makedirs("workspace/models", exist_ok=True)
+os.makedirs("workspace/predictions", exist_ok=True)
 
 
 class StreamlitProgressCallback(Callback):
@@ -92,10 +94,10 @@ def load_data():
     """Load neural data file selected by user from dropdown"""
     try:
         # Find all synthdata files
-        files = glob.glob("data/synthdata_dataset-*.npz")
+        files = glob.glob("workspace/datasets/synthetic/synthdata_dataset-*.npz")
         if not files:
             st.error(
-                "No neural data files found in data/ directory. Please generate data first using the synthetic dashboard."
+                "No neural data files found in workspace/datasets/synthetic/ directory. Please generate data first using the synthetic dashboard."
             )
             return None, None, None
 
@@ -498,12 +500,12 @@ def main():
                 "timestamp": timestamp,
             }
 
-            training_info_path = f"data/encoder_training_info_{timestamp}.npy"
+            training_info_path = f"workspace/models/encoder_training_info_{timestamp}.npy"
             np.save(training_info_path, model_info)
             st.info(f"Training info saved to: {training_info_path}")
 
             # Save model
-            model_path = f"data/encoder_model_{os.path.splitext(os.path.basename(data_file))[0]}.pth"
+            model_path = f"workspace/models/encoder_model_{os.path.splitext(os.path.basename(data_file))[0]}.pth"
             torch.save(results["model"].state_dict(), model_path)
             st.info(f"Model saved to: {model_path}")
 
@@ -516,9 +518,9 @@ def main():
 
     # Find all possible encoder model files
     model_files = []
-    model_files.extend(glob.glob("data/best_encoder_model.pth"))
-    model_files.extend(glob.glob("data/encoder_model_*.pth"))
-    model_files.extend(glob.glob("data/lightning_encoder_model_*.pth"))
+    model_files.extend(glob.glob("workspace/models/best_encoder_model.pth"))
+    model_files.extend(glob.glob("workspace/models/encoder_model_*.pth"))
+    model_files.extend(glob.glob("workspace/models/lightning_encoder_model_*.pth"))
 
     if model_files:
         st.success(f"Found {len(model_files)} trained model(s)!")
