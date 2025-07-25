@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import glob
 import os
@@ -433,7 +434,7 @@ def save_predictions(
     return output_path
 
 
-def main(dataset_to_load):
+def main(dataset_to_load, epochs=30, learning_rate=1e-3):
     """Main function to run the encoder training"""
     print("=== Neural Encoder Training with PyTorch Lightning ===")
 
@@ -451,8 +452,8 @@ def main(dataset_to_load):
     trainer, model, data_module = train_model_lightning(
         images=images,
         firing_rates=firing_rates,
-        epochs=30,
-        learning_rate=1e-3,
+        epochs=epochs,
+        learning_rate=learning_rate,
         enable_progress_bar=True,
     )
 
@@ -475,8 +476,38 @@ def main(dataset_to_load):
 
 
 if __name__ == "__main__":
-    # Use the new CIFAR-10 dataset with labels
-    dataset_to_load = Path(
-        "data/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250703_162151.npz"
+    parser = argparse.ArgumentParser(description="Train neural encoder model")
+    parser.add_argument(
+        "--dataset", 
+        type=str,
+        default="data/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250703_162151.npz",
+        help="Path to the dataset file (.npz format)"
     )
-    main(dataset_to_load)
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=30,
+        help="Number of training epochs (default: 30)"
+    )
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=1e-3,
+        help="Learning rate for training (default: 1e-3)"
+    )
+    
+    args = parser.parse_args()
+    dataset_to_load = Path(args.dataset)
+    
+    # Check if dataset file exists
+    if not dataset_to_load.exists():
+        print(f"Error: Dataset file '{dataset_to_load}' not found!")
+        print("Available datasets in data/ directory:")
+        data_dir = Path("data")
+        if data_dir.exists():
+            for file in data_dir.glob("*.npz"):
+                print(f"  {file}")
+        exit(1)
+    
+    print(f"Using dataset: {dataset_to_load}")
+    main(dataset_to_load, epochs=args.epochs, learning_rate=args.learning_rate)
