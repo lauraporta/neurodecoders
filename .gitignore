@@ -84,6 +84,12 @@ venv/
 
 # data
 data/*
+neurodecoders/encoder/data/*
+neurodecoders/decoder/data/*
+neurodecoders/synthetic/data/*
 
 # output
 output/*
+neurodecoders/encoder/output/*
+neurodecoders/decoder/output/*
+neurodecoders/synthetic/output/*
