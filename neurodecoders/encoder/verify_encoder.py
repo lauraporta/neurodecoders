@@ -158,18 +158,40 @@ class EncoderVerifier:
             model_name = os.path.basename(model_path).replace(".pth", "")
             print(f"Looking for data file matching model: {model_name}")
 
-            # Try different patterns in organized structure first, then legacy
-            patterns = [
-                f"workspace/datasets/synthetic/synthdata_dataset-*{model_name.split('_datetime-')[0]}*.npz",
-                f"workspace/datasets/synthetic/synthdata_dataset-*.npz",
-                f"data/synthdata_dataset-*{model_name.split('_datetime-')[0]}*.npz",
-                "data/synthdata_dataset-*.npz",
-            ]
+            # Extract dataset parameters from model filename more robustly
+            import re
+            
+            # Look for pattern: dataset-TYPE_sta-PATTERN_n_neurons-NUM_n_images-NUM_datetime-DATE
+            match = re.search(r'dataset-([^_]+)_sta-([^_]+(?:,[^_]+)*(?:,[^_]+)*)_n_neurons-(\d+)_n_images-(\d+)', model_name)
+            
+            if match:
+                dataset_type, sta_pattern, n_neurons, n_images = match.groups()
+                print(f"Extracted: dataset={dataset_type}, sta={sta_pattern}, neurons={n_neurons}, images={n_images}")
+                
+                # Try different patterns in organized structure first, then legacy
+                patterns = [
+                    f"workspace/datasets/synthetic/synthdata_dataset-{dataset_type}_sta-{sta_pattern}_n_neurons-{n_neurons}_n_images-{n_images}_datetime-*.npz",
+                    f"workspace/datasets/synthetic/synthdata_dataset-{dataset_type}_sta-{sta_pattern}_n_neurons-{n_neurons}_n_images-{n_images}*.npz",
+                    f"workspace/datasets/synthetic/synthdata_dataset-{dataset_type}_sta-{sta_pattern}*.npz",
+                    f"workspace/datasets/synthetic/synthdata_dataset-{dataset_type}*.npz",
+                    f"data/synthdata_dataset-{dataset_type}_sta-{sta_pattern}_n_neurons-{n_neurons}_n_images-{n_images}_datetime-*.npz",
+                    f"data/synthdata_dataset-{dataset_type}_sta-{sta_pattern}_n_neurons-{n_neurons}_n_images-{n_images}*.npz",
+                    f"data/synthdata_dataset-{dataset_type}_sta-{sta_pattern}*.npz",
+                    f"data/synthdata_dataset-{dataset_type}*.npz",
+                ]
+            else:
+                print("Could not parse model filename, using fallback patterns")
+                # Fallback patterns
+                patterns = [
+                    f"workspace/datasets/synthetic/synthdata_dataset-*.npz",
+                    "data/synthdata_dataset-*.npz",
+                ]
 
             data_path = None
             for pattern in patterns:
                 data_files = glob.glob(pattern)
                 if data_files:
+                    # Sort by creation time and pick the most recent
                     data_path = max(data_files, key=os.path.getctime)
                     print(f"Found data file: {data_path}")
                     break
@@ -189,33 +211,69 @@ class EncoderVerifier:
             data = np.load(data_path)
             print(f"Data keys: {list(data.keys())}")
 
-            if "images" in data:
-                self.images = data["images"]
-            else:
-                print("No 'images' key found in data file")
+            # Validate required keys
+            required_keys = ["images", "responses"]
+            missing_keys = [key for key in required_keys if key not in data]
+            if missing_keys:
+                print(f"❌ Missing required keys in data file: {missing_keys}")
+                print(f"   Available keys: {list(data.keys())}")
                 return
 
-            if "responses" in data:
-                self.true_firing_rates = data["responses"]
-            else:
-                print("No 'responses' key found in data file")
+            # Load images
+            self.images = data["images"]
+            print(f"✓ Images loaded: shape {self.images.shape}")
+            
+            # Validate image shape
+            if len(self.images.shape) not in [3, 4]:
+                print(f"⚠️  Unexpected image shape: {self.images.shape}")
+                print("   Expected 3D (N, H, W) or 4D (N, C, H, W)")
+
+            # Load responses
+            self.true_firing_rates = data["responses"]
+            print(f"✓ Neural responses loaded: shape {self.true_firing_rates.shape}")
+            
+            # Validate shapes match
+            if len(self.images) != len(self.true_firing_rates):
+                print(f"❌ Shape mismatch: {len(self.images)} images vs {len(self.true_firing_rates)} response vectors")
                 return
 
             # Extract image labels if available
             if "labels" in data:
                 self.image_labels = data["labels"]
                 print(f"Labels loaded: {len(self.image_labels)} labels")
+                
+                # Detect dataset type from labels
+                unique_labels = np.unique(self.image_labels)
+                n_classes = len(unique_labels)
+                print(f"Detected {n_classes} classes: {unique_labels}")
                 print(f"Label distribution: {np.bincount(self.image_labels)}")
+                
+                # Infer dataset type
+                filename = os.path.basename(data_path).lower()
+                if "mnist" in filename and n_classes == 10:
+                    print("Dataset type: MNIST (10 digit classes)")
+                elif "cifar10" in filename and n_classes == 10:
+                    print("Dataset type: CIFAR-10 (10 object classes)")
+                elif "cifar100" in filename and n_classes == 100:
+                    print("Dataset type: CIFAR-100 (100 object classes)")
+                else:
+                    print(f"Dataset type: Unknown ({n_classes} classes)")
+                    
             else:
-                # Try to infer labels from filename
-                filename = os.path.basename(data_path)
-                if "mnist" in filename.lower():
-                    # For MNIST, we can't easily get labels without the original dataset
-                    self.image_labels = None
-                    print("No labels found in data file")
-                elif "cifar" in filename.lower():
-                    self.image_labels = None
-                    print("No labels found in data file")
+                # Try to infer from filename but warn about missing labels
+                filename = os.path.basename(data_path).lower()
+                dataset_type = "Unknown"
+                if "mnist" in filename:
+                    dataset_type = "MNIST"
+                elif "cifar10" in filename:
+                    dataset_type = "CIFAR-10"
+                elif "cifar100" in filename:
+                    dataset_type = "CIFAR-100"
+                    
+                self.image_labels = None
+                print(f"⚠️  No labels found in data file (inferred type: {dataset_type})")
+                print("   Classification analysis will be skipped.")
+                print("   Consider regenerating the dataset to include labels.")
 
             print(
                 f"Data loaded: {len(self.images)} images, {self.true_firing_rates.shape[1]} neurons"
@@ -957,9 +1015,11 @@ class EncoderVerifier:
         print("Fisher's discriminant ratio (higher = better separability):")
         print(f"  Predicted firing rates: {separability_pred:.3f}")
         print(f"  True firing rates: {separability_true:.3f}")
-        print(
-            f"  Ratio (pred/true): {separability_pred / separability_true:.3f}"
-        )
+        if separability_true > 1e-10:
+            ratio = separability_pred / separability_true
+            print(f"  Ratio (pred/true): {ratio:.3f}")
+        else:
+            print("  Ratio (pred/true): N/A (true separability is zero)")
 
         # Analyze support vectors
         print("\nSupport vector analysis:")
