@@ -31,10 +31,41 @@ class EncoderVerifier:
         self.true_firing_rates = None
         self.predicted_firing_rates = None
         self.image_labels = None
+        self.plots_dir = None
+
+    def setup_plots_directory(self, model_path):
+        """Create a dedicated directory for saving verification plots"""
+        import datetime
+        from pathlib import Path
+        
+        # Extract model name and timestamp for folder naming
+        model_name = Path(model_path).stem
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        # Create plots directory
+        self.plots_dir = f"verification_plots/{model_name}_{timestamp}"
+        os.makedirs(self.plots_dir, exist_ok=True)
+        
+        print(f"Plots will be saved to: {self.plots_dir}")
+        return self.plots_dir
+
+    def save_plot(self, filename, dpi=300, bbox_inches="tight"):
+        """Save plot to the plots directory"""
+        if self.plots_dir is None:
+            self.plots_dir = "verification_plots/default"
+            os.makedirs(self.plots_dir, exist_ok=True)
+        
+        full_path = os.path.join(self.plots_dir, filename)
+        plt.savefig(full_path, dpi=dpi, bbox_inches=bbox_inches)
+        plt.close()  # Close the figure to free memory
+        print(f"Saved plot: {full_path}")
 
     def load_encoder_and_data(self, model_path, data_path=None):
         """Load encoder model and corresponding data"""
         print(f"Loading encoder from: {model_path}")
+        
+        # Setup plots directory
+        self.setup_plots_directory(model_path)
 
         # Load encoder
         try:
@@ -316,12 +347,7 @@ class EncoderVerifier:
         axes[1, 1].grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(
-            "data/encoder_firing_rate_analysis.png",
-            dpi=300,
-            bbox_inches="tight",
-        )
-        plt.show()
+        self.save_plot("firing_rate_analysis.png")
 
         return {
             "true_mean": true_mean,
@@ -401,12 +427,7 @@ class EncoderVerifier:
         axes[1].grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(
-            "data/encoder_responsiveness_analysis.png",
-            dpi=300,
-            bbox_inches="tight",
-        )
-        plt.show()
+        self.save_plot("responsiveness_analysis.png")
 
         return {
             "true_responsiveness": true_responsiveness,
@@ -603,12 +624,7 @@ class EncoderVerifier:
             )
 
         plt.tight_layout()
-        plt.savefig(
-            "data/encoder_classifier_comparison.png",
-            dpi=300,
-            bbox_inches="tight",
-        )
-        plt.show()
+        self.save_plot("classifier_comparison.png")
 
         # Feature importance analysis for best classifier
         print(
@@ -698,10 +714,7 @@ class EncoderVerifier:
         plt.title("PCA: Individual Component Variance")
         plt.yscale("log")
         plt.grid(True, alpha=0.3)
-        plt.savefig(
-            "data/encoder_pca_analysis.png", dpi=300, bbox_inches="tight"
-        )
-        plt.show()
+        self.save_plot("pca_analysis.png")
 
         # Additional analysis: check if the first few components are meaningful
         if len(explained_variance_ratio) > 0:
@@ -1044,10 +1057,7 @@ class EncoderVerifier:
         axes[1, 2].grid(True, alpha=0.3)
 
         plt.tight_layout()
-        plt.savefig(
-            "data/encoder_feature_analysis.png", dpi=300, bbox_inches="tight"
-        )
-        plt.show()
+        self.save_plot("feature_analysis.png")
 
         return {
             "scaling_results": scaling_results,
@@ -1102,7 +1112,7 @@ class EncoderVerifier:
         results["suggestions"] = suggestions
 
         print("\n=== ANALYSIS COMPLETE ===")
-        print("All plots saved to data/ directory")
+        print(f"All plots saved to: {self.plots_dir}")
 
         return results
 
@@ -1110,18 +1120,45 @@ class EncoderVerifier:
 def main():
     """Main function to run encoder verification"""
     import re
+    import argparse
 
-    # If a model path is provided as the first argument, use it
-    if len(sys.argv) > 1:
-        model_path = sys.argv[1]
+    # Use argparse for proper argument handling
+    parser = argparse.ArgumentParser(description="Verify encoder model performance")
+    parser.add_argument("--model", type=str, help="Path to the encoder model (.pth file)")
+    parser.add_argument("--data", type=str, help="Path to the data file (.npz file)")
+    
+    # Filter out Jupyter-specific arguments
+    filtered_args = []
+    for arg in sys.argv[1:]:
+        if not arg.startswith("--f=") and not arg.startswith("-f"):
+            filtered_args.append(arg)
+    
+    # If we have positional arguments (old style), handle them
+    if filtered_args and not any(arg.startswith("--") for arg in filtered_args):
+        # Old-style positional arguments
+        model_path = filtered_args[0] if len(filtered_args) > 0 else None
+        data_path = filtered_args[1] if len(filtered_args) > 1 else None
+    else:
+        # Use argparse
+        try:
+            args = parser.parse_args(filtered_args)
+            model_path = args.model
+            data_path = args.data
+        except SystemExit:
+            # argparse failed, fall back to automatic detection
+            model_path = None
+            data_path = None
+
+    # If model path is provided and looks valid, use it
+    if model_path and os.path.exists(model_path) and model_path.endswith('.pth'):
         print(f"Using specified encoder model: {model_path}")
+        
         # Try to infer the dataset file from the model filename
-        # Look for the dataset stem in the model filename
         match = re.search(
             r"(synthdata_dataset-[^_]+_sta-[^_]+_n_neurons-\d+_n_images-\d+_datetime-\d+_\d+)",
             model_path,
         )
-        if match:
+        if match and not data_path:
             dataset_stem = match.group(1)
             # Find the matching .npz file
             data_candidates = glob.glob(f"data/{dataset_stem}.npz")
@@ -1133,30 +1170,57 @@ def main():
                     f"Could not find data file for dataset stem: {dataset_stem}"
                 )
                 data_path = None
-        else:
+        elif not match and not data_path:
             print(
                 "Could not parse dataset stem from model filename. Please provide data file as second argument if needed."
             )
-            data_path = sys.argv[2] if len(sys.argv) > 2 else None
     else:
-        # Fall back to previous behavior: use latest model
+        # Fall back to automatic detection: use latest model
         model_files = glob.glob("data/encoder_model_*.pth") + glob.glob(
             "data/resnet_encoder_model_*.pth"
         )
         if not model_files:
             print("No encoder models found in data/ directory")
+            print("Available files in data/:")
+            for f in glob.glob("data/*"):
+                print(f"  {f}")
             return
         model_path = max(model_files, key=os.path.getctime)
         print(f"Using latest encoder model: {model_path}")
-        data_path = None
-        if len(sys.argv) > 1:
-            data_path = sys.argv[1]
-            print(f"Using data file: {data_path}")
 
     # Create verifier and run analysis
     verifier = EncoderVerifier()
     results = verifier.run_full_analysis(model_path, data_path)
 
+    return results
+
+
+def verify_latest_encoder(data_dir="data"):
+    """
+    Convenience function to verify the latest encoder model.
+    This bypasses command line argument parsing and is more reliable in Jupyter environments.
+    """
+    print("=== ENCODER VERIFICATION AND ANALYSIS (Auto-detection) ===")
+    
+    # Find latest encoder model
+    model_files = glob.glob(f"{data_dir}/encoder_model_*.pth") + glob.glob(
+        f"{data_dir}/resnet_encoder_model_*.pth"
+    )
+    
+    if not model_files:
+        print(f"No encoder models found in {data_dir}/ directory")
+        print(f"Available files in {data_dir}/:")
+        for f in glob.glob(f"{data_dir}/*"):
+            print(f"  {f}")
+        return None
+    
+    model_path = max(model_files, key=os.path.getctime)
+    print(f"Found latest encoder model: {model_path}")
+    
+    # Create verifier and run analysis
+    verifier = EncoderVerifier()
+    results = verifier.run_full_analysis(model_path, data_path=None)
+    
     return results
 
 
