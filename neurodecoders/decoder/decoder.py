@@ -540,7 +540,7 @@ def train_model_lightning(
     """
     # Check available devices
     if torch.cuda.is_available():
-        device = "CUDA"
+        device = "cuda"
         device_name = torch.cuda.get_device_name(0)
 
         # Check if device supports Tensor Cores and enable them
@@ -797,6 +797,6 @@ def main(dataset_to_load):
 
 if __name__ == "__main__":
     dataset_to_load = Path(
-        "workspace/datasets/synthetic/synthdata_dataset-mnist_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250630_164248.npz"
+        "workspace/datasets/synthetic/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250725_140202.npz"
     )
     main(dataset_to_load)
