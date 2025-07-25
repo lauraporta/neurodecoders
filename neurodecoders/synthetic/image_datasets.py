@@ -1,7 +1,6 @@
+import torch
 import torchvision
 import torchvision.transforms as transforms
-import torch
-
 
 
 class ImageDataset:
@@ -15,17 +14,22 @@ class ImageDataset:
             raise ValueError(f"Invalid dataset type: {type}")
 
     def load_dataset(self, dataset_class, n_images: int):
-        transform = transforms.Compose([
-            transforms.Resize((224, 224)),
-            transforms.Grayscale(num_output_channels=1),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5], std=[0.5])  # Normalize to [-1, 1] with mean=0.5
-        ])
-        dataset = dataset_class(root='./data', train=True, download=True, transform=transform)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=n_images, shuffle=True)
+        transform = transforms.Compose(
+            [
+                transforms.Resize((224, 224)),
+                transforms.Grayscale(num_output_channels=1),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.5], std=[0.5]
+                ),  # Normalize to [-1, 1] with mean=0.5
+            ]
+        )
+        dataset = dataset_class(
+            root="./data", train=True, download=True, transform=transform
+        )
+        loader = torch.utils.data.DataLoader(
+            dataset, batch_size=n_images, shuffle=True
+        )
         images, labels = next(iter(loader))
         # No need for additional normalization since ToTensor and Normalize already give us [-1, 1]
         return images[:n_images], labels[:n_images]
-    
-
-    

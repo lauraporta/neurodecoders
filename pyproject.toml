@@ -91,7 +91,7 @@ ignore = [
 [tool.ruff]
 line-length = 79
 exclude = ["__init__.py", "build", ".eggs"]
-lint.select = [
+select = [
   "E",   # pycodestyle errors
   "F",   # Pyflakes
   "I",   # isort
@@ -103,9 +103,6 @@ lint.select = [
   #"C90", # McCabe complexity
 ]
 fix = true
-
-[tool.ruff.format]
-docstring-code-format = true # Also format code in docstrings (e.g. examples)
 
 [tool.tox]
 legacy_tox_ini = """
