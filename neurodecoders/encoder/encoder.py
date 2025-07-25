@@ -33,19 +33,19 @@ class SimpleEncoder(nn.Module):
         # Deeper convolutional layers with batch normalization
         self.conv = nn.Sequential(
             # Initial conv layer with larger kernel to reduce spatial dimensions
-            nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3),
+            nn.Conv2d(1, 64, kernel_size=11, stride=1, padding=5),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
             
             # Middle conv layers
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(64, 128, kernel_size=7, stride=1, padding=3),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(128, 256, kernel_size=5, stride=1, padding=2),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(512),
             nn.ReLU(),
             
@@ -53,15 +53,12 @@ class SimpleEncoder(nn.Module):
             nn.AdaptiveAvgPool2d(1)
         )
         
-        # Fully connected layers with dropout
+        # Lightweight FC layers with single hidden layer  
         self.fc = nn.Sequential(
-            nn.Linear(512, 1024),
+            nn.Linear(512, 256),          # 131K parameters
             nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(1024, 2048),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(2048, out_neurons),
+            nn.Dropout(0.2),
+            nn.Linear(256, out_neurons),  # 256K parameters for 1000 neurons
             nn.ELU(),
         )
 
