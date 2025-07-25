@@ -323,7 +323,7 @@ def train_model_lightning(
     callbacks.extend([LearningRateMonitor(logging_interval="epoch")])
 
     # Setup logger
-    logger = TensorBoardLogger("data/lightning_logs", name="encoder")
+    logger = TensorBoardLogger("workspace/logs/lightning_logs", name="encoder")
 
     # Create trainer
     trainer = pl.Trainer(
@@ -368,7 +368,7 @@ def save_predictions(
     images,
     firing_rates,
     input_file_path,
-    output_dir="data",
+    output_dir="workspace/predictions/encoder",
     dataset_to_load=None,
 ):
     """Save predicted neural responses with the same timestamp as input file"""
@@ -468,7 +468,9 @@ def main(dataset_to_load, epochs=30, learning_rate=1e-3):
     # Save final model with dataset information
     dataset_name = Path(data_file).stem
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_path = f"data/encoder_model_{dataset_name}_datetime-{timestamp}.pth"
+    model_dir = "workspace/models/encoders"
+    os.makedirs(model_dir, exist_ok=True)
+    model_path = f"{model_dir}/encoder_model_{dataset_name}_datetime-{timestamp}.pth"
     torch.save(model.state_dict(), model_path)
     print(f"Model saved to: {model_path}")
 
@@ -480,7 +482,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset", 
         type=str,
-        default="data/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250703_162151.npz",
+        default="workspace/datasets/synthetic/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250703_162151.npz",
         help="Path to the dataset file (.npz format)"
     )
     parser.add_argument(
@@ -502,8 +504,8 @@ if __name__ == "__main__":
     # Check if dataset file exists
     if not dataset_to_load.exists():
         print(f"Error: Dataset file '{dataset_to_load}' not found!")
-        print("Available datasets in data/ directory:")
-        data_dir = Path("data")
+        print("Available datasets in workspace/datasets/synthetic/ directory:")
+        data_dir = Path("workspace/datasets/synthetic")
         if data_dir.exists():
             for file in data_dir.glob("*.npz"):
                 print(f"  {file}")

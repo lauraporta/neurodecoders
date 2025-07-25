@@ -24,7 +24,9 @@ def save_output(
     n_neurons,
     n_images,
 ):
-    filename = f"data/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{n_neurons}_n_images-{n_images}_datetime-{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
+    output_dir = "workspace/datasets/synthetic"
+    os.makedirs(output_dir, exist_ok=True)
+    filename = f"{output_dir}/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{n_neurons}_n_images-{n_images}_datetime-{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
     np.savez(
         filename,
         images=images.cpu().numpy(),
@@ -439,17 +441,19 @@ def main():
     fig3 = plot_response_heatmaps_all(
         firing_rates, dot_products, adaptation_states
     )
-    fig3.savefig("output/heatmaps_all.png")
+    plots_dir = "workspace/plots/analysis"
+    os.makedirs(plots_dir, exist_ok=True)
+    fig3.savefig(f"{plots_dir}/heatmaps_all.png")
 
     # Add histogram plot
     fig4 = plot_response_histograms(
         firing_rates, dot_products, adaptation_states
     )
-    fig4.savefig("output/response_histograms.png")
+    fig4.savefig(f"{plots_dir}/response_histograms.png")
 
     # Add neural correlation plot
     fig5 = plot_neural_correlations(firing_rates)
-    fig5.savefig("output/neural_correlations.png")
+    fig5.savefig(f"{plots_dir}/neural_correlations.png")
 
     print("Saving dataset...")
     os.makedirs("data", exist_ok=True)

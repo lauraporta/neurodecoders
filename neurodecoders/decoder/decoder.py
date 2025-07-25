@@ -406,7 +406,7 @@ def load_latest_data(dataset_to_load):
     files = glob.glob(dataset_to_load)
     if not files:
         raise FileNotFoundError(
-            "No neural data files found in data/ directory"
+            "No neural data files found in workspace/datasets/synthetic/ directory"
         )
 
     latest_file = max(files, key=os.path.getctime)
@@ -603,7 +603,7 @@ def train_model_lightning(
     )
 
     # Setup logger
-    logger = TensorBoardLogger("data/lightning_logs", name="decoder")
+    logger = TensorBoardLogger("workspace/logs/lightning_logs", name="decoder")
 
     # Create trainer
     trainer = pl.Trainer(
@@ -786,7 +786,9 @@ def main(dataset_to_load):
     # Save final model
     if isinstance(dataset_to_load, str):
         dataset_to_load = Path(dataset_to_load)
-    model_path = f"data/decoder_{dataset_to_load.stem}.pth"
+    model_dir = "workspace/models/decoders"
+    os.makedirs(model_dir, exist_ok=True)
+    model_path = f"{model_dir}/decoder_{dataset_to_load.stem}.pth"
     torch.save(model.state_dict(), model_path)
     print(f"Model saved to: {model_path}")
 
@@ -795,6 +797,6 @@ def main(dataset_to_load):
 
 if __name__ == "__main__":
     dataset_to_load = Path(
-        "data/synthdata_dataset-mnist_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250630_164248.npz"
+        "workspace/datasets/synthetic/synthdata_dataset-mnist_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250630_164248.npz"
     )
     main(dataset_to_load)

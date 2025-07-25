@@ -312,8 +312,10 @@ def main():
             fig1 = plot_response_heatmaps_all(
                 firing_rates, dot_products, adaptation_states
             )
+            plots_dir = "workspace/plots/analysis"
+            os.makedirs(plots_dir, exist_ok=True)
             fig1.savefig(
-                f"output/heatmaps_all_{timestamp}.png",
+                f"{plots_dir}/heatmaps_all_{timestamp}.png",
                 dpi=300,
                 bbox_inches="tight",
             )
@@ -322,14 +324,14 @@ def main():
                 firing_rates, dot_products, adaptation_states
             )
             fig2.savefig(
-                f"output/response_histograms_{timestamp}.png",
+                f"{plots_dir}/response_histograms_{timestamp}.png",
                 dpi=300,
                 bbox_inches="tight",
             )
 
             fig3 = plot_neural_correlations(firing_rates)
             fig3.savefig(
-                f"output/neural_correlations_{timestamp}.png",
+                f"{plots_dir}/neural_correlations_{timestamp}.png",
                 dpi=300,
                 bbox_inches="tight",
             )
@@ -342,10 +344,10 @@ def main():
             st.success("Large dataset generated successfully!")
             st.info(f"""
             **Generated Files:**
-            - Dataset: `data/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{large_n_neurons}_n_images-{large_n_images}_datetime-{timestamp}.npz`
-            - Heatmaps: `output/heatmaps_all_{timestamp}.png`
-            - Histograms: `output/response_histograms_{timestamp}.png`
-            - Correlations: `output/neural_correlations_{timestamp}.png`
+            - Dataset: `workspace/datasets/synthetic/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{large_n_neurons}_n_images-{large_n_images}_datetime-{timestamp}.npz`
+            - Heatmaps: `workspace/plots/analysis/heatmaps_all_{timestamp}.png`
+            - Histograms: `workspace/plots/analysis/response_histograms_{timestamp}.png`
+            - Correlations: `workspace/plots/analysis/neural_correlations_{timestamp}.png`
 
             **Dataset Statistics:**
             - Images: {large_n_images}
@@ -361,18 +363,18 @@ def main():
 
             with col1:
                 st.image(
-                    f"output/heatmaps_all_{timestamp}.png",
+                    f"workspace/plots/analysis/heatmaps_all_{timestamp}.png",
                     caption="Response Heatmaps",
                 )
 
             with col2:
                 st.image(
-                    f"output/response_histograms_{timestamp}.png",
+                    f"workspace/plots/analysis/response_histograms_{timestamp}.png",
                     caption="Response Distributions",
                 )
 
             st.image(
-                f"output/neural_correlations_{timestamp}.png",
+                f"workspace/plots/analysis/neural_correlations_{timestamp}.png",
                 caption="Neural Correlations",
             )
 

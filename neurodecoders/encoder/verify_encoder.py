@@ -42,8 +42,10 @@ class EncoderVerifier:
         model_name = Path(model_path).stem
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Create plots directory
-        self.plots_dir = f"verification_plots/{model_name}_{timestamp}"
+        # Create plots directory in organized structure
+        plots_base = "workspace/plots/verification"
+        os.makedirs(plots_base, exist_ok=True)
+        self.plots_dir = f"{plots_base}/{model_name}_{timestamp}"
         os.makedirs(self.plots_dir, exist_ok=True)
         
         print(f"Plots will be saved to: {self.plots_dir}")
@@ -52,7 +54,9 @@ class EncoderVerifier:
     def save_plot(self, filename, dpi=300, bbox_inches="tight"):
         """Save plot to the plots directory"""
         if self.plots_dir is None:
-            self.plots_dir = "verification_plots/default"
+            plots_base = "workspace/plots/verification"
+            os.makedirs(plots_base, exist_ok=True)
+            self.plots_dir = f"{plots_base}/default"
             os.makedirs(self.plots_dir, exist_ok=True)
         
         full_path = os.path.join(self.plots_dir, filename)
@@ -154,8 +158,10 @@ class EncoderVerifier:
             model_name = os.path.basename(model_path).replace(".pth", "")
             print(f"Looking for data file matching model: {model_name}")
 
-            # Try different patterns
+            # Try different patterns in organized structure first, then legacy
             patterns = [
+                f"workspace/datasets/synthetic/synthdata_dataset-*{model_name.split('_datetime-')[0]}*.npz",
+                f"workspace/datasets/synthetic/synthdata_dataset-*.npz",
                 f"data/synthdata_dataset-*{model_name.split('_datetime-')[0]}*.npz",
                 "data/synthdata_dataset-*.npz",
             ]
@@ -171,8 +177,11 @@ class EncoderVerifier:
             if data_path is None:
                 print("No matching data file found. Please provide data_path.")
                 print("Available data files:")
-                for f in glob.glob("data/synthdata_dataset-*.npz"):
-                    print(f"  {f}")
+                for dataset_dir in ["workspace/datasets/synthetic", "data"]:
+                    if os.path.exists(dataset_dir):
+                        print(f"  In {dataset_dir}:")
+                        for f in glob.glob(f"{dataset_dir}/synthdata_dataset-*.npz"):
+                            print(f"    {f}")
                 return
 
         print(f"Loading data from: {data_path}")
@@ -1175,15 +1184,26 @@ def main():
                 "Could not parse dataset stem from model filename. Please provide data file as second argument if needed."
             )
     else:
-        # Fall back to automatic detection: use latest model
-        model_files = glob.glob("data/encoder_model_*.pth") + glob.glob(
-            "data/resnet_encoder_model_*.pth"
-        )
+        # Fall back to automatic detection: use latest model from organized structure
+        model_dirs = ["workspace/models/encoders", "data"]  # Check organized structure first, then legacy
+        model_files = []
+        
+        for model_dir in model_dirs:
+            model_files.extend(glob.glob(f"{model_dir}/encoder_*.pth"))
+            model_files.extend(glob.glob(f"{model_dir}/resnet_encoder_*.pth"))
+            model_files.extend(glob.glob(f"{model_dir}/lightning_encoder_*.pth"))
+            if model_files:
+                break
+                
         if not model_files:
-            print("No encoder models found in data/ directory")
-            print("Available files in data/:")
-            for f in glob.glob("data/*"):
-                print(f"  {f}")
+            print("No encoder models found!")
+            print("Checked directories:")
+            for model_dir in model_dirs:
+                print(f"  {model_dir}")
+                if os.path.exists(model_dir):
+                    for f in glob.glob(f"{model_dir}/*"):
+                        if f.endswith('.pth'):
+                            print(f"    {f}")
             return
         model_path = max(model_files, key=os.path.getctime)
         print(f"Using latest encoder model: {model_path}")
@@ -1195,7 +1215,7 @@ def main():
     return results
 
 
-def verify_latest_encoder(data_dir="data"):
+def verify_latest_encoder(data_dir="workspace/models/encoders"):
     """
     Convenience function to verify the latest encoder model.
     This bypasses command line argument parsing and is more reliable in Jupyter environments.
@@ -1203,9 +1223,9 @@ def verify_latest_encoder(data_dir="data"):
     print("=== ENCODER VERIFICATION AND ANALYSIS (Auto-detection) ===")
     
     # Find latest encoder model
-    model_files = glob.glob(f"{data_dir}/encoder_model_*.pth") + glob.glob(
-        f"{data_dir}/resnet_encoder_model_*.pth"
-    )
+    model_files = glob.glob(f"{data_dir}/encoder_*.pth") + glob.glob(
+        f"{data_dir}/resnet_encoder_*.pth"
+    ) + glob.glob(f"{data_dir}/lightning_encoder_*.pth")
     
     if not model_files:
         print(f"No encoder models found in {data_dir}/ directory")

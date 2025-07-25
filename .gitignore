@@ -93,3 +93,6 @@ output/*
 neurodecoders/encoder/output/*
 neurodecoders/decoder/output/*
 neurodecoders/synthetic/output/*
+
+
+workspace/*
