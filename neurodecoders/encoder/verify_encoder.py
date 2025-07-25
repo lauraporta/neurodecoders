@@ -13,7 +13,6 @@ from sklearn.model_selection import train_test_split
 
 # Add parent directories to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from neurodecoders.encoder.encoder import SimpleEncoder
 
 warnings.filterwarnings("ignore")
 
@@ -63,6 +62,157 @@ class EncoderVerifier:
         plt.savefig(full_path, dpi=dpi, bbox_inches=bbox_inches)
         plt.close()  # Close the figure to free memory
         print(f"Saved plot: {full_path}")
+
+    def create_compatible_simple_encoder(self, state_dict, out_neurons):
+        """Create a SimpleEncoder with architecture matching the saved model"""
+        import torch.nn as nn
+
+        class CompatibleSimpleEncoder(nn.Module):
+            def __init__(self, out_neurons):
+                super().__init__()
+
+                # Handle nested model structure
+                def get_param(key):
+                    return state_dict.get(key, state_dict.get(f"model.{key}"))
+
+                # Inspect conv layer shapes from state dict
+                conv0_shape = get_param("conv.0.weight").shape
+                conv4_shape = get_param("conv.4.weight").shape
+                conv7_shape = get_param("conv.7.weight").shape
+                conv10_shape = (
+                    get_param("conv.10.weight").shape
+                    if get_param("conv.10.weight") is not None
+                    else None
+                )
+
+                # Extract kernel sizes from shapes
+                conv0_kernel = conv0_shape[
+                    2
+                ]  # Kernel height (assuming square kernels)
+                conv4_kernel = conv4_shape[2]
+                conv7_kernel = conv7_shape[2]
+                conv10_kernel = conv10_shape[2] if conv10_shape else 3
+
+                print(
+                    f"Building encoder with conv kernels: {conv0_kernel}x{conv0_kernel}, {conv4_kernel}x{conv4_kernel}, {conv7_kernel}x{conv7_kernel}, {conv10_kernel}x{conv10_kernel}"
+                )
+
+                # Build conv layers to match saved model structure exactly
+                conv_layers = [
+                    nn.Conv2d(
+                        1,
+                        64,
+                        kernel_size=conv0_kernel,
+                        stride=1,
+                        padding=conv0_kernel // 2,
+                    ),  # conv.0
+                    nn.BatchNorm2d(64),  # conv.1
+                    nn.ReLU(),
+                    nn.MaxPool2d(
+                        kernel_size=3, stride=2, padding=1
+                    ),  # conv.3 (MaxPool)
+                    nn.Conv2d(
+                        64,
+                        128,
+                        kernel_size=conv4_kernel,
+                        stride=1,
+                        padding=conv4_kernel // 2,
+                    ),  # conv.4
+                    nn.BatchNorm2d(128),  # conv.5
+                    nn.ReLU(),
+                    nn.Conv2d(
+                        128,
+                        256,
+                        kernel_size=conv7_kernel,
+                        stride=1,
+                        padding=conv7_kernel // 2,
+                    ),  # conv.7
+                    nn.BatchNorm2d(256),  # conv.8
+                    nn.ReLU(),
+                ]
+
+                # Add 4th conv layer if it exists
+                if conv10_shape:
+                    conv_layers.extend(
+                        [
+                            nn.Conv2d(
+                                256,
+                                512,
+                                kernel_size=conv10_kernel,
+                                stride=1,
+                                padding=conv10_kernel // 2,
+                            ),  # conv.10
+                            nn.BatchNorm2d(512),  # conv.11
+                            nn.ReLU(),
+                        ]
+                    )
+                    final_channels = 512
+                else:
+                    final_channels = 256
+
+                conv_layers.append(nn.AdaptiveAvgPool2d(1))
+                self.conv = nn.Sequential(*conv_layers)
+
+                # Inspect FC layer shapes from state dict
+                fc0_shape = get_param("fc.0.weight").shape
+                fc3_shape = (
+                    get_param("fc.3.weight").shape
+                    if get_param("fc.3.weight") is not None
+                    else None
+                )
+                fc6_shape = (
+                    get_param("fc.6.weight").shape
+                    if get_param("fc.6.weight") is not None
+                    else None
+                )
+
+                fc0_in = fc0_shape[1]  # Input features of first FC layer
+                fc0_out = fc0_shape[0]  # Output features of first FC layer
+
+                print(f"Building FC layers: {fc0_in} -> {fc0_out}", end="")
+
+                # Build FC layers based on what exists in the saved model
+                fc_layers = [nn.Linear(fc0_in, fc0_out)]  # fc.0
+
+                if fc3_shape and fc6_shape:
+                    # 3-layer FC structure
+                    fc3_out = fc3_shape[0]
+                    print(f" -> {fc3_out} -> {out_neurons}")
+                    fc_layers.extend(
+                        [
+                            nn.ReLU(),  # fc.1
+                            nn.Dropout(0.2),  # fc.2
+                            nn.Linear(fc0_out, fc3_out),  # fc.3
+                            nn.ReLU(),  # fc.4
+                            nn.Dropout(0.2),  # fc.5
+                            nn.Linear(fc3_out, out_neurons),  # fc.6
+                            nn.ELU(),
+                        ]
+                    )
+                elif fc3_shape:
+                    # 2-layer FC structure
+                    print(f" -> {out_neurons}")
+                    fc_layers.extend(
+                        [
+                            nn.ReLU(),  # fc.1
+                            nn.Dropout(0.2),  # fc.2
+                            nn.Linear(fc0_out, out_neurons),  # fc.3
+                            nn.ELU(),
+                        ]
+                    )
+                else:
+                    # 1-layer FC structure
+                    print(f" -> {out_neurons}")
+                    fc_layers.append(nn.ELU())
+
+                self.fc = nn.Sequential(*fc_layers)
+
+            def forward(self, x):
+                x = self.conv(x).squeeze(-1).squeeze(-1)
+                x = self.fc(x)
+                return x + 1
+
+        return CompatibleSimpleEncoder(out_neurons)
 
     def load_encoder_and_data(self, model_path, data_path=None):
         """Load encoder model and corresponding data"""
@@ -129,7 +279,10 @@ class EncoderVerifier:
                 last_fc_key = sorted(fc_keys)[-1]
                 out_neurons = state_dict[last_fc_key].shape[0]
 
-            self.encoder = SimpleEncoder(out_neurons)
+            # Create custom Simple encoder based on saved model architecture
+            self.encoder = self.create_compatible_simple_encoder(
+                state_dict, out_neurons
+            )
 
         # Handle nested model structure for both encoder types
         if any(k.startswith("model.") for k in state_dict.keys()):
