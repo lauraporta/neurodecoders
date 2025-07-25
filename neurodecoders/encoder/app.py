@@ -8,6 +8,8 @@ import os
 import sys
 from pathlib import Path
 import re
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import Callback
 
 # Add the encoder directory to the path so we can import from it
 sys.path.append(os.path.dirname(__file__))
@@ -28,6 +30,55 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # Create data directory if it doesn't exist
 os.makedirs('data', exist_ok=True)
+
+class StreamlitProgressCallback(Callback):
+    """Custom Lightning callback to update Streamlit progress during training"""
+    
+    def __init__(self, progress_callback=None, metrics_callback=None, total_epochs=30):
+        super().__init__()
+        self.progress_callback = progress_callback
+        self.metrics_callback = metrics_callback
+        self.total_epochs = total_epochs
+        self.best_val_loss = float('inf')
+        
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Called at the end of each training epoch"""
+        current_epoch = trainer.current_epoch + 1
+        progress = current_epoch / self.total_epochs
+        
+        # Get current losses with fallback to stored losses in module
+        train_loss = trainer.callback_metrics.get('train_loss_epoch', 0)
+        val_loss = trainer.callback_metrics.get('val_loss', 0)
+        
+        # Fallback to module's stored losses if callback metrics are empty
+        if (train_loss == 0 or val_loss == 0) and hasattr(pl_module, 'train_losses') and hasattr(pl_module, 'val_losses'):
+            if pl_module.train_losses:
+                train_loss = pl_module.train_losses[-1]
+            if pl_module.val_losses:
+                val_loss = pl_module.val_losses[-1]
+        
+        # Convert tensors to floats
+        if isinstance(train_loss, torch.Tensor):
+            train_loss = train_loss.item()
+        if isinstance(val_loss, torch.Tensor):
+            val_loss = val_loss.item()
+        
+        # Update best validation loss
+        if val_loss > 0 and val_loss < self.best_val_loss:
+            self.best_val_loss = val_loss
+        
+        # Update Streamlit progress
+        if self.progress_callback:
+            status = f"Epoch {current_epoch}/{self.total_epochs}"
+            if train_loss > 0:
+                status += f" - Train Loss: {train_loss:.4f}"
+            if val_loss > 0:
+                status += f", Val Loss: {val_loss:.4f}"
+            self.progress_callback(progress, status)
+        
+        # Update metrics
+        if self.metrics_callback:
+            self.metrics_callback(train_loss, val_loss, self.best_val_loss)
 
 def load_data():
     """Load neural data file selected by user from dropdown"""
@@ -154,7 +205,14 @@ def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.1
     if N != N_r:
         raise ValueError(f"Mismatch: images have {N} samples but firing rates have {N_r}")
     
-    # Train with Lightning (using the existing callback structure)
+    # Create custom callback for Streamlit updates
+    streamlit_callback = StreamlitProgressCallback(
+        progress_callback=progress_callback,
+        metrics_callback=metrics_callback,
+        total_epochs=epochs
+    )
+    
+    # Train with Lightning using the custom callback
     trainer, model, data_module = train_model_lightning(
         images=images,
         firing_rates=firing_rates,
@@ -163,7 +221,8 @@ def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.1
         batch_size=batch_size,
         learning_rate=learning_rate,
         epochs=epochs,
-        enable_progress_bar=False  # Disable Lightning's progress bar since we have Streamlit
+        enable_progress_bar=False,  # Disable Lightning's progress bar since we have Streamlit
+        callbacks=[streamlit_callback]  # Pass our custom callback
     )
     
     # Update progress to 100% when training is complete
@@ -187,12 +246,6 @@ def train_encoder_lightning(images, firing_rates, train_split=0.7, val_split=0.1
     
     # Calculate test loss
     test_loss = np.mean((test_predictions - test_actuals) ** 2)
-    
-    # Update final metrics
-    if metrics_callback:
-        final_train_loss = model.train_losses[-1] if model.train_losses else 0
-        final_val_loss = model.val_losses[-1] if model.val_losses else 0
-        metrics_callback(final_train_loss, final_val_loss, final_val_loss)
     
     return {
         'model': model,
@@ -256,6 +309,15 @@ def main():
     
     st.header("🚀 Training")
     
+    # Add helpful information
+    st.info("""
+    **Training Information:**
+    - Training will show real-time progress updates
+    - Loss curves will update after each epoch
+    - Progress bar shows overall training completion
+    - You can see live metrics during training
+    """)
+    
     if st.button("Start Training", type="primary"):
         # Training progress
         st.subheader("Training Progress")
@@ -270,6 +332,14 @@ def main():
         val_loss_placeholder = metric_col2.empty()
         best_val_placeholder = metric_col3.empty()
         
+        # Create placeholder for real-time loss plot
+        st.subheader("📈 Live Training Curves")
+        loss_plot_placeholder = st.empty()
+        
+        # Lists to store losses for real-time plotting
+        live_train_losses = []
+        live_val_losses = []
+        
         def update_progress(progress, status):
             progress_bar.progress(progress)
             status_text.text(status)
@@ -278,10 +348,43 @@ def main():
             train_loss_placeholder.metric("Train Loss", f"{train_loss:.4f}")
             val_loss_placeholder.metric("Val Loss", f"{val_loss:.4f}")
             best_val_placeholder.metric("Best Val Loss", f"{best_val_loss:.4f}")
+            
+            # Update real-time loss plot
+            if train_loss > 0:  # Only plot when we have valid losses
+                live_train_losses.append(train_loss)
+                live_val_losses.append(val_loss if val_loss > 0 else 0)
+                
+                # Create real-time plot (limit to reasonable update frequency)
+                if len(live_train_losses) % 1 == 0:  # Update every epoch
+                    try:
+                        plt.ioff()  # Turn off interactive mode
+                        fig, ax = plt.subplots(figsize=(10, 6))
+                        epochs_so_far = list(range(1, len(live_train_losses) + 1))
+                        ax.plot(epochs_so_far, live_train_losses, label='Train Loss', linewidth=2, color='blue')
+                        if len(live_val_losses) > 0 and any(v > 0 for v in live_val_losses):
+                            val_to_plot = [v if v > 0 else None for v in live_val_losses]
+                            ax.plot(epochs_so_far, val_to_plot, label='Validation Loss', linewidth=2, color='orange')
+                        ax.set_xlabel('Epoch')
+                        ax.set_ylabel('MSE Loss')
+                        ax.set_title('Training Progress (Live Update)')
+                        ax.legend()
+                        ax.grid(True, alpha=0.3)
+                        plt.tight_layout()
+                        
+                        # Update the plot
+                        loss_plot_placeholder.pyplot(fig)
+                        plt.close(fig)  # Close to prevent memory leaks
+                        plt.ion()  # Turn interactive mode back on
+                    except Exception as e:
+                        # If plotting fails, continue without breaking training
+                        pass
         
         try:
+            # Initialize progress
+            update_progress(0.0, "Initializing training...")
+            
             # Train the model with Lightning
-            with st.spinner("Training encoder with PyTorch Lightning..."):
+            with st.spinner("Setting up model and data..."):
                 results = train_encoder_lightning(
                     images=images,
                     firing_rates=firing_rates,
@@ -301,10 +404,16 @@ def main():
             st.subheader("📊 Final Evaluation")
             st.success(f"Test Loss: {results['test_loss']:.4f}")
             
-            # Plot final training curves
-            st.subheader("📈 Final Training Curves")
-            fig = plot_training_curves(results['train_losses'], results['val_losses'])
-            st.pyplot(fig)
+            # Show final training summary
+            if results['train_losses'] and results['val_losses']:
+                final_train_loss = results['train_losses'][-1]
+                final_val_loss = results['val_losses'][-1]
+                min_val_loss = min(results['val_losses']) if results['val_losses'] else float('inf')
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Final Train Loss", f"{final_train_loss:.4f}")
+                col2.metric("Final Val Loss", f"{final_val_loss:.4f}")
+                col3.metric("Best Val Loss", f"{min_val_loss:.4f}")
             
             # Plot predictions vs actual
             st.subheader("🎯 Predictions vs Actual")
