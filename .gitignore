@@ -98,3 +98,6 @@ workspace/*
 
 # .cursor
 .cursor/
+
+# mlflow
+mlruns/

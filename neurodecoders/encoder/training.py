@@ -11,7 +11,9 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.loggers import MLFlowLogger, TensorBoardLogger
+
+from .mlflow_utils import log_encoder_experiment
 
 
 class EncoderLightningModule(pl.LightningModule):
@@ -162,6 +164,10 @@ def train_encoder(
     log_every_n_steps: int = 50,
     logger_name: str = "encoder",
     unfreeze_epoch: Optional[int] = None,
+    enable_mlflow: bool = True,
+    mlflow_experiment_name: str = "neural_encoder",
+    mlflow_run_name: Optional[str] = None,
+    mlflow_tracking_uri: Optional[str] = None,
 ):
     """
     Generic training function that works with any model architecture.
@@ -206,16 +212,30 @@ def train_encoder(
     if unfreeze_epoch is not None:
         callbacks.append(UnfreezeCallback(unfreeze_epoch=unfreeze_epoch))
 
-    # Setup logger
-    logger = TensorBoardLogger(
+    # Setup loggers
+    loggers = []
+
+    # TensorBoard logger
+    tensorboard_logger = TensorBoardLogger(
         "workspace/logs/lightning_logs", name=logger_name
     )
+    loggers.append(tensorboard_logger)
+
+    # MLflow logger if enabled
+    if enable_mlflow:
+        mlflow_logger = MLFlowLogger(
+            experiment_name=mlflow_experiment_name,
+            run_name=mlflow_run_name,
+            tracking_uri=mlflow_tracking_uri,
+            log_model=True,
+        )
+        loggers.append(mlflow_logger)
 
     # Create trainer
     trainer = pl.Trainer(
         max_epochs=epochs,
         callbacks=callbacks,
-        logger=logger,
+        logger=loggers,
         enable_progress_bar=enable_progress_bar,
         log_every_n_steps=log_every_n_steps,
         accelerator="cpu"
@@ -223,7 +243,8 @@ def train_encoder(
         else "auto",  # Force CPU on MPS to avoid compatibility issues
         devices=1 if torch.backends.mps.is_available() else "auto",
         deterministic=False,
-        enable_checkpointing=True,
+        enable_checkpointing=False,  
+        # Disable to avoid MLflow artifact path issues
     )
 
     # Train the model
@@ -231,6 +252,44 @@ def train_encoder(
 
     # Test the model
     trainer.test(lightning_model, data_module)
+
+    # Log experiment to MLflow if enabled
+    if enable_mlflow:
+        # Prepare hyperparameters for logging
+        hyperparams = {
+            "learning_rate": learning_rate,
+            "weight_decay": weight_decay,
+            "epochs": epochs,
+            "optimizer_config": optimizer_config or {},
+            "model_name": model_name,
+            "unfreeze_epoch": unfreeze_epoch,
+        }
+
+        # Prepare dataset info
+        dataset_info = {
+            "train_size": len(data_module.train_dataset),
+            "val_size": len(data_module.val_dataset),
+            "test_size": len(data_module.test_dataset),
+            "batch_size": data_module.batch_size,
+            "input_shape": data_module.images.shape,
+            "output_neurons": data_module.firing_rates.shape[1],
+        }
+
+        # Save model path for logging
+        model_save_path = (
+            f"workspace/models/{model_name}_{mlflow_run_name or 'latest'}.pt"
+        )
+
+        # Log experiment
+        log_encoder_experiment(
+            model=model,
+            lightning_module=lightning_model,
+            hyperparams=hyperparams,
+            dataset_info=dataset_info,
+            model_save_path=model_save_path,
+            experiment_name=mlflow_experiment_name,
+            run_name=mlflow_run_name,
+        )
 
     return trainer, lightning_model, data_module
 

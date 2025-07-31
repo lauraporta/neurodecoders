@@ -17,6 +17,7 @@ dependencies = [
     "noise",
     "pytorch-lightning",
     "scikit-image",
+    "mlflow",
 ]
 
 license = {text = "BSD-3-Clause"}
