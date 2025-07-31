@@ -25,31 +25,52 @@ echo "Starting encoder training..."
 # ==========================================
 
 MODEL_TYPE="resnet"           # Options: simple, resnet, skip_connection
-RUN_NAME="resnet"             # Name for this training run
-BATCH_SIZE=16                 # Adjust based on GPU memory (8, 16, 32)
-EPOCHS=50                     # Number of training epochs
+EPOCHS=10000                     # Number of training epochs
 OUT_NEURONS=1000             # Number of output neurons
-DATASET_TYPE="cifar10"        # Dataset type
+DATASET_TYPE="mnist"        # Dataset type
 STA_TYPE="perlin_noise_patterns,11,11"  # STA type
 N_NEURONS=1000               # Number of neurons
 N_IMAGES=1000                # Number of images
-EXPERIMENT_NAME="compare_encoders"  # MLflow experiment name
+EXPERIMENT_NAME="resnet_hyperparameter_sweep"  # MLflow experiment name
+
+# Define arrays for hyperparameter sweep
+LEARNING_RATES=(0.0001 0.001 0.01)
+BATCH_SIZES=(16 32 64)
 
 # ==========================================
-# TRAINING COMMAND (DO NOT MODIFY BELOW):
+# TRAINING LOOP (DO NOT MODIFY BELOW):
 # ==========================================
 
-python neurodecoders/encoder/mlflow_training.py \
-    --mode single \
-    --model-type $MODEL_TYPE \
-    --out-neurons $OUT_NEURONS \
-    --epochs $EPOCHS \
-    --dataset-type $DATASET_TYPE \
-    --sta-type $STA_TYPE \
-    --n-neurons $N_NEURONS \
-    --n-images $N_IMAGES \
-    --experiment-name $EXPERIMENT_NAME \
-    --run-name $RUN_NAME \
-    --batch-size $BATCH_SIZE
+for lr in "${LEARNING_RATES[@]}"; do
+    for batch_size in "${BATCH_SIZES[@]}"; do
+        # Create run name based on current parameters
+        RUN_NAME="resnet_lr${lr}_bs${batch_size}"
 
-echo "Encoder training completed."
+        echo "=========================================="
+        echo "Training with parameters:"
+        echo "  Model Type: $MODEL_TYPE"
+        echo "  Learning Rate: $lr"
+        echo "  Batch Size: $batch_size"
+        echo "  Run Name: $RUN_NAME"
+        echo "=========================================="
+
+        python neurodecoders/encoder/mlflow_training.py \
+            --mode single \
+            --model-type $MODEL_TYPE \
+            --out-neurons $OUT_NEURONS \
+            --epochs $EPOCHS \
+            --dataset-type $DATASET_TYPE \
+            --sta-type $STA_TYPE \
+            --n-neurons $N_NEURONS \
+            --n-images $N_IMAGES \
+            --experiment-name $EXPERIMENT_NAME \
+            --run-name $RUN_NAME \
+            --batch-size $batch_size \
+            --learning-rate $lr
+
+        echo "Completed training for $RUN_NAME"
+        echo "=========================================="
+    done
+done
+
+echo "All encoder training runs completed."
