@@ -798,7 +798,13 @@ class EncoderVerifier:
         print(f"  Max variance: {np.max(data_variance):.6f}")
 
         # Use PCA with more components to get better analysis
-        n_components = min(100, self.predicted_firing_rates.shape[1])
+        # Limit components by both features and samples
+        max_components = min(
+            100,
+            self.predicted_firing_rates.shape[1],
+            self.predicted_firing_rates.shape[0],
+        )
+        n_components = max_components
         pca = PCA(n_components=n_components)
         representations_pca = pca.fit_transform(self.predicted_firing_rates)
 
