@@ -13,7 +13,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "encoder"))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "synthetic"))
 
-from neurodecoders.encoder.encoder import SimpleEncoder
+from neurodecoders.encoder.models import SimpleEncoder
 from neurodecoders.synthetic.sta import STA
 
 
@@ -48,7 +48,8 @@ class MEIOptimizer:
             # Fallback: return a random firing rate if no STA data available
             return torch.tensor(50.0, device=self.device, dtype=torch.float32)
 
-        # If image is a patch (smaller than full image), create a full image with patch at RF location
+        # If image is a patch (smaller than full image), create a full image
+        # with patch at RF location
         if image.shape[-1] < 224:  # This is a patch
             # Create a full 224x224 image with zeros
             full_image = torch.zeros(
@@ -117,7 +118,8 @@ class MEIOptimizer:
         return expected_firing_rate
 
     def normalize_to_bounds(self, image, min_val=-1, max_val=1):
-        """Normalize image to [min_val, max_val] range while preserving relative relationships"""
+        """Normalize image to [min_val, max_val] range while preserving
+        relative relationships"""
         with torch.no_grad():
             current_min = image.min()
             current_max = image.max()
@@ -133,7 +135,8 @@ class MEIOptimizer:
             return scaled
 
     def verify_bounds(self, image):
-        """Verify and ensure image is within [-1, 1] bounds using normalization"""
+        """Verify and ensure image is within [-1, 1] bounds using
+        normalization"""
         with torch.no_grad():
             min_val = image.min().item()
             max_val = image.max().item()
@@ -191,7 +194,8 @@ class MEIOptimizer:
             regularization_weight: Weight for L2 regularization on image
             update_interval: How often to yield intermediate results
             callback: Optional callback function for real-time updates
-            patience: Number of iterations to wait before reducing LR on plateau
+            patience: Number of iterations to wait before reducing LR on
+                plateau
             factor: Factor by which to reduce learning rate
             min_lr: Minimum learning rate threshold
 
@@ -234,8 +238,10 @@ class MEIOptimizer:
             firing_rates = self.encoder_model(image)
             predicted_firing_rate = firing_rates[0, self.target_neuron_idx]
 
-            # Loss: minimize the difference between predicted and expected firing rates
-            # We want the encoder to predict high firing rates when the simulation gives high firing rates
+            # Loss: minimize the difference between predicted and expected
+            # firing rates
+            # We want the encoder to predict high firing rates when the
+            # simulation gives high firing rates
             rate_loss = F.mse_loss(predicted_firing_rate, expected_firing_rate)
 
             # L2 regularization on image to prevent extreme values
@@ -249,7 +255,8 @@ class MEIOptimizer:
 
             optimizer.step()
 
-            # Use normalization to ensure [-1, 1] range while preserving relationships
+            # Use normalization to ensure [-1, 1] range while preserving
+            # relationships
             with torch.no_grad():
                 # Check if bounds are exceeded
                 min_val = image.min()
@@ -434,12 +441,20 @@ def save_mei_results(
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Save the optimized image
-    image_filename = f"mei_image_model-{os.path.basename(model_path).replace('.pth', '')}_neuron-{neuron_idx}_datetime-{timestamp}.npy"
+    image_filename = (
+        f"mei_image_model-"
+        f"{os.path.basename(model_path).replace('.pth', '')}_neuron-"
+        f"{neuron_idx}_datetime-{timestamp}.npy"
+    )
     image_path = os.path.join(output_dir, image_filename)
     np.save(image_path, optimized_image.squeeze().cpu().numpy())
 
     # Save optimization history
-    history_filename = f"mei_history_model-{os.path.basename(model_path).replace('.pth', '')}_neuron-{neuron_idx}_datetime-{timestamp}.npz"
+    history_filename = (
+        f"mei_history_model-"
+        f"{os.path.basename(model_path).replace('.pth', '')}_neuron-"
+        f"{neuron_idx}_datetime-{timestamp}.npz"
+    )
     history_path = os.path.join(output_dir, history_filename)
     np.savez(
         history_path,

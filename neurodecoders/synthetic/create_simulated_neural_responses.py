@@ -26,7 +26,11 @@ def save_output(
 ):
     output_dir = "workspace/datasets/synthetic"
     os.makedirs(output_dir, exist_ok=True)
-    filename = f"{output_dir}/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{n_neurons}_n_images-{n_images}_datetime-{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
+    filename = (
+        f"synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-"
+        f"{n_neurons}_n_images-{n_images}_datetime-"
+        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
+    )
     np.savez(
         filename,
         images=images.cpu().numpy(),
@@ -113,7 +117,8 @@ def plot_sta_and_spikes(
             ax_img.add_patch(rect)
         ax_img.axis("off")
         ax_img.set_title(
-            f"Image {image_sort_idx[i]} (Max Response: {image_max_responses[image_sort_idx[i]]:.2f})"
+            f"Image {image_sort_idx[i]} (Max Response: "
+            f"{image_max_responses[image_sort_idx[i]]:.2f})"
         )
 
         # Plot firing rates
@@ -187,7 +192,8 @@ def plot_sta_and_spikes(
             ax_img2.add_patch(rect)
         ax_img2.axis("off")
         ax_img2.set_title(
-            f"Image {image_sort_idx[i + n_plot_images]} (Max Response: {image_max_responses[image_sort_idx[i + n_plot_images]]:.2f})"
+            f"Image {image_sort_idx[i + n_plot_images]} (Max Response: "
+            f"{image_max_responses[image_sort_idx[i + n_plot_images]]:.2f})"
         )
 
         # Plot firing rates for second set
@@ -326,7 +332,8 @@ def plot_response_heatmaps(
 
 def plot_response_heatmaps_all(responses, dot_products, adaptation_states):
     """
-    Plot heatmaps of firing rates, dot products, and adaptation states for all images and neurons.
+    Plot heatmaps of firing rates, dot products, and adaptation states for all
+    images and neurons.
     """
     fig, axes = plt.subplots(1, 3, figsize=(25, 8))  # Increased from (18, 5)
     im1 = axes[0].imshow(responses.T, aspect="auto", cmap="viridis")
@@ -357,7 +364,8 @@ def plot_response_heatmaps_all(responses, dot_products, adaptation_states):
 
 def plot_response_histograms(responses, dot_products, adaptation_states):
     """
-    Plot histograms of firing rates, dot products, and adaptation states across all neurons and images.
+    Plot histograms of firing rates, dot products, and adaptation states across
+    all neurons and images.
     Neurons are sorted by their response to the first image.
     """
     # Sort neurons by their response to the first image

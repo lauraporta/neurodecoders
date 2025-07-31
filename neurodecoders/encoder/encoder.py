@@ -1,286 +1,44 @@
+"""
+DEPRECATED: This file maintains backwards compatibility.
+For new code, use the modular structure:
+- neurodecoders.encoder.models for model architectures
+- neurodecoders.encoder.training for training pipelines
+- neurodecoders.encoder.utils for utilities
+"""
+
 import argparse
-import datetime
-import glob
-import os
-import re
 from pathlib import Path
 
-import matplotlib.pyplot as plt
-import numpy as np
-import pytorch_lightning as pl
-import torch
-import torch.nn as nn
-from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger
-from torch.utils.data import DataLoader, Dataset, random_split
+# Import from new modular structure for backwards compatibility
+from .models import SimpleEncoder
+from .training import EncoderLightningModule, train_encoder
+from .utils import (
+    NeuralDataModule,
+    NeuralDataset,
+    load_latest_data,
+    plot_training_results,
+    preprocess_data,
+    save_model_with_metadata,
+    save_predictions,
+    visualize_data,
+)
+
+# Re-export commonly used items for backwards compatibility
+__all__ = [
+    "SimpleEncoder",
+    "EncoderLightningModule",
+    "NeuralDataset",
+    "NeuralDataModule",
+    "load_latest_data",
+    "preprocess_data",
+    "visualize_data",
+    "train_model_lightning",  # Legacy function
+    "plot_training_results",
+    "save_predictions",
+]
 
 
-# ---- Dataset class ----
-class NeuralDataset(Dataset):
-    def __init__(self, images, firing_rates):
-        self.images = torch.tensor(
-            images[:, None, :, :], dtype=torch.float32
-        )  # Add channel dim
-        self.firing_rates = torch.tensor(firing_rates, dtype=torch.float32)
-
-    def __len__(self):
-        return len(self.images)
-
-    def __getitem__(self, idx):
-        return self.images[idx], self.firing_rates[idx]
-
-
-# ---- Model definition ----
-class SimpleEncoder(nn.Module):
-    def __init__(self, out_neurons):
-        super().__init__()
-        # Deeper convolutional layers with batch normalization
-        self.conv = nn.Sequential(
-            # Initial conv layer with larger kernel to reduce spatial dimensions
-            nn.Conv2d(1, 64, kernel_size=11, stride=1, padding=5),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
-            # Middle conv layers
-            nn.Conv2d(64, 128, kernel_size=7, stride=1, padding=3),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=5, stride=1, padding=2),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            # Final pooling
-            nn.AdaptiveAvgPool2d(1),
-        )
-
-        # Lightweight FC layers with single hidden layer
-        self.fc = nn.Sequential(
-            nn.Linear(512, 256),  # 131K parameters
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, out_neurons),  # 256K parameters for 1000 neurons
-            nn.ELU(),
-        )
-
-    def forward(self, x):
-        x = self.conv(x).squeeze(-1).squeeze(-1)
-        x = self.fc(x)
-        return x + 1
-
-
-# ---- Lightning Module ----
-class EncoderLightningModule(pl.LightningModule):
-    def __init__(
-        self,
-        out_neurons: int,
-        learning_rate: float = 1e-3,
-        weight_decay: float = 1e-5,
-    ):
-        super().__init__()
-        self.save_hyperparameters()
-        self.model = SimpleEncoder(out_neurons)
-        self.loss_fn = nn.MSELoss()
-        self.learning_rate = learning_rate
-        self.weight_decay = weight_decay
-
-        # Store training history for plotting
-        self.train_losses: list[float] = []
-        self.val_losses: list[float] = []
-
-    def forward(self, x):
-        return self.model(x)
-
-    def training_step(self, batch):
-        x, y = batch
-        pred = self.model(x)
-        loss = self.loss_fn(pred, y)
-
-        # Log training loss
-        self.log(
-            "train_loss", loss, on_step=True, on_epoch=True, prog_bar=True
-        )
-        return loss
-
-    def validation_step(self, batch):
-        x, y = batch
-        pred = self.model(x)
-        loss = self.loss_fn(pred, y)
-
-        # Log validation loss
-        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
-        return loss
-
-    def test_step(self, batch):
-        x, y = batch
-        pred = self.model(x)
-        loss = self.loss_fn(pred, y)
-
-        # Log test loss
-        self.log("test_loss", loss, on_step=False, on_epoch=True)
-        return loss
-
-    def configure_optimizers(self):
-        optimizer = torch.optim.Adam(
-            self.parameters(),
-            lr=self.learning_rate,
-            weight_decay=self.weight_decay,
-        )
-        return optimizer
-
-    def on_train_epoch_end(self):
-        # Store losses for plotting
-        train_loss = self.trainer.callback_metrics.get("train_loss_epoch", 0)
-        val_loss = self.trainer.callback_metrics.get("val_loss", 0)
-
-        if isinstance(train_loss, torch.Tensor):
-            train_loss = train_loss.item()
-        if isinstance(val_loss, torch.Tensor):
-            val_loss = val_loss.item()
-
-        self.train_losses.append(train_loss)
-        self.val_losses.append(val_loss)
-
-
-# ---- Data Module ----
-class NeuralDataModule(pl.LightningDataModule):
-    def __init__(
-        self,
-        images,
-        firing_rates,
-        train_split=0.7,
-        val_split=0.15,
-        batch_size=32,
-        num_workers=0,
-    ):
-        super().__init__()
-        self.images = images
-        self.firing_rates = firing_rates
-        self.train_split = train_split
-        self.val_split = val_split
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-
-        # Create full dataset
-        self.full_dataset = NeuralDataset(images, firing_rates)
-        self.setup_splits()
-
-    def setup_splits(self):
-        """Setup train/val/test splits"""
-        total_size = len(self.full_dataset)
-        train_size = int(self.train_split * total_size)
-        val_size = int(self.val_split * total_size)
-        test_size = total_size - train_size - val_size
-
-        self.train_dataset, self.val_dataset, self.test_dataset = random_split(
-            self.full_dataset,
-            [train_size, val_size, test_size],
-            generator=torch.Generator().manual_seed(42),
-        )
-
-    def train_dataloader(self):
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-        )
-
-    def val_dataloader(self):
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            num_workers=self.num_workers,
-        )
-
-    def test_dataloader(self):
-        return DataLoader(
-            self.test_dataset,
-            batch_size=self.batch_size,
-            num_workers=self.num_workers,
-        )
-
-
-def load_latest_data(dataset_to_load):
-    """Load the latest neural data file"""
-    # If dataset_to_load is a Path object, convert to string
-    if hasattr(dataset_to_load, "__str__"):
-        dataset_to_load = str(dataset_to_load)
-
-    # Check if it's a specific file or a pattern
-    if os.path.isfile(dataset_to_load):
-        # It's a specific file
-        files = [dataset_to_load]
-    else:
-        # It's a pattern, use glob
-        files = glob.glob(dataset_to_load)
-
-    if not files:
-        raise FileNotFoundError(
-            f"No neural data files found matching: {dataset_to_load}"
-        )
-
-    latest_file = max(files, key=os.path.getctime)
-    data = np.load(latest_file)
-    images = data["images"]  # Expecting shape: (N, 1, H, W)
-    firing_rates = data[
-        "responses"
-    ]  # Shape: (N, C) - already in firing rate format
-
-    return images, firing_rates, latest_file
-
-
-def preprocess_data(images, firing_rates):
-    """Preprocess and validate the data"""
-    print(f"Images shape: {images.shape}")
-    print(f"Firing rates shape: {firing_rates.shape}")
-
-    # Handle 4D image input if present
-    if images.ndim == 4:
-        N, _, H, W = images.shape
-        images = images[:, 0, :, :]  # Take first channel
-    elif images.ndim == 3:
-        N, H, W = images.shape
-    else:
-        raise ValueError(f"Unexpected image shape: {images.shape}")
-
-    # Validate shapes
-    N_r, C = firing_rates.shape
-    if N != N_r:
-        raise ValueError(
-            f"Mismatch: images have {N} samples but firing rates have {N_r}"
-        )
-
-    return images, firing_rates
-
-
-def visualize_data(firing_rates):
-    """Visualize the firing rate data"""
-    print("\nFiring rate statistics:")
-    print(f"Mean firing rate: {firing_rates.mean():.3f}")
-    print(f"Std firing rate: {firing_rates.std():.3f}")
-    print(f"Min firing rate: {firing_rates.min():.3f}")
-    print(f"Max firing rate: {firing_rates.max():.3f}")
-
-    # Plot firing rate distribution
-    plt.figure(figsize=(10, 4))
-    plt.subplot(1, 2, 1)
-    plt.hist(firing_rates.flatten(), bins=50)
-    plt.title("Firing Rate Distribution")
-    plt.xlabel("Firing Rate")
-    plt.ylabel("Count")
-
-    plt.subplot(1, 2, 2)
-    plt.imshow(firing_rates[:100].T, aspect="auto", cmap="viridis")
-    plt.colorbar(label="Firing Rate")
-    plt.title("Firing Rates for First 100 Images")
-    plt.xlabel("Image Index")
-    plt.ylabel("Neuron Index")
-    plt.tight_layout()
-    plt.show()
-
-
+# Legacy wrapper function for backwards compatibility
 def train_model_lightning(
     images,
     firing_rates,
@@ -294,13 +52,11 @@ def train_model_lightning(
     callbacks=None,
 ):
     """
-    Train encoder using PyTorch Lightning
-
-    Returns:
-        trainer: The trained trainer object
-        model: The trained model
-        data_module: The data module
+    DEPRECATED: Legacy wrapper for backwards compatibility.
+    Use train_simple_encoder() or train_resnet_encoder() from training module.
     """
+    print("WARNING: train_model_lightning is deprecated. Use new functions.")
+
     # Create data module
     data_module = NeuralDataModule(
         images=images,
@@ -311,132 +67,42 @@ def train_model_lightning(
     )
 
     # Create model
-    model = EncoderLightningModule(
-        out_neurons=firing_rates.shape[1], learning_rate=learning_rate
-    )
+    model = SimpleEncoder(out_neurons=firing_rates.shape[1])
 
-    # Setup callbacks
-    if callbacks is None:
-        callbacks = []
-
-    # Add default callbacks
-    callbacks.extend([LearningRateMonitor(logging_interval="epoch")])
-
-    # Setup logger
-    logger = TensorBoardLogger("workspace/logs/lightning_logs", name="encoder")
-
-    # Create trainer
-    trainer = pl.Trainer(
-        max_epochs=epochs,
+    # Train using new training pipeline
+    trainer, lightning_model, data_module = train_encoder(
+        model=model,
+        data_module=data_module,
+        learning_rate=learning_rate,
+        epochs=epochs,
         callbacks=callbacks,
-        logger=logger,
         enable_progress_bar=enable_progress_bar,
         log_every_n_steps=log_every_n_steps,
-        accelerator="cpu"
-        if torch.backends.mps.is_available()
-        else "auto",  # Force CPU on MPS to avoid compatibility issues
-        devices=1 if torch.backends.mps.is_available() else "auto",
-        deterministic=False,
-        enable_checkpointing=True,
+        logger_name="legacy_encoder",
     )
 
-    # Train the model
-    trainer.fit(model, data_module)
-
-    # Test the model
-    trainer.test(model, data_module)
-
-    return trainer, model, data_module
-
-
-def plot_training_results(train_losses, val_losses):
-    """Plot training results"""
-    plt.figure(figsize=(8, 5))
-    plt.plot(train_losses, label="Train Loss")
-    plt.plot(val_losses, label="Validation Loss")
-    plt.xlabel("Epoch")
-    plt.ylabel("MSE Loss")
-    plt.title("Loss Curves")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-
-def save_predictions(
-    model,
-    images,
-    firing_rates,
-    input_file_path,
-    output_dir="workspace/predictions/encoder",
-    dataset_to_load=None,
-):
-    """Save predicted neural responses with the same timestamp as input file"""
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Extract timestamp from input filename
-    # Expected format: simulated_neural_data_*neurons_*images_YYYYMMDD_HHMMSS.npz
-    timestamp_match = re.search(r"(\d{8}_\d{6})\.npz$", input_file_path)
-    if timestamp_match:
-        timestamp = timestamp_match.group(1)
-    else:
-        # If no timestamp found, use current time
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # Prepare images for prediction
-    if images.ndim == 4:
-        # Images are already [N, C, H, W]
-        input_images = torch.tensor(images, dtype=torch.float32)
-    else:
-        # Images are [N, H, W], add channel dimension
-        input_images = torch.tensor(images[:, None, :, :], dtype=torch.float32)
-
-    # Run predictions in batches to avoid GPU memory issues
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
-    model.eval()
-
-    batch_size = 32  # Process images in smaller batches
-    predictions_list = []
-    total_batches = (len(input_images) + batch_size - 1) // batch_size
-    
-    print(f"Running inference on {len(input_images)} images in {total_batches} batches...")
-    
-    with torch.no_grad():
-        for i, batch_start in enumerate(range(0, len(input_images), batch_size)):
-            batch = input_images[batch_start:batch_start + batch_size].to(device)
-            batch_predictions = model(batch).cpu().numpy()
-            predictions_list.append(batch_predictions)
-            print(f"Processed batch {i+1}/{total_batches}")
-
-        # Clear GPU cache after inference
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
-    
-    predictions = np.concatenate(predictions_list, axis=0)
-
-    # Save predictions with same timestamp
-    output_filename = f"encoder_predictions_{Path(input_file_path).stem}.npz"
-    output_path = os.path.join(output_dir, output_filename)
-
-    np.savez(
-        output_path,
-        predicted_responses=predictions,
-        actual_responses=firing_rates,
-        input_file=input_file_path,
-        timestamp=timestamp,
-    )
-
-    print(f"Predictions saved to: {output_path}")
-    print(f"Predicted responses shape: {predictions.shape}")
-    print(f"Mean predicted firing rate: {predictions.mean():.3f}")
-
-    return output_path
+    # Return in old format for compatibility
+    return trainer, lightning_model, data_module
 
 
 def main(dataset_to_load, epochs=30, learning_rate=1e-3):
-    """Main function to run the encoder training"""
+    """Main function to run encoder training - DEPRECATED: Use new modules"""
     print("=== Neural Encoder Training with PyTorch Lightning ===")
+    print(
+        "WARNING: This function is deprecated. Consider using the new modules."
+    )
+
+    # Import from new modules
+    from .models import SimpleEncoder
+    from .training import train_encoder
+    from .utils import (
+        NeuralDataModule,
+        load_latest_data,
+        plot_training_results,
+        preprocess_data,
+        save_predictions,
+        visualize_data,
+    )
 
     # Load data
     print("Loading data...")
@@ -448,31 +114,50 @@ def main(dataset_to_load, epochs=30, learning_rate=1e-3):
     # Visualize data
     visualize_data(firing_rates)
 
-    # Train with Lightning
-    trainer, model, data_module = train_model_lightning(
+    # Create data module
+    data_module = NeuralDataModule(
         images=images,
         firing_rates=firing_rates,
-        epochs=epochs,
+        train_split=0.7,
+        val_split=0.15,
+        batch_size=32,
+    )
+
+    # Create model
+    model = SimpleEncoder(out_neurons=firing_rates.shape[1])
+
+    # Train with new training pipeline
+    trainer, lightning_model, data_module = train_encoder(
+        model=model,
+        data_module=data_module,
         learning_rate=learning_rate,
+        epochs=epochs,
         enable_progress_bar=True,
+        logger_name="simple_encoder",
     )
 
     # Plot training results
-    plot_training_results(model.train_losses, model.val_losses)
+    plot_training_results(
+        lightning_model.train_losses, lightning_model.val_losses
+    )
 
     # Save predictions
     save_predictions(
-        model, images, firing_rates, data_file, "data", dataset_to_load
+        lightning_model.model,
+        images,
+        firing_rates,
+        data_file,
+        "workspace/predictions/encoder",
+        dataset_to_load,
     )
 
-    # Save final model with dataset information
-    dataset_name = Path(data_file).stem
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_dir = "workspace/models/encoders"
-    os.makedirs(model_dir, exist_ok=True)
-    model_path = f"{model_dir}/encoder_model_{dataset_name}_datetime-{timestamp}.pth"
-    torch.save(model.state_dict(), model_path)
-    print(f"Model saved to: {model_path}")
+    # Save model with metadata
+    save_model_with_metadata(
+        lightning_model.model,
+        data_file,
+        model_type="simple_encoder",
+        additional_info={"epochs": epochs, "lr": learning_rate},
+    )
 
     print("=== Lightning Training Complete ===")
 
@@ -480,27 +165,27 @@ def main(dataset_to_load, epochs=30, learning_rate=1e-3):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train neural encoder model")
     parser.add_argument(
-        "--dataset", 
+        "--dataset",
         type=str,
         default="workspace/datasets/synthetic/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250703_162151.npz",
-        help="Path to the dataset file (.npz format)"
+        help="Path to the dataset file (.npz format)",
     )
     parser.add_argument(
         "--epochs",
         type=int,
         default=30,
-        help="Number of training epochs (default: 30)"
+        help="Number of training epochs (default: 30)",
     )
     parser.add_argument(
         "--learning-rate",
         type=float,
         default=1e-3,
-        help="Learning rate for training (default: 1e-3)"
+        help="Learning rate for training (default: 1e-3)",
     )
-    
+
     args = parser.parse_args()
     dataset_to_load = Path(args.dataset)
-    
+
     # Check if dataset file exists
     if not dataset_to_load.exists():
         print(f"Error: Dataset file '{dataset_to_load}' not found!")
@@ -510,6 +195,6 @@ if __name__ == "__main__":
             for file in data_dir.glob("*.npz"):
                 print(f"  {file}")
         exit(1)
-    
+
     print(f"Using dataset: {dataset_to_load}")
     main(dataset_to_load, epochs=args.epochs, learning_rate=args.learning_rate)

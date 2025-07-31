@@ -344,10 +344,15 @@ def main():
             st.success("Large dataset generated successfully!")
             st.info(f"""
             **Generated Files:**
-            - Dataset: `workspace/datasets/synthetic/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{large_n_neurons}_n_images-{large_n_images}_datetime-{timestamp}.npz`
-            - Heatmaps: `workspace/plots/analysis/heatmaps_all_{timestamp}.png`
-            - Histograms: `workspace/plots/analysis/response_histograms_{timestamp}.png`
-            - Correlations: `workspace/plots/analysis/neural_correlations_{timestamp}.png`
+            - Dataset:
+              `workspace/datasets/synthetic/synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-`
+              `{large_n_neurons}_n_images-{large_n_images}_datetime-{timestamp}.npz`
+            - Heatmaps:
+              `workspace/plots/analysis/heatmaps_all_{timestamp}.png`
+            - Histograms:
+              `workspace/plots/analysis/response_histograms_{timestamp}.png`
+            - Correlations:
+              `workspace/plots/analysis/neural_correlations_{timestamp}.png`
 
             **Dataset Statistics:**
             - Images: {large_n_images}
@@ -369,12 +374,14 @@ def main():
 
             with col2:
                 st.image(
-                    f"workspace/plots/analysis/response_histograms_{timestamp}.png",
+                    f"workspace/plots/analysis/response_histograms_\
+                        {timestamp}.png",
                     caption="Response Distributions",
                 )
 
             st.image(
-                f"workspace/plots/analysis/neural_correlations_{timestamp}.png",
+                f"workspace/plots/analysis/neural_correlations_\
+                    {timestamp}.png",
                 caption="Neural Correlations",
             )
 
@@ -386,14 +393,18 @@ def main():
     st.markdown("""
     ### About the Visualization
 
-    This app visualizes simulated neural responses to images. The visualization shows:
+    This app visualizes simulated neural responses to images. The visualization
+    shows:
 
-    1. **Left Panel**: First set of images with their corresponding neural responses
+    1. **Left Panel**: First set of images with their corresponding neural
+    responses
     2. **Right Panel**: Additional set of images with their neural responses
     3. **Bottom**: Spatiotemporal Averages (STAs) for the top neurons
 
-    Each neuron's response is shown as both firing rate (dots) and dot product (x markers).
-    The colored rectangles on the images show the receptive fields of the top neurons.
+    Each neuron's response is shown as both firing rate (dots) and dot product
+    (x markers).
+    The colored rectangles on the images show the receptive fields of the top
+    neurons.
 
     ### Available Options
 
@@ -407,12 +418,14 @@ def main():
             - ResNet18: 6 convolutional blocks
             - VGG16: 13 convolutional layers
 
-    For pattern-based STAs, you can adjust the patch size (must be an odd number).
+    For pattern-based STAs, you can adjust the patch size (must be an odd
+    number).
     For model-based STAs, you can choose which layer's features to use as STAs.
 
     ### Large Dataset Generation
 
-    Use the "Generate Large Dataset" button to create datasets with many neurons and images for training neural decoders.
+    Use the "Generate Large Dataset" button to create datasets with many
+    neurons and images for training neural decoders.
     The generated .npz files contain:
     - `images`: Input images (N, 1, H, W)
     - `responses`: Neural firing rates (N, C)

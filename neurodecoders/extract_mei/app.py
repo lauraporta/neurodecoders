@@ -48,7 +48,8 @@ def load_available_models():
         files = glob.glob("workspace/models/encoder_model_*.pth")
         if not files:
             st.error(
-                "No encoder model files found in workspace/models/ directory. Please train an encoder first."
+                "No encoder model files found in workspace/models/ directory. "
+                "Please train an encoder first."
             )
             return {}
 
@@ -79,14 +80,17 @@ def load_available_models():
 
 
 def infer_dataset_from_model(model_path):
-    """Automatically infer the appropriate dataset path from the encoder model path"""
+    """Automatically infer the appropriate dataset path from the encoder model
+    path"""
     try:
         # Extract dataset info from model filename
         model_filename = os.path.basename(model_path)
 
         if "synthdata_dataset-" in model_filename:
             # Parse the dataset identifier from the model filename
-            # Example: encoder_synthdata_dataset-gaussian_noise_n_neurons_100_epochs_50.pth
+            # Example:
+            # encoder_synthdata_dataset-gaussian_noise_n_neurons_100_epochs_50.
+            # pth
             # Extract: gaussian_noise_n_neurons_100_epochs_50
             dataset_identifier = model_filename.split("synthdata_dataset-")[
                 1
@@ -104,8 +108,20 @@ def infer_dataset_from_model(model_path):
             else:
                 # Try alternative locations
                 alt_paths = [
-                    os.path.join("neurodecoders", "workspace", "datasets", "synthetic", dataset_filename),
-                    os.path.join("..", "workspace", "datasets", "synthetic", dataset_filename),
+                    os.path.join(
+                        "neurodecoders",
+                        "workspace",
+                        "datasets",
+                        "synthetic",
+                        dataset_filename,
+                    ),
+                    os.path.join(
+                        "..",
+                        "workspace",
+                        "datasets",
+                        "synthetic",
+                        dataset_filename,
+                    ),
                     dataset_filename,  # Try current directory
                 ]
 
@@ -116,7 +132,8 @@ def infer_dataset_from_model(model_path):
                 # If not found, return None
                 return None
         else:
-            # For models without clear dataset identifier, try to find any dataset
+            # For models without clear dataset identifier, try to find any
+            # dataset
             data_dir = "workspace/datasets/synthetic"
             if os.path.exists(data_dir):
                 dataset_files = [
@@ -251,7 +268,8 @@ def main():
         st.write(f"**Neurons:** {model_info['n_neurons']}")
         st.write(f"**File Size:** {model_info['file_size_mb']:.1f} MB")
         st.write(
-            f"**Modified:** {model_info['modified'].strftime('%Y-%m-%d %H:%M')}"
+            f"**Modified:** \
+                {model_info['modified'].strftime('%Y-%m-%d %H:%M')}"
         )
 
     # Automatically infer the appropriate dataset from the model
@@ -259,7 +277,8 @@ def main():
 
     if selected_dataset_path is None:
         st.error(
-            "Could not automatically find the appropriate dataset for the selected model. Please ensure the dataset file exists."
+            "Could not automatically find the appropriate dataset for the "
+            "selected model. Please ensure the dataset file exists."
         )
         st.stop()
 
@@ -275,7 +294,8 @@ def main():
         st.write(f"**Dataset:** {dataset_info['dataset_info']}")
         st.write(f"**File Size:** {dataset_info['file_size_mb']:.1f} MB")
         st.write(
-            f"**Modified:** {dataset_info['modified'].strftime('%Y-%m-%d %H:%M')}"
+            f"**Modified:** \
+                {dataset_info['modified'].strftime('%Y-%m-%d %H:%M')}"
         )
 
     # MEI Optimization Parameters
@@ -293,7 +313,8 @@ def main():
                 break
         if n_neurons is None:
             raise ValueError(
-                "Could not determine number of output neurons from model structure."
+                "Could not determine number of output neurons from model "
+                "structure."
             )
         st.sidebar.info(f"Model has {n_neurons} output neurons")
 
@@ -315,7 +336,8 @@ def main():
         max_value=-1,
         value=-2,
         step=1,
-        help="Learning rate in exponential notation (e.g., -2 means 10^-2 = 0.01)",
+        help="Learning rate in exponential notation (e.g., -2 means 10^-2 = "
+        "0.01)",
     )
     learning_rate = 10**learning_rate_exp
 
@@ -395,7 +417,8 @@ def main():
                     sta_patterns = generate_sta_patterns(sta_info, n_neurons)
                     sta_pattern = sta_patterns[target_neuron]
 
-                    # Generate RF coordinates for the neurons (same as in synthetic simulation)
+                    # Generate RF coordinates for the neurons (same as in
+                    # synthetic simulation)
                     rf_size = sta_patterns.shape[1]  # Get patch size from STA
                     rf_coords = np.random.randint(
                         0, 224 - rf_size, size=(n_neurons, 2)
@@ -463,7 +486,10 @@ def main():
 
                     # Update progress text
                     progress_placeholder.text(
-                        f"Step {iteration + 1}/{num_iterations} - Loss: {loss:.4f} - Predicted FR: {predicted_fr:.2f} Hz - Expected FR: {expected_fr:.2f} Hz - LR: {current_lr:.2e}"
+                        f"Step {iteration + 1}/{num_iterations} - Loss: "
+                        f"{loss:.4f} - Predicted FR: {predicted_fr:.2f} Hz - "
+                        f"Expected FR: {expected_fr:.2f} Hz - LR: "
+                        f"{current_lr:.2e}"
                     )
 
                     # Update patch - clear previous and show new
@@ -639,7 +665,8 @@ def main():
                     )
 
                 st.success(
-                    f"✅ MEI optimization completed! Results saved to {image_path}"
+                    f"✅ MEI optimization completed! Results saved to \
+                        {image_path}"
                 )
 
             except Exception as e:

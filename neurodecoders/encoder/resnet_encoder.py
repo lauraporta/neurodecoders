@@ -14,7 +14,8 @@ warnings.filterwarnings("ignore")
 
 class ResNetEncoder(nn.Module):
     """
-    Neural encoder using ResNet as backbone for predicting firing rates from images.
+    Neural encoder using ResNet as backbone for predicting firing rates from
+    images.
     Uses transfer learning with a pre-trained ResNet model.
     """
 
@@ -76,7 +77,8 @@ class ResNetEncoder(nn.Module):
         """
         Unfreeze backbone layers for fine-tuning.
         Args:
-            num_layers: Number of layers to unfreeze from the end (None = all layers)
+            num_layers: Number of layers to unfreeze from the end (None = all
+            layers)
         """
         backbone_layers = list(self.backbone.children())
 
@@ -218,8 +220,8 @@ def train_resnet_encoder(
         model: The trained model
         data_module: The data module
     """
-    from neurodecoders.encoder.encoder import (
-        NeuralDataModule,  # Import from existing encoder
+    from neurodecoders.encoder.utils import (
+        NeuralDataModule,  # Import from utils module
     )
 
     # Create data module
@@ -286,7 +288,7 @@ def train_resnet_encoder(
 
 def main(dataset_to_load, resnet_type="resnet18"):
     """Main function to run the ResNet encoder training"""
-    from neurodecoders.encoder.encoder import (
+    from neurodecoders.encoder.utils import (
         load_latest_data,
         plot_training_results,
         preprocess_data,
@@ -329,7 +331,10 @@ def main(dataset_to_load, resnet_type="resnet18"):
     # Save final model
     dataset_name = Path(data_file).stem
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_path = f"data/resnet_encoder_model_{resnet_type}_{dataset_name}_datetime-{timestamp}.pth"
+    model_path = (
+        f"data/resnet_encoder_model_{resnet_type}_{dataset_name}_datetime-"
+        f"{timestamp}.pth"
+    )
     torch.save(model.model.state_dict(), model_path)
     print(f"Model saved to: {model_path}")
 

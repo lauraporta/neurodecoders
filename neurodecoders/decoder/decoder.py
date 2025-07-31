@@ -193,7 +193,8 @@ class DecoderLightningModule(pl.LightningModule):
     def calculate_metrics_from_stored_data(
         self, predictions_list, targets_list
     ):
-        """Calculate PSNR and correlation from stored predictions and targets"""
+        """Calculate PSNR and correlation from stored predictions and
+        targets"""
         if not predictions_list or not targets_list:
             return 0.0, 0.0
 
@@ -406,7 +407,8 @@ def load_latest_data(dataset_to_load):
     files = glob.glob(dataset_to_load)
     if not files:
         raise FileNotFoundError(
-            "No neural data files found in workspace/datasets/synthetic/ directory"
+            "No neural data files found in workspace/datasets/synthetic/ "
+            "directory"
         )
 
     latest_file = max(files, key=os.path.getctime)
@@ -435,7 +437,8 @@ def print_device_info():
 
             print(f"\nDevice {i}: {device_name}")
             print(
-                f"  Compute Capability: {device_capability[0]}.{device_capability[1]}"
+                f"  Compute Capability: "
+                f"{device_capability[0]}.{device_capability[1]}"
             )
             print(f"  Memory: {device_memory:.1f} GB")
 
@@ -548,12 +551,14 @@ def train_model_lightning(
             torch.cuda.get_device_capability(0)[0] >= 7
         ):  # Volta architecture and newer
             print(
-                f"Tensor Cores detected on {device_name}. Enabling high precision matmul for optimal performance."
+                f"Tensor Cores detected on {device_name}. Enabling high "
+                f"precision matmul for optimal performance."
             )
             torch.set_float32_matmul_precision("high")
         else:
             print(
-                f"CUDA device {device_name} detected, but Tensor Cores not available."
+                f"CUDA device {device_name} detected, but Tensor Cores not "
+                f"available."
             )
 
     elif torch.backends.mps.is_available():
@@ -612,8 +617,10 @@ def train_model_lightning(
         logger=logger,
         enable_progress_bar=enable_progress_bar,
         log_every_n_steps=log_every_n_steps,
-        accelerator="auto",  # Let Lightning automatically detect the best accelerator
-        devices="auto",  # Let Lightning automatically detect the number of devices
+        accelerator="auto",  # Let Lightning automatically detect the best
+        # accelerator
+        devices="auto",  # Let Lightning automatically detect the number of
+        # devices
         deterministic=False,
         enable_checkpointing=False,  # Disable checkpoints
     )
@@ -654,7 +661,8 @@ def save_predictions(
     os.makedirs(output_dir, exist_ok=True)
 
     # Extract timestamp from input filename
-    # Expected format: simulated_neural_data_*neurons_*images_YYYYMMDD_HHMMSS.npz
+    # Expected format:
+    # simulated_neural_data_*neurons_*images_YYYYMMDD_HHMMSS.npz
     timestamp_match = re.search(r"(\d{8}_\d{6})\.npz$", input_file_path)
     if timestamp_match:
         timestamp = timestamp_match.group(1)
@@ -716,7 +724,8 @@ def save_predictions(
     print(f"Predictions saved to: {output_path}")
     print(f"Reconstructed images shape: {predictions_vis.shape}")
     print(
-        f"Mean reconstruction error: {np.mean((predictions_vis - images_vis) ** 2):.4f}"
+        f"Mean reconstruction error: \
+            {np.mean((predictions_vis - images_vis) ** 2):.4f}"
     )
 
     # Visualize some reconstructions

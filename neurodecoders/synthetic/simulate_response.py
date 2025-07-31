@@ -40,7 +40,8 @@ class SimulateResponse:
             * 0.01
         )
 
-        # Thresholds: log-normal distribution for more realistic, skewed thresholds
+        # Thresholds: log-normal distribution for more realistic, skewed
+        # thresholds
         thresholds = (
             torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3)
             * 0.3
@@ -53,7 +54,8 @@ class SimulateResponse:
             * 100
         )
 
-        # Initialize adaptation state (start at 1.0, will decrease with adaptation)
+        # Initialize adaptation state (start at 1.0, will decrease with
+        # adaptation)
         adaptation_state = torch.ones(self.n_neurons, device=self.device)
 
         for i in tqdm(
@@ -76,8 +78,10 @@ class SimulateResponse:
                 patch_flat = patch.reshape(-1)
 
                 # Compute dot product
-                # Since images are already normalized to [-1, 1], use simple mean dot product
-                # This should give reasonable values regardless of STA magnitude
+                # Since images are already normalized to [-1, 1], use simple
+                # mean dot product
+                # This should give reasonable values regardless of STA
+                # magnitude
                 dot = torch.mean(patch_flat * sta_flat)
                 dot_products[i, n] = dot.item()
 
@@ -107,7 +111,8 @@ class SimulateResponse:
                 ).item()
 
                 # Update adaptation based on current response for next image
-                # Decrease adaptation state (stronger adaptation for higher responses)
+                # Decrease adaptation state (stronger adaptation for higher
+                # responses)
                 adaptation_factor = 0.1 * (
                     firing_rate / max_rates[n]
                 )  # How much to decrease by

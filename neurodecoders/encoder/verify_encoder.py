@@ -20,7 +20,8 @@ warnings.filterwarnings("ignore")
 class EncoderVerifier:
     """
     Comprehensive encoder verification and analysis tool.
-    Diagnoses encoder issues and evaluates its quality for image classification.
+    Diagnoses encoder issues and evaluates its quality for image
+    classification.
     """
 
     def __init__(self, device="cuda" if torch.cuda.is_available() else "cpu"):
@@ -128,8 +129,9 @@ class EncoderVerifier:
                 last_fc_key = sorted(fc_keys)[-1]
                 out_neurons = state_dict[last_fc_key].shape[0]
 
-            # Simple approach: just create a basic encoder with right output size
-            from neurodecoders.encoder.encoder import SimpleEncoder
+            # Simple approach: just create a basic encoder with right output
+            # size
+            from neurodecoders.encoder.models import SimpleEncoder
 
             self.encoder = SimpleEncoder(out_neurons)
 
@@ -149,7 +151,8 @@ class EncoderVerifier:
             self.encoder.to(self.device)
             self.encoder.eval()
             print(
-                "✓ Model loaded successfully (some parameters may be mismatched)"
+                "✓ Model loaded successfully (some parameters may be "
+                "mismatched)"
             )
         except Exception as e:
             print(f"Error loading state dict: {e}")
@@ -167,14 +170,16 @@ class EncoderVerifier:
             self.encoder.to(self.device)
             self.encoder.eval()
             print(
-                f"✓ Partial model loaded: {len(pretrained_dict)}/{len(state_dict)} parameters loaded"
+                f"✓ Partial model loaded: {len(pretrained_dict)}/"
+                f"{len(state_dict)} parameters loaded"
             )
 
         print(f"Encoder loaded with {out_neurons} output neurons")
 
         # Load data
         if data_path is None:
-            # Simple approach: extract dataset type from model name and find matching data file
+            # Simple approach: extract dataset type from model name and find
+            # matching data file
             model_name = os.path.basename(model_path)
             print(f"Looking for data file matching model: {model_name}")
 
@@ -192,7 +197,8 @@ class EncoderVerifier:
 
                 # Find any dataset file that matches this type
                 search_patterns = [
-                    f"workspace/datasets/synthetic/synthdata_dataset-{dataset_type}*.npz",
+                    f"workspace/datasets/synthetic/synthdata_dataset-\
+                        {dataset_type}*.npz",
                     f"data/synthdata_dataset-{dataset_type}*.npz",
                 ]
 
@@ -255,13 +261,15 @@ class EncoderVerifier:
             # Load responses
             self.true_firing_rates = data["responses"]
             print(
-                f"✓ Neural responses loaded: shape {self.true_firing_rates.shape}"
+                f"✓ Neural responses loaded: shape \
+                    {self.true_firing_rates.shape}"
             )
 
             # Validate shapes match
             if len(self.images) != len(self.true_firing_rates):
                 print(
-                    f"❌ Shape mismatch: {len(self.images)} images vs {len(self.true_firing_rates)} response vectors"
+                    f"❌ Shape mismatch: {len(self.images)} images vs "
+                    f"{len(self.true_firing_rates)} response vectors"
                 )
                 return
 
@@ -300,7 +308,8 @@ class EncoderVerifier:
 
                 self.image_labels = None
                 print(
-                    f"⚠️  No labels found in data file (inferred type: {dataset_type})"
+                    f"⚠️  No labels found in data file (inferred type: \
+                        {dataset_type})"
                 )
                 print("   Classification analysis will be skipped.")
                 print(
@@ -308,7 +317,8 @@ class EncoderVerifier:
                 )
 
             print(
-                f"Data loaded: {len(self.images)} images, {self.true_firing_rates.shape[1]} neurons"
+                f"Data loaded: {len(self.images)} images, "
+                f"{self.true_firing_rates.shape[1]} neurons"
             )
             print(f"Image shape: {self.images.shape}")
             print(f"Firing rates shape: {self.true_firing_rates.shape}")
@@ -356,10 +366,12 @@ class EncoderVerifier:
         pred_std = np.std(self.predicted_firing_rates, axis=0)
 
         print(
-            f"True firing rates - Mean: {np.mean(true_mean):.2f} ± {np.mean(true_std):.2f}"
+            f"True firing rates - Mean: \
+                {np.mean(true_mean):.2f} ± {np.mean(true_std):.2f}"
         )
         print(
-            f"Predicted firing rates - Mean: {np.mean(pred_mean):.2f} ± {np.mean(pred_std):.2f}"
+            f"Predicted firing rates - Mean: \
+                {np.mean(pred_mean):.2f} ± {np.mean(pred_std):.2f}"
         )
 
         # Check for constant predictions
@@ -371,7 +383,8 @@ class EncoderVerifier:
                 constant_neurons.append(i)
 
         print(
-            f"Neurons with constant predictions (< 0.1 std): {len(constant_neurons)}/{self.predicted_firing_rates.shape[1]}"
+            f"Neurons with constant predictions (< 0.1 std): "
+            f"{len(constant_neurons)}/{self.predicted_firing_rates.shape[1]}"
         )
         if constant_neurons:
             print(
@@ -388,11 +401,13 @@ class EncoderVerifier:
 
         correlations = np.array(correlations)
         print(
-            f"Mean correlation between true and predicted: {np.mean(correlations):.3f}"
+            f"Mean correlation between true and predicted: "
+            f"{np.mean(correlations):.3f}"
         )
         print(f"Correlation std: {np.std(correlations):.3f}")
         print(
-            f"Neurons with correlation > 0.5: {np.sum(correlations > 0.5)}/{len(correlations)}"
+            f"Neurons with correlation > 0.5: "
+            f"{np.sum(correlations > 0.5)}/{len(correlations)}"
         )
 
         # Plot distributions
@@ -463,7 +478,8 @@ class EncoderVerifier:
         true_responsiveness = np.std(self.true_firing_rates, axis=0)
         pred_responsiveness = np.std(self.predicted_firing_rates, axis=0)
 
-        # Find neurons with high true responsiveness but low predicted responsiveness
+        # Find neurons with high true responsiveness but low predicted
+        # responsiveness
         high_true_low_pred = []
         for i in range(len(true_responsiveness)):
             if true_responsiveness[i] > np.percentile(
@@ -474,7 +490,8 @@ class EncoderVerifier:
                 high_true_low_pred.append(i)
 
         print(
-            f"Neurons with high true responsiveness but low predicted responsiveness: {len(high_true_low_pred)}"
+            f"Neurons with high true responsiveness but low predicted "
+            f"responsiveness: {len(high_true_low_pred)}"
         )
 
         # Plot responsiveness comparison
@@ -535,7 +552,8 @@ class EncoderVerifier:
         }
 
     def test_image_classification_from_firing_rates(self):
-        """Test if predicted firing rates contain enough information for image classification"""
+        """Test if predicted firing rates contain enough information for
+        image classification"""
         print("\n=== IMAGE CLASSIFICATION FROM FIRING RATES ===")
 
         if self.image_labels is None:
@@ -642,10 +660,14 @@ class EncoderVerifier:
         print("SUMMARY:")
         print("-" * 60)
         print(
-            f"Best classifier for PREDICTED firing rates: {best_pred_classifier[0].replace('_pred', '')} ({best_pred_classifier[1]:.3f})"
+            f"Best classifier for PREDICTED firing rates: "
+            f"{best_pred_classifier[0].replace('_pred', '')} "
+            f"({best_pred_classifier[1]:.3f})"
         )
         print(
-            f"Best classifier for TRUE firing rates: {best_true_classifier[0].replace('_true', '')} ({best_true_classifier[1]:.3f})"
+            f"Best classifier for TRUE firing rates: "
+            f"{best_true_classifier[0].replace('_true', '')} "
+            f"({best_true_classifier[1]:.3f})"
         )
 
         if best_true_classifier[1] > 0:
@@ -727,7 +749,8 @@ class EncoderVerifier:
 
         # Feature importance analysis for best classifier
         print(
-            f"\nFeature importance analysis for best classifier ({best_pred_classifier[0].replace('_pred', '')}):"
+            f"\nFeature importance analysis for best classifier "
+            f"({best_pred_classifier[0].replace('_pred', '')}):"
         )
 
         # Retrain best classifier to get feature importance
@@ -751,7 +774,8 @@ class EncoderVerifier:
             print("\nTop 10 most important neurons for classification:")
             for i, neuron_idx in enumerate(reversed(top_neurons)):
                 print(
-                    f"  {i + 1}. Neuron {neuron_idx}: importance = {feature_importance[neuron_idx]:.4f}"
+                    f"  {i + 1}. Neuron {neuron_idx}: importance = "
+                    f"{feature_importance[neuron_idx]:.4f}"
                 )
 
         return {
@@ -761,7 +785,8 @@ class EncoderVerifier:
         }
 
     def analyze_encoder_representations(self):
-        """Analyze the learned representations using dimensionality reduction"""
+        """Analyze the learned representations using dimensionality
+        reduction"""
         print("\n=== ENCODER REPRESENTATION ANALYSIS ===")
 
         # Check data variance first
@@ -786,17 +811,20 @@ class EncoderVerifier:
             f"  First 5 components: {np.sum(explained_variance_ratio[:5]):.6f}"
         )
         print(
-            f"  First 10 components: {np.sum(explained_variance_ratio[:10]):.6f}"
+            f"  First 10 components: "
+            f"{np.sum(explained_variance_ratio[:10]):.6f}"
         )
         print(
-            f"  First 20 components: {np.sum(explained_variance_ratio[:20]):.6f}"
+            f"  First 20 components: "
+            f"{np.sum(explained_variance_ratio[:20]):.6f}"
         )
 
         # Find components needed for different variance thresholds
         for threshold in [0.5, 0.8, 0.9, 0.95]:
             n_comp = np.argmax(cumulative_variance >= threshold) + 1
             print(
-                f"  Components needed for {threshold * 100}% variance: {n_comp}"
+                f"  Components needed for {threshold * 100}% variance: "
+                f"{n_comp}"
             )
 
         # Plot explained variance
@@ -840,10 +868,16 @@ class EncoderVerifier:
                     "issue": "Many neurons have constant predictions",
                     "suggestions": [
                         "Increase model capacity (more layers/neurons)",
-                        "Add regularization to prevent overfitting to average rates",
-                        "Use different activation functions (e.g., ReLU instead of ELU)",
-                        "Add batch normalization to prevent internal covariate shift",
-                        "Consider using a different loss function (e.g., cosine similarity)",
+                        "Add regularization to prevent overfitting to average "
+                        "rates",
+                        "Use different activation functions (e.g., ReLU "
+                        "instead of ELU)",
+                        (
+                            "Add batch normalization to prevent internal "
+                            "covariate shift"
+                        ),
+                        "Consider using a different loss function (e.g., "
+                        "cosine similarity)",
                     ],
                 }
             )
@@ -853,12 +887,16 @@ class EncoderVerifier:
         if correlations and np.mean(correlations) < 0.3:
             suggestions.append(
                 {
-                    "issue": "Low correlation between true and predicted firing rates",
+                    "issue": (
+                        "Low correlation between true and predicted firing "
+                        "rates"
+                    ),
                     "suggestions": [
                         "Increase training epochs",
                         "Adjust learning rate schedule",
                         "Add data augmentation",
-                        "Use curriculum learning (start with simpler patterns)",
+                        "Use curriculum learning (start with simpler "
+                        "patterns)",
                         "Consider ensemble methods",
                     ],
                 }
@@ -869,11 +907,16 @@ class EncoderVerifier:
         if responsiveness_results.get("high_true_low_pred"):
             suggestions.append(
                 {
-                    "issue": "Neurons with high true responsiveness have low predicted responsiveness",
+                    "issue": (
+                        "Neurons with high true responsiveness have low "
+                        "predicted responsiveness"
+                    ),
                     "suggestions": [
-                        "Add skip connections to preserve fine-grained information",
+                        "Add skip connections to preserve fine-grained "
+                        "information",
                         "Use attention mechanisms",
-                        "Implement progressive training (start with low-resolution, increase gradually)",
+                        "Implement progressive training (start with "
+                        "low-resolution, increase gradually)",
                         "Add auxiliary losses to encourage responsiveness",
                     ],
                 }
@@ -886,13 +929,18 @@ class EncoderVerifier:
             if accuracy_pred < 0.5:
                 suggestions.append(
                     {
-                        "issue": "Poor image classification from predicted firing rates",
+                        "issue": (
+                            "Poor image classification from predicted firing "
+                            "rates"
+                        ),
                         "suggestions": [
-                            "The encoder is not learning meaningful representations",
+                            "The encoder is not learning meaningful "
+                            "representations",
                             "Consider using contrastive learning",
                             "Add reconstruction loss as auxiliary task",
                             "Use pre-trained vision encoders and fine-tune",
-                            "Implement multi-task learning with image classification",
+                            "Implement multi-task learning with image "
+                            "classification",
                         ],
                     }
                 )
@@ -906,7 +954,8 @@ class EncoderVerifier:
         return suggestions
 
     def analyze_feature_scaling_and_separability(self):
-        """Analyze feature scaling effects and investigate why linear SVM works well"""
+        """Analyze feature scaling effects and investigate why linear SVM
+        works well"""
         print("\n=== FEATURE SCALING AND LINEAR SEPARABILITY ANALYSIS ===")
 
         if self.image_labels is None:
@@ -1081,7 +1130,8 @@ class EncoderVerifier:
         print("\nTop 10 most important features (neurons) for linear SVM:")
         for i, feat_idx in enumerate(reversed(top_features)):
             print(
-                f"  {i + 1}. Neuron {feat_idx}: weight = {svm.coef_[0][feat_idx]:.4f}"
+                f"  {i + 1}. Neuron {feat_idx}: weight = "
+                f"{svm.coef_[0][feat_idx]:.4f}"
             )
 
         # Plotting
@@ -1128,7 +1178,8 @@ class EncoderVerifier:
         axes[1, 0].set_xlabel("PC1")
         axes[1, 0].set_ylabel("PC2")
         axes[1, 0].set_title(
-            f"Predicted Firing Rates (PCA)\nSeparability: {separability_pred:.3f}"
+            f"Predicted Firing Rates (PCA)\nSeparability: \
+                {separability_pred:.3f}"
         )
         axes[1, 0].grid(True, alpha=0.3)
 
@@ -1280,15 +1331,18 @@ def main():
                 print(f"Inferred data file: {data_path}")
             else:
                 print(
-                    f"Could not find data file for dataset stem: {dataset_stem}"
+                    f"Could not find data file for dataset stem: \
+                        {dataset_stem}"
                 )
                 data_path = None
         elif not match and not data_path:
             print(
-                "Could not parse dataset stem from model filename. Please provide data file as second argument if needed."
+                "Could not parse dataset stem from model filename. Please "
+                "provide data file as second argument if needed."
             )
     else:
-        # Fall back to automatic detection: use latest model from organized structure
+        # Fall back to automatic detection: use latest model from organized
+        # structure
         model_dirs = [
             "workspace/models/encoders",
             "data",
@@ -1327,7 +1381,8 @@ def main():
 def verify_latest_encoder(data_dir="workspace/models/encoders"):
     """
     Convenience function to verify the latest encoder model.
-    This bypasses command line argument parsing and is more reliable in Jupyter environments.
+    This bypasses command line argument parsing and is more reliable in
+    Jupyter environments.
     """
     print("=== ENCODER VERIFICATION AND ANALYSIS (Auto-detection) ===")
 

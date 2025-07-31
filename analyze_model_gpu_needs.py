@@ -24,7 +24,7 @@ import torch.nn as nn
 # Import models from local codebase
 try:
     from neurodecoders.decoder.decoder import SimpleDecoder
-    from neurodecoders.encoder.encoder import SimpleEncoder
+    from neurodecoders.encoder.models import SimpleEncoder
 except ImportError:
     print("Warning: Could not import models from neurodecoders package.")
     print("Make sure you're running this script from the repo root.")
@@ -168,7 +168,7 @@ class GPUMemoryAnalyzer:
                     if info.total_mult_adds
                     else activation_memory
                 )
-            except:
+            except Exception:
                 pass
 
         total_memory = (
@@ -404,7 +404,8 @@ class GPUMemoryAnalyzer:
         if not gpu_recommendation["fits_on_single_gpu"]:
             return (
                 "# Multi-GPU training command (example):\n"
-                + "# srun --nodes=2 --ntasks-per-node=4 --gres=gpu:4 python train.py"
+                + "# srun --nodes=2 --ntasks-per-node=4 --gres=gpu:4 "
+                + "python train.py"
             )
 
         gpu_name = gpu_recommendation["recommended_gpu"]
@@ -416,7 +417,10 @@ class GPUMemoryAnalyzer:
         if gpus_needed == 1:
             return f"srun --gres=gpu:{gpu_name}:1 python {script_name}"
         else:
-            return f"srun --gres=gpu:{gpu_name}:{gpus_needed} python {script_name}"
+            return (
+                f"srun --gres=gpu:{gpu_name}:{gpus_needed} "
+                f"python {script_name}"
+            )
 
     def print_memory_breakdown(self, model_name: str, memory_info: Dict):
         """Print detailed memory breakdown"""
@@ -529,7 +533,8 @@ def main():
         total_bytes = total_elements * dtype_size
         dataset_memory_mb = total_bytes / (1024 * 1024)
         print(
-            f"User-specified dataset shape: ({args.num_images:,}, {args.num_neurons:,}) [images x neurons]"
+            f"User-specified dataset shape: ({args.num_images:,}, "
+            f"{args.num_neurons:,}) [images x neurons]"
         )
         print(f"Per-sample memory: {args.num_neurons * dtype_size:.1f} bytes")
         print(f"Total dataset memory: {dataset_memory_mb:.1f} MB")
@@ -537,7 +542,8 @@ def main():
         print("Note: Used user-specified shape for dataset memory estimate.")
     else:
         print(
-            "⚠️  Please specify both --num-images and --num-neurons to estimate dataset memory."
+            "⚠️  Please specify both --num-images and --num-neurons to "
+            "estimate dataset memory."
         )
 
     # GPU recommendations
@@ -550,19 +556,23 @@ def main():
     )
 
     print(
-        f"Total estimated memory: {total_memory_mb:.1f} MB ({total_memory_mb / 1024:.1f} GB)"
+        f"Total estimated memory: {total_memory_mb:.1f} MB "
+        f"({total_memory_mb / 1024:.1f} GB)"
     )
     print(
-        f"Fits on single GPU: {'✅ Yes' if gpu_recommendation['fits_on_single_gpu'] else '❌ No'}"
+        f"Fits on single GPU: "
+        f"{'✅ Yes' if gpu_recommendation['fits_on_single_gpu'] else '❌ No'}"
     )
 
     if gpu_recommendation["fits_on_single_gpu"]:
         print(f"Recommended GPU: {gpu_recommendation['recommended_gpu']}")
         print(
-            f"Memory utilization: {gpu_recommendation['memory_utilization_percent']:.1f}%"
+            f"Memory utilization: "
+            f"{gpu_recommendation['memory_utilization_percent']:.1f}%"
         )
         print(
-            f"Parallelism strategy: {gpu_recommendation['parallelism_strategy']}"
+            f"Parallelism strategy: "
+            f"{gpu_recommendation['parallelism_strategy']}"
         )
     else:
         print(f"Recommended strategy: {gpu_recommendation['recommendation']}")
@@ -595,14 +605,22 @@ def main():
         ):
             print("\n🎯 MIXED PRECISION BENEFIT:")
             print(
-                f"  With float16: {mixed_precision_recommendation['required_memory_mb']:.1f} MB"
+                f"  With float16: "
+                f"{mixed_precision_recommendation['required_memory_mb']:.1f} "
+                "MB"
             )
             print(
-                f"  Recommended GPU: {mixed_precision_recommendation['recommended_gpu']}"
+                f"  Recommended GPU: "
+                f"{mixed_precision_recommendation['recommended_gpu']}"
             )
-            print(
-                f"  Memory savings: {(1 - mixed_precision_recommendation['required_memory_mb'] / total_memory_mb) * 100:.1f}%"
-            )
+            memory_savings = (
+                1
+                - (
+                    mixed_precision_recommendation["required_memory_mb"]
+                    / total_memory_mb
+                )
+            ) * 100
+            print(f"  Memory savings: {memory_savings:.1f}%")
 
 
 if __name__ == "__main__":

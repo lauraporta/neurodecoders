@@ -31,5 +31,6 @@ class ImageDataset:
             dataset, batch_size=n_images, shuffle=True
         )
         images, labels = next(iter(loader))
-        # No need for additional normalization since ToTensor and Normalize already give us [-1, 1]
+        # No need for additional normalization since ToTensor and Normalize
+        # already give us [-1, 1]
         return images[:n_images], labels[:n_images]

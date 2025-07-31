@@ -40,10 +40,14 @@ def load_data():
     """Load neural data file selected by user from dropdown"""
     try:
         # Find all synthdata files
-        files = glob.glob("workspace/datasets/synthetic/synthdata_dataset-*.npz")
+        files = glob.glob(
+            "workspace/datasets/synthetic/synthdata_dataset-*.npz"
+        )
         if not files:
             st.error(
-                "No neural data files found in workspace/datasets/synthetic/ directory. Please generate data first using the synthetic dashboard."
+                "No neural data files found in workspace/datasets/synthetic/ "
+                "directory. Please generate data first using the synthetic "
+                "dashboard."
             )
             return None, None, None
 
@@ -162,7 +166,8 @@ def plot_correlation_curves(train_correlation, val_correlation):
     ax.plot(train_correlation, label="Train Correlation", linewidth=2)
     ax.plot(val_correlation, label="Validation Correlation", linewidth=2)
 
-    # Add horizontal dashed gray line at poor/good threshold (correlation = 0.5)
+    # Add horizontal dashed gray line at poor/good threshold
+    # (correlation = 0.5)
     ax.axhline(
         y=0.5,
         color="gray",
@@ -276,7 +281,8 @@ def load_trained_model(model_path):
                     image_size = sample_images.shape[1]  # Height
 
         st.info(
-            f"Loading model with {saved_in_neurons} input neurons and {image_size}x{image_size} output size"
+            f"Loading model with {saved_in_neurons} input neurons and "
+            f"{image_size}x{image_size} output size"
         )
 
         # Initialize model with the correct parameters from the saved model
@@ -285,8 +291,10 @@ def load_trained_model(model_path):
         )
 
         # Handle state dict key mapping
-        # The saved model might have direct keys (fc.0.weight) or prefixed keys (model.fc.0.weight)
-        # The current DecoderLightningModule expects prefixed keys (model.fc.0.weight)
+        # The saved model might have direct keys (fc.0.weight) or prefixed keys
+        # (model.fc.0.weight)
+        # The current DecoderLightningModule expects prefixed keys
+        # (model.fc.0.weight)
         new_state_dict = {}
         for key, value in state_dict.items():
             if key.startswith("model."):
@@ -314,7 +322,8 @@ def load_trained_model(model_path):
 def main():
     st.title("🧠 Neural Decoder Dashboard")
     st.markdown(
-        "Train a decoder to reconstruct images from neural responses using PyTorch Lightning"
+        "Train a decoder to reconstruct images from neural responses using "
+        "PyTorch Lightning"
     )
 
     # Display detailed device information
@@ -463,7 +472,9 @@ def main():
 
                 # Save the model
                 dataset_path = Path(input_file)
-                model_path = f"workspace/models/decoder_{dataset_path.stem}.pth"
+                model_path = (
+                    f"workspace/models/decoder_{dataset_path.stem}.pth"
+                )
                 torch.save(model.state_dict(), model_path)
                 st.success(f"✅ Model saved to: {model_path}")
 
@@ -594,7 +605,8 @@ def main():
                     # Display reconstructions
                     st.header("🖼️ Image Reconstructions")
 
-                    # Load the original training data that was used for this model
+                    # Load the original training data that was used for this
+                    # model
                     # Extract dataset info from model filename
                     model_name = os.path.basename(selected_model)
                     if "synthdata_dataset-" in model_name:
@@ -602,7 +614,9 @@ def main():
                         dataset_name = model_name.replace(
                             "decoder_", ""
                         ).replace(".pth", "")
-                        dataset_file = f"workspace/datasets/synthetic/{dataset_name}.npz"
+                        dataset_file = (
+                            f"workspace/datasets/synthetic/{dataset_name}.npz"
+                        )
 
                         if os.path.exists(dataset_file):
                             # Load the original training data
@@ -624,7 +638,8 @@ def main():
                             else:
                                 test_images = training_images[:10]
 
-                            # Generate reconstructions using the original training data
+                            # Generate reconstructions using the original
+                            # training data
                             with torch.no_grad():
                                 test_firing_rates = torch.tensor(
                                     training_firing_rates[:10],
@@ -634,7 +649,8 @@ def main():
                                     model(test_firing_rates).cpu().numpy()
                                 )
 
-                                # Ensure proper shape - remove extra dimensions if present
+                                # Ensure proper shape - remove extra dimensions
+                                # if present
                                 if test_reconstructions.ndim == 4:
                                     test_reconstructions = (
                                         test_reconstructions.squeeze(1)
@@ -649,7 +665,8 @@ def main():
                                         )
                                     )
 
-                                # Resize reconstructions to match original image dimensions if needed
+                                # Resize reconstructions to match original
+                                # image dimensions if needed
                                 if (
                                     test_reconstructions.shape[1:]
                                     != test_images.shape[1:]
@@ -667,12 +684,14 @@ def main():
                                     )
                         else:
                             st.error(
-                                f"Original training data not found: {dataset_file}"
+                                f"Original training data not found: "
+                                f"{dataset_file}"
                             )
                             st.stop()
                     else:
                         st.error(
-                            "Could not determine original training data from model filename"
+                            "Could not determine original training data from "
+                            "model filename"
                         )
                         st.stop()
 
@@ -728,7 +747,9 @@ def main():
                 else:
                     st.error("❌ Failed to load model")
     else:
-        st.info("No trained decoder models found in workspace/models/ directory")
+        st.info(
+            "No trained decoder models found in workspace/models/ directory"
+        )
 
 
 if __name__ == "__main__":
