@@ -133,3 +133,76 @@ class ResNetEncoder(nn.Module):
 
         layers_msg = num_layers if num_layers else "all"
         print(f"Unfroze {layers_msg} backbone layers")
+
+
+class SimpleEncoderWithSkipConnection(nn.Module):
+    """
+    Simple convolutional encoder with skip connections for predicting firing
+    rates from images.
+    """
+
+    def __init__(self, out_neurons):
+        super().__init__()
+
+        # Initial conv layer with larger kernel to reduce spatial dimensions
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=11, stride=1, padding=5),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+        )
+
+        # Middle conv layers with skip connections
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=7, stride=1, padding=3),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+        )
+
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+        )
+
+        self.conv4 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+        )
+
+        # Skip connection projections to match dimensions
+        self.skip1 = nn.Conv2d(64, 128, kernel_size=1, stride=1, padding=0)
+        self.skip2 = nn.Conv2d(128, 256, kernel_size=1, stride=1, padding=0)
+        self.skip3 = nn.Conv2d(256, 512, kernel_size=1, stride=1, padding=0)
+
+        # Final pooling
+        self.adaptive_pool = nn.AdaptiveAvgPool2d(1)
+
+        # Lightweight FC layers with single hidden layer
+        self.fc = nn.Sequential(
+            nn.Linear(512, 256),
+            nn.ReLU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, out_neurons),
+            nn.ELU(),
+        )
+
+    def forward(self, x):
+        # Initial convolution
+        x1 = self.conv1(x)
+
+        # Middle convolutions with skip connections
+        x2 = self.conv2(x1)
+        x2 = x2 + self.skip1(x1)  # Skip connection 1
+
+        x3 = self.conv3(x2)
+        x3 = x3 + self.skip2(x2)  # Skip connection 2
+
+        x4 = self.conv4(x3)
+        x4 = x4 + self.skip3(x3)  # Skip connection 3
+
+        # Final pooling and FC layers
+        x = self.adaptive_pool(x4).squeeze(-1).squeeze(-1)
+        x = self.fc(x)
+        return x + 1

@@ -1,0 +1,17 @@
+{
+    "model_type": "skip",
+    "out_neurons": 30,
+    "learning_rate": 0.001,
+    "weight_decay": 1e-5,
+    "epochs": 1,
+    "batch_size": 32,
+    "train_split": 0.7,
+    "val_split": 0.15,
+    "dataset_type": "cifar10",
+    "sta_type": "perlin_noise_patterns,11,11",
+    "n_neurons": 30,
+    "n_images": 1000,
+    "enable_mlflow": true,
+    "mlflow_experiment_name": "skip_connection_test",
+    "mlflow_run_name": "skip_encoder_30_neurons_1_epoch"
+}

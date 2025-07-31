@@ -20,7 +20,11 @@ import numpy as np
 import torch
 
 from neurodecoders.encoder.mlflow_utils import get_experiment_comparison
-from neurodecoders.encoder.models import ResNetEncoder, SimpleEncoder
+from neurodecoders.encoder.models import (
+    ResNetEncoder,
+    SimpleEncoder,
+    SimpleEncoderWithSkipConnection,
+)
 from neurodecoders.encoder.training import (
     train_encoder,
     train_resnet_encoder,
@@ -179,6 +183,8 @@ def get_model(config: Dict[str, Any]) -> torch.nn.Module:
 
     if model_type == "simple":
         return SimpleEncoder(out_neurons=out_neurons)
+    elif model_type == "skip":
+        return SimpleEncoderWithSkipConnection(out_neurons=out_neurons)
     elif model_type == "resnet":
         resnet_type = config.get("resnet_type", "resnet18")
         freeze_backbone = config.get("freeze_backbone", True)
