@@ -15,97 +15,6 @@ from pytorch_lightning import LightningModule
 from pytorch_lightning.loggers import MLFlowLogger
 
 
-def create_custom_training_plots(
-    train_losses, val_losses, learning_rates=None
-):
-    """
-    Create custom training plots with logarithmic scales for loss and
-    better y-axis ranges for learning rate.
-
-    Args:
-        train_losses: List of training losses
-        val_losses: List of validation losses
-        learning_rates: List of learning rates (optional)
-
-    Returns:
-        dict: Dictionary containing plot file paths
-    """
-    import datetime
-
-    import matplotlib.pyplot as plt
-
-    plots_dir = "workspace/plots/training"
-    os.makedirs(plots_dir, exist_ok=True)
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    plot_paths = {}
-
-    # Create loss plot with logarithmic scale
-    if train_losses and val_losses:
-        plt.figure(figsize=(12, 8))
-
-        # Use logarithmic scale for y-axis
-        plt.semilogy(train_losses, label="Train Loss", linewidth=2, alpha=0.8)
-        plt.semilogy(
-            val_losses, label="Validation Loss", linewidth=2, alpha=0.8
-        )
-
-        plt.xlabel("Epoch", fontsize=12)
-        plt.ylabel("Loss (log scale)", fontsize=12)
-        plt.title(
-            "Training Curves (Logarithmic Scale)",
-            fontsize=14,
-            fontweight="bold",
-        )
-        plt.legend(fontsize=11)
-        plt.grid(True, alpha=0.3)
-
-        # Set reasonable y-axis limits for log scale
-        all_losses = train_losses + val_losses
-        if all_losses:
-            min_loss = max(min(all_losses), 1e-6)  # Avoid log(0)
-            max_loss = max(all_losses)
-            plt.ylim(min_loss, max_loss * 1.1)
-
-        # Save loss plot
-        loss_plot_filename = f"training_curves_log_scale_{timestamp}.png"
-        loss_plot_path = os.path.join(plots_dir, loss_plot_filename)
-        plt.savefig(loss_plot_path, dpi=300, bbox_inches="tight")
-        plt.close()
-
-        plot_paths["loss_plot"] = loss_plot_path
-        print(f"Loss plot (log scale) saved to: {loss_plot_path}")
-
-    # Create learning rate plot with better y-axis range
-    if learning_rates:
-        plt.figure(figsize=(12, 6))
-
-        plt.plot(learning_rates, linewidth=2, color="red", alpha=0.8)
-        plt.xlabel("Epoch", fontsize=12)
-        plt.ylabel("Learning Rate", fontsize=12)
-        plt.title("Learning Rate Schedule", fontsize=14, fontweight="bold")
-        plt.grid(True, alpha=0.3)
-
-        # Set better y-axis range for learning rate
-        if learning_rates:
-            min_lr = min(learning_rates)
-            max_lr = max(learning_rates)
-            # Add some padding and ensure we don't go below 0
-            y_padding = (max_lr - min_lr) * 0.1
-            plt.ylim(max(0, min_lr - y_padding), max_lr + y_padding)
-
-        # Save learning rate plot
-        lr_plot_filename = f"learning_rate_schedule_{timestamp}.png"
-        lr_plot_path = os.path.join(plots_dir, lr_plot_filename)
-        plt.savefig(lr_plot_path, dpi=300, bbox_inches="tight")
-        plt.close()
-
-        plot_paths["lr_plot"] = lr_plot_path
-        print(f"Learning rate plot saved to: {lr_plot_path}")
-
-    return plot_paths
-
-
 class MLflowExperimentTracker:
     """
     MLflow experiment tracker for neural encoder training.
@@ -356,21 +265,37 @@ def log_encoder_experiment(
             training_info,
         )
 
-        # Create custom plots with logarithmic scales and better y-axis ranges
+        # Log training curves as artifacts
         if lightning_module.train_losses and lightning_module.val_losses:
-            # Get learning rates if available
-            learning_rates = getattr(lightning_module, "learning_rates", None)
+            import datetime
 
-            # Create custom plots
-            plot_paths = create_custom_training_plots(
-                lightning_module.train_losses,
-                lightning_module.val_losses,
-                learning_rates,
-            )
+            import matplotlib.pyplot as plt
 
-            # Log plots as artifacts to MLflow
-            if plot_paths:
-                tracker.log_artifacts("workspace/plots/training", "plots")
+            # Create workspace plots directory if it doesn't exist
+            plots_dir = "workspace/plots/training"
+            os.makedirs(plots_dir, exist_ok=True)
+
+            plt.figure(figsize=(10, 6))
+            plt.plot(lightning_module.train_losses, label="Train Loss")
+            plt.plot(lightning_module.val_losses, label="Validation Loss")
+            plt.xlabel("Epoch")
+            plt.ylabel("Loss")
+            plt.title("Training Curves")
+            plt.legend()
+            plt.grid(True)
+
+            # Save plot to workspace with timestamp
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_type = type(model).__name__
+            plot_filename = f"training_curves_{model_type}_{timestamp}.png"
+            plot_path = os.path.join(plots_dir, plot_filename)
+            plt.savefig(plot_path, dpi=300, bbox_inches="tight")
+            plt.close()
+
+            print(f"Training curves saved to: {plot_path}")
+
+            # Also log to MLflow
+            tracker.log_artifacts(plots_dir, "plots")
 
 
 def get_experiment_comparison(experiment_name: str = "neural_encoder"):
