@@ -1,0 +1,375 @@
+"""
+Verification callback for neural encoder training.
+
+This module provides a PyTorch Lightning callback that automatically runs
+encoder verification analysis after training completes, saving results to
+both the workspace folder and MLflow.
+"""
+
+import datetime
+import os
+import sys
+from typing import Any, Dict, Optional
+
+import mlflow
+import numpy as np
+import pytorch_lightning as pl
+import torch
+from pytorch_lightning.callbacks import Callback
+
+# Add the encoder directory to the path for imports
+sys.path.append(os.path.dirname(__file__))
+
+from .verify_encoder import EncoderVerifier
+
+
+class EncoderVerificationCallback(Callback):
+    """
+    PyTorch Lightning callback that runs encoder verification analysis
+    after training completes.
+
+    This callback automatically:
+    1. Saves the trained model
+    2. Runs comprehensive verification analysis
+    3. Saves plots to workspace folder
+    4. Logs results to MLflow
+    """
+
+    def __init__(
+        self,
+        data_module,
+        save_model: bool = True,
+        model_save_dir: str = "workspace/models/encoders",
+        plots_save_dir: str = "workspace/plots/verification",
+        enable_mlflow_logging: bool = True,
+        verification_config: Optional[Dict[str, Any]] = None,
+    ):
+        """
+        Initialize the verification callback.
+
+        Args:
+            data_module: The data module used for training
+            save_model: Whether to save the model before verification
+            model_save_dir: Directory to save the model
+            plots_save_dir: Directory to save verification plots
+            enable_mlflow_logging: Whether to log results to MLflow
+            verification_config: Additional configuration for verification
+        """
+        super().__init__()
+        self.data_module = data_module
+        self.save_model = save_model
+        self.model_save_dir = model_save_dir
+        self.plots_save_dir = plots_save_dir
+        self.enable_mlflow_logging = enable_mlflow_logging
+        self.verification_config = verification_config or {}
+
+        # Create directories
+        os.makedirs(self.model_save_dir, exist_ok=True)
+        os.makedirs(self.plots_save_dir, exist_ok=True)
+
+        # Store training data for verification
+        self.training_images = None
+        self.training_firing_rates = None
+
+    def on_train_start(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ):
+        """Store training data for later verification."""
+        # Extract training data from data module
+        try:
+            # Get a sample of training data
+            train_dataloader = self.data_module.train_dataloader()
+            batch = next(iter(train_dataloader))
+            images, firing_rates = batch
+
+            # Store as numpy arrays
+            self.training_images = images.cpu().numpy()
+            self.training_firing_rates = firing_rates.cpu().numpy()
+
+            if (
+                self.training_images is not None
+                and self.training_firing_rates is not None
+            ):
+                print(
+                    f"Stored training data for verification: "
+                    f"{self.training_images.shape} images, "
+                    f"{self.training_firing_rates.shape[1]} neurons"
+                )
+
+        except Exception as e:
+            print(
+                f"Warning: Could not store training data for verification: {e}"
+            )
+
+    def on_train_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
+        """Run verification analysis after training completes."""
+        print("\n=== RUNNING ENCODER VERIFICATION ANALYSIS ===")
+
+        # Save model if requested
+        model_path = None
+        if self.save_model:
+            model_path = self._save_model(pl_module)
+
+        # Run verification analysis
+        verification_results = self._run_verification_analysis(
+            pl_module, model_path
+        )
+
+        # Log results to MLflow if enabled
+        if self.enable_mlflow_logging and verification_results:
+            self._log_verification_to_mlflow(verification_results)
+
+        print("=== VERIFICATION ANALYSIS COMPLETE ===")
+
+    def _save_model(self, pl_module: pl.LightningModule) -> str:
+        """Save the trained model."""
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_type = type(pl_module.model).__name__
+
+        # Create model filename
+        model_filename = f"{model_type.lower()}_{timestamp}.pth"
+        model_path = os.path.join(self.model_save_dir, model_filename)
+
+        # Save model state dict
+        torch.save(pl_module.model.state_dict(), model_path)
+        print(f"Model saved to: {model_path}")
+
+        return model_path
+
+    def _run_verification_analysis(
+        self, pl_module: pl.LightningModule, model_path: Optional[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Run the verification analysis."""
+        try:
+            # Create verifier
+            verifier = EncoderVerifier()
+
+            # Set up custom plots directory for this training run
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            model_type = type(pl_module.model).__name__
+            run_plots_dir = os.path.join(
+                self.plots_save_dir, f"{model_type.lower()}_{timestamp}"
+            )
+            os.makedirs(run_plots_dir, exist_ok=True)
+            verifier.plots_dir = run_plots_dir
+
+            print(f"Verification plots will be saved to: {run_plots_dir}")
+
+            # Set the encoder model
+            verifier.encoder = pl_module.model
+            verifier.encoder.eval()
+
+            # Use training data if available, otherwise create synthetic data
+            if (
+                self.training_images is not None
+                and self.training_firing_rates is not None
+            ):
+                verifier.images = self.training_images
+                verifier.true_firing_rates = self.training_firing_rates
+                print(
+                    f"Using training data for verification: "
+                    f"{verifier.images.shape} images, "
+                    f"{verifier.true_firing_rates.shape[1]} neurons"
+                )
+            else:
+                # Create synthetic data for verification
+                print(
+                    "No training data available, creating synthetic data "
+                    "for verification"
+                )
+                n_samples = 1000
+                n_neurons = (
+                    pl_module.model.out_neurons
+                    if hasattr(pl_module.model, "out_neurons")
+                    else 100
+                )
+                image_size = 64
+
+                verifier.images = np.random.rand(
+                    n_samples, image_size, image_size
+                )
+                verifier.true_firing_rates = np.random.exponential(
+                    scale=2.0, size=(n_samples, n_neurons)
+                )
+
+            # Generate predictions
+            verifier.predict_firing_rates()
+
+            # Run analyses
+            results = {}
+
+            # Firing rate analysis
+            print("Running firing rate analysis...")
+            results["firing_rates"] = (
+                verifier.analyze_firing_rate_distributions()
+            )
+
+            # Responsiveness analysis
+            print("Running responsiveness analysis...")
+            results["responsiveness"] = (
+                verifier.analyze_neuron_responsiveness()
+            )
+
+            # Classification test (if labels are available)
+            if (
+                hasattr(verifier, "image_labels")
+                and verifier.image_labels is not None
+            ):
+                print("Running classification analysis...")
+                classification_results = (
+                    verifier.test_image_classification_from_firing_rates()
+                )
+                if classification_results:
+                    results["classification"] = classification_results
+
+            # Representation analysis
+            print("Running representation analysis...")
+            results["representations"] = (
+                verifier.analyze_encoder_representations()
+            )
+
+            # Feature scaling and separability analysis
+            print("Running feature analysis...")
+            results["feature_analysis"] = (
+                verifier.analyze_feature_scaling_and_separability()
+            )
+
+            # Suggest improvements
+            print("Generating improvement suggestions...")
+            suggestions = verifier.suggest_improvements(results)
+            results["suggestions"] = suggestions
+
+            # Store model path in results
+            results["model_path"] = model_path
+            results["plots_dir"] = run_plots_dir
+
+            print(
+                f"Verification analysis complete. Results saved to: "
+                f"{run_plots_dir}"
+            )
+
+            return results
+
+        except Exception as e:
+            print(f"Error during verification analysis: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return None
+
+    def _log_verification_to_mlflow(
+        self, verification_results: Dict[str, Any]
+    ):
+        """Log verification results to MLflow."""
+        try:
+            # Log verification metrics
+            metrics = {}
+
+            # Extract key metrics from firing rate analysis
+            if "firing_rates" in verification_results:
+                firing_results = verification_results["firing_rates"]
+                if "correlations" in firing_results:
+                    correlations = firing_results["correlations"]
+                    metrics["verification_mean_correlation"] = float(
+                        np.mean(correlations)
+                    )
+                    metrics["verification_correlation_std"] = float(
+                        np.std(correlations)
+                    )
+                    metrics["verification_high_correlation_count"] = int(
+                        np.sum(correlations > 0.5)
+                    )
+                    metrics["verification_total_neurons"] = len(correlations)
+
+            # Extract metrics from responsiveness analysis
+            if "responsiveness" in verification_results:
+                resp_results = verification_results["responsiveness"]
+                if "high_true_low_pred" in resp_results:
+                    metrics["verification_problematic_neurons"] = len(
+                        resp_results["high_true_low_pred"]
+                    )
+
+            # Extract classification metrics
+            if "classification" in verification_results:
+                class_results = verification_results["classification"]
+                if "results" in class_results:
+                    results = class_results["results"]
+                    # Find best classifier accuracy
+                    pred_accuracies = {
+                        k: v for k, v in results.items() if k.endswith("_pred")
+                    }
+                    if pred_accuracies:
+                        best_pred_accuracy = max(pred_accuracies.values())
+                        metrics["verification_best_classifier_accuracy"] = (
+                            float(best_pred_accuracy)
+                        )
+
+            # Extract PCA metrics
+            if "representations" in verification_results:
+                rep_results = verification_results["representations"]
+                if "explained_variance_ratio" in rep_results:
+                    explained_var = rep_results["explained_variance_ratio"]
+                    metrics["verification_pca_5_components_variance"] = float(
+                        np.sum(explained_var[:5])
+                    )
+                    metrics["verification_pca_10_components_variance"] = float(
+                        np.sum(explained_var[:10])
+                    )
+                    metrics["verification_pca_20_components_variance"] = float(
+                        np.sum(explained_var[:20])
+                    )
+
+            # Log metrics to MLflow
+            if metrics:
+                mlflow.log_metrics(metrics)
+                print(f"Logged {len(metrics)} verification metrics to MLflow")
+
+            # Log plots directory as artifact
+            plots_dir = verification_results.get("plots_dir")
+            if plots_dir and os.path.exists(plots_dir):
+                mlflow.log_artifacts(plots_dir, "verification_plots")
+                print(f"Logged verification plots to MLflow: {plots_dir}")
+
+            # Log model path if available
+            model_path = verification_results.get("model_path")
+            if model_path and os.path.exists(model_path):
+                mlflow.log_artifact(model_path, "trained_model")
+                print(f"Logged trained model to MLflow: {model_path}")
+
+        except Exception as e:
+            print(f"Error logging verification results to MLflow: {e}")
+            import traceback
+
+            traceback.print_exc()
+
+
+def create_verification_callback(
+    data_module,
+    save_model: bool = True,
+    model_save_dir: str = "workspace/models/encoders",
+    plots_save_dir: str = "workspace/plots/verification",
+    enable_mlflow_logging: bool = True,
+    verification_config: Optional[Dict[str, Any]] = None,
+) -> EncoderVerificationCallback:
+    """
+    Create a verification callback for encoder training.
+
+    Args:
+        data_module: The data module used for training
+        save_model: Whether to save the model before verification
+        model_save_dir: Directory to save the model
+        plots_save_dir: Directory to save verification plots
+        enable_mlflow_logging: Whether to log results to MLflow
+        verification_config: Additional configuration for verification
+
+    Returns:
+        EncoderVerificationCallback instance
+    """
+    return EncoderVerificationCallback(
+        data_module=data_module,
+        save_model=save_model,
+        model_save_dir=model_save_dir,
+        plots_save_dir=plots_save_dir,
+        enable_mlflow_logging=enable_mlflow_logging,
+        verification_config=verification_config,
+    )

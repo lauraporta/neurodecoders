@@ -14,6 +14,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import MLFlowLogger, TensorBoardLogger
 
 from .mlflow_utils import log_encoder_experiment
+from .verification_callback import create_verification_callback
 
 
 class EncoderLightningModule(pl.LightningModule):
@@ -212,6 +213,17 @@ def train_encoder(
     if unfreeze_epoch is not None:
         callbacks.append(UnfreezeCallback(unfreeze_epoch=unfreeze_epoch))
 
+    # Add verification callback if MLflow is enabled
+    if enable_mlflow:
+        verification_callback = create_verification_callback(
+            data_module=data_module,
+            save_model=True,
+            model_save_dir="workspace/models/encoders",
+            plots_save_dir="workspace/plots/verification",
+            enable_mlflow_logging=True,
+        )
+        callbacks.append(verification_callback)
+
     # Setup loggers
     loggers = []
 
@@ -243,7 +255,7 @@ def train_encoder(
         else "auto",  # Force CPU on MPS to avoid compatibility issues
         devices=1 if torch.backends.mps.is_available() else "auto",
         deterministic=False,
-        enable_checkpointing=False,  
+        enable_checkpointing=False,
         # Disable to avoid MLflow artifact path issues
     )
 
