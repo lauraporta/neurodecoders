@@ -66,6 +66,15 @@ class MLflowExperimentTracker:
             run_name: Name for this specific run
             tags: Dictionary of tags to add to the run
         """
+        # Check if there's an active run and end it if necessary
+        try:
+            active_run = mlflow.active_run()
+            if active_run is not None:
+                print(f"Ending active run: {active_run.info.run_id}")
+                mlflow.end_run()
+        except Exception as e:
+            print(f"Warning: Could not check/end active run: {e}")
+
         return mlflow.start_run(run_name=run_name, tags=tags)
 
     def log_hyperparameters(self, hyperparams: Dict[str, Any]):
@@ -211,6 +220,15 @@ def log_encoder_experiment(
         experiment_name: MLflow experiment name
         run_name: Name for this run
     """
+    # Check if there's an active run and end it if necessary
+    try:
+        active_run = mlflow.active_run()
+        if active_run is not None:
+            print(f"Ending active run: {active_run.info.run_id}")
+            mlflow.end_run()
+    except Exception as e:
+        print(f"Warning: Could not check/end active run: {e}")
+
     tracker = MLflowExperimentTracker(experiment_name)
 
     with tracker.start_run(run_name=run_name):
