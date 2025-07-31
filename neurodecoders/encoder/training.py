@@ -44,6 +44,7 @@ class EncoderLightningModule(pl.LightningModule):
         # Store training history for plotting
         self.train_losses: list[float] = []
         self.val_losses: list[float] = []
+        self.learning_rates: list[float] = []
 
     def forward(self, x):
         return self.model(x)
@@ -133,6 +134,11 @@ class EncoderLightningModule(pl.LightningModule):
 
         self.train_losses.append(train_loss)
         self.val_losses.append(val_loss)
+
+        # Store current learning rate
+        if self.trainer.optimizers:
+            current_lr = self.trainer.optimizers[0].param_groups[0]["lr"]
+            self.learning_rates.append(current_lr)
 
 
 class UnfreezeCallback(pl.Callback):
