@@ -108,7 +108,7 @@ class EncoderVerifier:
                 out_neurons = state_dict[last_firing_head_key].shape[0]
 
             # Import and create ResNet encoder
-            from neurodecoders.encoder.resnet_encoder import ResNetEncoder
+            from neurodecoders.encoder.models import ResNetEncoder
 
             self.encoder = ResNetEncoder(out_neurons, resnet_type="resnet18")
 
