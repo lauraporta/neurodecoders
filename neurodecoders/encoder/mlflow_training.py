@@ -29,40 +29,108 @@ from neurodecoders.encoder.training import (
 from neurodecoders.encoder.utils import NeuralDataModule, preprocess_data
 
 
-def create_synthetic_data(config: Dict[str, Any]) -> tuple:
+def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
     """
-    Create synthetic data based on configuration.
+    Load synthetic data from workspace/datasets/synthetic based on
+    configuration.
 
     Args:
         config: Configuration dictionary with data parameters
 
     Returns:
-        images, firing_rates: Synthetic data
+        images, firing_rates: Synthetic data loaded from workspace
     """
-    n_samples = config.get("n_samples", 1000)
-    n_neurons = config.get("n_neurons", 100)
-    image_size = config.get("image_size", 64)
-    data_type = config.get("data_type", "random")
+    synthetic_dir = "workspace/datasets/synthetic"
 
-    if data_type in ["random", "synthetic"]:
-        # Random data
-        images = np.random.rand(n_samples, image_size, image_size)
-        firing_rates = np.random.exponential(
-            scale=2.0, size=(n_samples, n_neurons)
+    if not os.path.exists(synthetic_dir):
+        raise FileNotFoundError(
+            f"Synthetic data directory {synthetic_dir} not found. "
+            "Please run the synthetic data generation first."
         )
-    elif data_type == "structured":
-        # More structured data with patterns
-        images = np.random.rand(n_samples, image_size, image_size)
-        # Add some structure to firing rates
-        base_rates = np.random.exponential(scale=1.0, size=(n_neurons,))
-        firing_rates = np.outer(
-            np.random.rand(n_samples), base_rates
-        ) + np.random.normal(0, 0.1, (n_samples, n_neurons))
-        firing_rates = np.maximum(firing_rates, 0)  # Ensure positive
-    else:
-        raise ValueError(f"Unknown data_type: {data_type}")
 
-    return images, firing_rates
+    # Get available synthetic data files
+    available_files = [
+        f for f in os.listdir(synthetic_dir) if f.endswith(".npz")
+    ]
+
+    if not available_files:
+        raise FileNotFoundError(
+            f"No synthetic data files found in {synthetic_dir}. "
+            "Please run the synthetic data generation first."
+        )
+
+    # Parse configuration to find matching file
+    dataset_type = config.get("dataset_type", "cifar10")
+    sta_type = config.get("sta_type", "perlin_noise_patterns,11,11")
+    n_neurons = config.get("n_neurons", 1000)
+    n_images = config.get("n_images", 1000)
+
+    # Look for exact match first
+    target_filename = (
+        f"synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-"
+        f"{n_neurons}_n_images-{n_images}"
+    )
+
+    matching_files = [f for f in available_files if target_filename in f]
+
+    if not matching_files:
+        # If no exact match, find the closest match
+        print(f"Warning: No exact match found for {target_filename}")
+        print("Available files:")
+        for f in available_files:
+            print(f"  {f}")
+
+        # Try to find any file with the same dataset_type and sta_type
+        partial_matches = [
+            f
+            for f in available_files
+            if f"dataset-{dataset_type}" in f and f"sta-{sta_type}" in f
+        ]
+
+        if partial_matches:
+            # Use the most recent file
+            partial_matches.sort(reverse=True)
+            selected_file = partial_matches[0]
+            print(f"Using closest match: {selected_file}")
+        else:
+            # Use the most recent file overall
+            available_files.sort(reverse=True)
+            selected_file = available_files[0]
+            print(f"Using most recent file: {selected_file}")
+    else:
+        # Use the most recent exact match
+        matching_files.sort(reverse=True)
+        selected_file = matching_files[0]
+        print(f"Using exact match: {selected_file}")
+
+    # Load the data
+    file_path = os.path.join(synthetic_dir, selected_file)
+    print(f"Loading synthetic data from: {file_path}")
+
+    try:
+        data = np.load(file_path)
+
+        # Extract images and responses (firing rates)
+        if "images" in data and "responses" in data:
+            images = data["images"]
+            firing_rates = data["responses"]
+        else:
+            raise ValueError(
+                "Invalid synthetic data format: missing 'images' or "
+                "'responses'"
+            )
+
+        print(
+            f"Loaded data: {images.shape} images, "
+            f"{firing_rates.shape} firing rates"
+        )
+
+        return images, firing_rates
+
+    except Exception as e:
+        raise RuntimeError(
+            f"Error loading synthetic data from {file_path}: {e}"
+        )
 
 
 def load_real_data(config: Dict[str, Any]) -> tuple:
@@ -77,10 +145,11 @@ def load_real_data(config: Dict[str, Any]) -> tuple:
     """
     data_path = config.get("data_path")
     if not data_path or not os.path.exists(data_path):
-        print(
-            f"Warning: Data path {data_path} not found, using synthetic data"
+        raise FileNotFoundError(
+            f"Real data path {data_path} not found. "
+            "Please provide a valid path to real data or use synthetic data "
+            "from workspace."
         )
-        return create_synthetic_data(config)
 
     # Load data from file
     try:
@@ -88,11 +157,11 @@ def load_real_data(config: Dict[str, Any]) -> tuple:
         if "images" in data and "firing_rates" in data:
             return data["images"], data["firing_rates"]
         else:
-            print("Warning: Invalid data file format, using synthetic data")
-            return create_synthetic_data(config)
+            raise ValueError(
+                "Invalid data file format: missing 'images' or 'firing_rates'"
+            )
     except Exception as e:
-        print(f"Error loading data: {e}")
-        return create_synthetic_data(config)
+        raise RuntimeError(f"Error loading real data from {data_path}: {e}")
 
 
 def get_model(config: Dict[str, Any]) -> torch.nn.Module:
@@ -176,16 +245,16 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     """
     print("Training with configuration:")
     print(f"  Model: {config.get('model_type', 'simple')}")
-    print(f"  Dataset: {config.get('data_type', 'synthetic')}")
+    print(
+        f"  Dataset: {config.get('dataset_type', 'cifar10')} + "
+        f"{config.get('sta_type', 'perlin_noise_patterns,11,11')}"
+    )
     print(f"  Neurons: {config.get('out_neurons', 100)}")
     print(f"  Epochs: {config.get('epochs', 30)}")
     print(f"  Learning Rate: {config.get('learning_rate', 1e-3)}")
 
-    # Load/create data
-    if config.get("data_type") == "real":
-        images, firing_rates = load_real_data(config)
-    else:
-        images, firing_rates = create_synthetic_data(config)
+    # Always load synthetic data from workspace
+    images, firing_rates = load_synthetic_data_from_workspace(config)
 
     # Ensure data matches model configuration
     out_neurons = config.get("out_neurons", 100)
@@ -381,8 +450,10 @@ def create_sample_configs() -> list:
             "out_neurons": 50,
             "learning_rate": 1e-3,
             "epochs": 10,
-            "data_type": "synthetic",
-            "n_samples": 500,
+            "dataset_type": "cifar10",
+            "sta_type": "perlin_noise_patterns,11,11",
+            "n_neurons": 1000,
+            "n_images": 1000,
             "mlflow_experiment_name": "encoder_comparison",
             "mlflow_run_name": "simple_default",
         },
@@ -392,8 +463,10 @@ def create_sample_configs() -> list:
             "out_neurons": 50,
             "learning_rate": 1e-2,
             "epochs": 10,
-            "data_type": "synthetic",
-            "n_samples": 500,
+            "dataset_type": "cifar10",
+            "sta_type": "perlin_noise_patterns,11,11",
+            "n_neurons": 1000,
+            "n_images": 1000,
             "mlflow_experiment_name": "encoder_comparison",
             "mlflow_run_name": "simple_high_lr",
         },
@@ -405,8 +478,10 @@ def create_sample_configs() -> list:
             "freeze_backbone": True,
             "unfreeze_epoch": 5,
             "epochs": 10,
-            "data_type": "synthetic",
-            "n_samples": 500,
+            "dataset_type": "cifar10",
+            "sta_type": "perlin_noise_patterns,11,11",
+            "n_neurons": 1000,
+            "n_images": 1000,
             "mlflow_experiment_name": "encoder_comparison",
             "mlflow_run_name": "resnet_encoder",
         },
@@ -449,10 +524,26 @@ def main():
         "--batch-size", type=int, default=32, help="Batch size"
     )
     parser.add_argument(
-        "--data-type", default="synthetic", help="Data type (synthetic, real)"
+        "--dataset-type",
+        default="cifar10",
+        help="Dataset type (cifar10, mnist)",
     )
     parser.add_argument(
-        "--n-samples", type=int, default=1000, help="Number of samples"
+        "--sta-type",
+        default="perlin_noise_patterns,11,11",
+        help="STA type for synthetic data",
+    )
+    parser.add_argument(
+        "--n-neurons",
+        type=int,
+        default=1000,
+        help="Number of neurons in synthetic data",
+    )
+    parser.add_argument(
+        "--n-images",
+        type=int,
+        default=1000,
+        help="Number of images in synthetic data",
     )
     parser.add_argument(
         "--experiment-name",
@@ -484,8 +575,10 @@ def main():
             "learning_rate": args.learning_rate,
             "epochs": args.epochs,
             "batch_size": args.batch_size,
-            "data_type": args.data_type,
-            "n_samples": args.n_samples,
+            "dataset_type": args.dataset_type,
+            "sta_type": args.sta_type,
+            "n_neurons": args.n_neurons,
+            "n_images": args.n_images,
             "mlflow_experiment_name": args.experiment_name,
             "mlflow_run_name": args.run_name,
         }

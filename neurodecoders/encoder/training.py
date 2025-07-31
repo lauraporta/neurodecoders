@@ -287,9 +287,10 @@ def train_encoder(
             "output_neurons": data_module.firing_rates.shape[1],
         }
 
-        # Save model path for logging
+        # Save model path for logging - always save in encoders directory
         model_save_path = (
-            f"workspace/models/{model_name}_{mlflow_run_name or 'latest'}.pt"
+            f"workspace/models/encoders/{model_name}_"
+            f"{mlflow_run_name or 'latest'}.pt"
         )
 
         # Log experiment

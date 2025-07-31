@@ -172,25 +172,56 @@ class EncoderVerificationCallback(Callback):
                     f"{verifier.true_firing_rates.shape[1]} neurons"
                 )
             else:
-                # Create synthetic data for verification
+                # Load synthetic data from workspace for verification
                 print(
-                    "No training data available, creating synthetic data "
-                    "for verification"
+                    "No training data available, loading synthetic data "
+                    "from workspace for verification"
                 )
-                n_samples = 1000
-                n_neurons = (
-                    pl_module.model.out_neurons
-                    if hasattr(pl_module.model, "out_neurons")
-                    else 100
-                )
-                image_size = 64
 
-                verifier.images = np.random.rand(
-                    n_samples, image_size, image_size
-                )
-                verifier.true_firing_rates = np.random.exponential(
-                    scale=2.0, size=(n_samples, n_neurons)
-                )
+                # Try to load synthetic data from workspace
+                synthetic_dir = "workspace/datasets/synthetic"
+                if os.path.exists(synthetic_dir):
+                    available_files = [
+                        f
+                        for f in os.listdir(synthetic_dir)
+                        if f.endswith(".npz")
+                    ]
+                    if available_files:
+                        # Use the most recent file
+                        available_files.sort(reverse=True)
+                        selected_file = available_files[0]
+                        file_path = os.path.join(synthetic_dir, selected_file)
+
+                        try:
+                            data = np.load(file_path)
+                            if "images" in data and "responses" in data:
+                                verifier.images = data["images"]
+                                verifier.true_firing_rates = data["responses"]
+                                print(
+                                    f"Loaded verification data from: "
+                                    f"{selected_file}"
+                                )
+                            else:
+                                raise ValueError(
+                                    "Invalid synthetic data format"
+                                )
+                        except Exception as e:
+                            print(
+                                f"Error loading synthetic data "
+                                "for verification: "
+                                f"{e}"
+                            )
+                            raise RuntimeError(
+                                "No verification data available"
+                            )
+                    else:
+                        raise FileNotFoundError(
+                            f"No synthetic data files found in {synthetic_dir}"
+                        )
+                else:
+                    raise FileNotFoundError(
+                        f"Synthetic data directory {synthetic_dir} not found"
+                    )
 
             # Generate predictions
             verifier.predict_firing_rates()
