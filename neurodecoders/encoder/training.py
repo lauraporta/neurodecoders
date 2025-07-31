@@ -53,9 +53,9 @@ class EncoderLightningModule(pl.LightningModule):
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
 
-        # Log training loss
+        # Log training loss - epoch level only
         self.log(
-            "train_loss", loss, on_step=True, on_epoch=True, prog_bar=True
+            "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True
         )
         return loss
 
@@ -64,7 +64,7 @@ class EncoderLightningModule(pl.LightningModule):
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
 
-        # Log validation loss
+        # Log validation loss (epoch-level only)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
