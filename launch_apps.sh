@@ -16,14 +16,14 @@ fi
 export MLFLOW_TRACKING_URI="file:./mlruns"
 
 # Launch MLflow UI
-echo "Starting MLflow UI on port 5000..."
-echo "📊 MLflow UI will be available at: http://localhost:5000"
+echo "Starting MLflow UI on port 5001..."
+echo "📊 MLflow UI will be available at: http://localhost:5001"
 echo ""
 echo "🌐 For remote access, use SSH port forwarding:"
-echo "   ssh -L 5000:localhost:5000 your-username@gpu-380-18"
+echo "   ssh -L 5001:localhost:5001 your-username@gpu-380-18"
 echo ""
 echo "💡 To stop MLflow UI, press Ctrl+C"
 echo ""
 
 # Launch MLflow UI
-mlflow ui --host 0.0.0.0 --port 5000
+mlflow ui --host 0.0.0.0 --port 5001 --backend-store-uri file:./mlruns
