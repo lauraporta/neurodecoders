@@ -341,15 +341,15 @@ def train_resnet_encoder(
         freeze_backbone=freeze_backbone,
     )
 
-    # Use differential learning rates for ResNet
-    optimizer_config = {"type": "resnet_differential"}
+    # Use differential learning rates for ResNet if not specified in kwargs
+    if "optimizer_config" not in kwargs:
+        kwargs["optimizer_config"] = {"type": "resnet_differential"}
 
     return train_encoder(
         model=model,
         data_module=data_module,
         model_name=f"resnet_{resnet_type}",
         logger_name=f"resnet_{resnet_type}",
-        optimizer_config=optimizer_config,
         unfreeze_epoch=unfreeze_epoch,
         **kwargs,
     )
