@@ -323,12 +323,38 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     else:
         # Generic training for custom models
         model = get_model(config)
+
+        # Filter out parameters that train_encoder doesn't accept
+        # train_encoder only accepts: learning_rate, weight_decay, epochs,
+        # optimizer_config, callbacks, enable_progress_bar,
+        # log_every_n_steps, logger_name, unfreeze_epoch, enable_mlflow,
+        # mlflow_experiment_name, mlflow_run_name, mlflow_tracking_uri
+        accepted_params = {
+            "learning_rate",
+            "weight_decay",
+            "epochs",
+            "optimizer_config",
+            "callbacks",
+            "enable_progress_bar",
+            "log_every_n_steps",
+            "logger_name",
+            "unfreeze_epoch",
+            "enable_mlflow",
+            "mlflow_experiment_name",
+            "mlflow_run_name",
+            "mlflow_tracking_uri",
+        }
+
+        encoder_params = {
+            k: v for k, v in training_config.items() if k in accepted_params
+        }
+
         trainer, lightning_model, _ = train_encoder(
             model=model,
             data_module=data_module,
             model_name=f"{model_type}_encoder",
             logger_name=f"{model_type}_encoder",
-            **training_config,
+            **encoder_params,
             **mlflow_config,
         )
         model = lightning_model
