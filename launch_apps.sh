@@ -1,40 +1,29 @@
 #!/bin/bash
 
-# Launch script for neurodecoders Streamlit apps
-# This script launches all four apps on different ports
+# Launch script for MLflow UI
+# This script launches MLflow UI for experiment tracking
 
-echo "🚀 Launching neurodecoders apps..."
+echo "🚀 Launching MLflow UI..."
 
-# Function to launch an app on a specific port
-launch_app() {
-    local app_name=$1
-    local app_path=$2
-    local port=$3
+# Check if MLflow is installed
+if ! command -v mlflow &> /dev/null; then
+    echo "❌ MLflow is not installed. Please install it first:"
+    echo "   pip install mlflow"
+    exit 1
+fi
 
-    echo "Starting $app_name on port $port..."
-    streamlit run "$app_path" --server.port "$port" --server.headless true &
-    echo "✅ $app_name started on http://localhost:$port"
-}
+# Set MLflow tracking URI to local file system
+export MLFLOW_TRACKING_URI="file:./mlruns"
 
-# Launch all apps
-launch_app "Synthetic Data Generator" "neurodecoders/synthetic/app.py" 8501
-launch_app "Neural Encoder" "neurodecoders/encoder/app.py" 8502
-launch_app "Neural Decoder" "neurodecoders/decoder/app.py" 8503
-launch_app "MEI (Maximal Exciting Image)" "neurodecoders/extract_mei/app.py" 8504
-
+# Launch MLflow UI
+echo "Starting MLflow UI on port 5000..."
+echo "📊 MLflow UI will be available at: http://localhost:5000"
 echo ""
-echo "🎉 All apps launched successfully!"
+echo "🌐 For remote access, use SSH port forwarding:"
+echo "   ssh -L 5000:localhost:5000 your-username@gpu-380-18"
 echo ""
-echo "📱 App URLs:"
-echo "   Synthetic Data Generator: http://localhost:8501"
-echo "   Neural Encoder:           http://localhost:8502"
-echo "   Neural Decoder:           http://localhost:8503"
-echo "   MEI (Maximal Exciting Image): http://localhost:8504"
-echo ""
-echo "💡 To stop all apps, run: pkill -f streamlit"
+echo "💡 To stop MLflow UI, press Ctrl+C"
 echo ""
 
-# Wait for user input to stop
-read -p "Press Enter to stop all apps..."
-pkill -f streamlit
-echo "�� All apps stopped."
+# Launch MLflow UI
+mlflow ui --host 0.0.0.0 --port 5000

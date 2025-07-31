@@ -192,7 +192,7 @@ def plot_training_results(train_losses, val_losses):
 
 
 def plot_training_curves(train_losses, val_losses):
-    """Plot training and validation loss curves for Streamlit"""
+    """Plot training and validation loss curves"""
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(train_losses, label="Train Loss", linewidth=2)
     ax.plot(val_losses, label="Validation Loss", linewidth=2)
@@ -206,7 +206,7 @@ def plot_training_curves(train_losses, val_losses):
 
 
 def plot_firing_rate_distribution(firing_rates):
-    """Plot firing rate distribution for Streamlit"""
+    """Plot firing rate distribution"""
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
 
     # Histogram
@@ -234,7 +234,7 @@ def plot_firing_rate_distribution(firing_rates):
 
 
 def plot_predictions_vs_actual(pred, actual, n_samples=10):
-    """Plot predicted vs actual firing rates for Streamlit"""
+    """Plot predicted vs actual firing rates"""
     fig, axes = plt.subplots(2, 5, figsize=(20, 8))
     axes = axes.flatten()
 

@@ -309,95 +309,6 @@ class DecoderDataModule(pl.LightningDataModule):
         )
 
 
-# ---- Custom Callback for Streamlit ----
-class StreamlitCallback(pl.Callback):
-    def __init__(
-        self,
-        progress_callback=None,
-        metrics_callback=None,
-        plot_callback=None,
-        psnr_callback=None,
-        correlation_callback=None,
-    ):
-        super().__init__()
-        self.progress_callback = progress_callback
-        self.metrics_callback = metrics_callback
-        self.plot_callback = plot_callback
-        self.psnr_callback = psnr_callback
-        self.correlation_callback = correlation_callback
-        self.train_losses = []
-        self.val_losses = []
-        self.train_psnr = []
-        self.val_psnr = []
-        self.train_correlation = []
-        self.val_correlation = []
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        # Get current losses
-        train_loss = trainer.callback_metrics.get("train_loss_epoch", 0)
-        val_loss = trainer.callback_metrics.get("val_loss", 0)
-
-        if isinstance(train_loss, torch.Tensor):
-            train_loss = train_loss.item()
-        if isinstance(val_loss, torch.Tensor):
-            val_loss = val_loss.item()
-
-        self.train_losses.append(train_loss)
-        self.val_losses.append(val_loss)
-
-        # Calculate PSNR and correlation from stored data
-        if hasattr(pl_module, "train_predictions") and hasattr(
-            pl_module, "val_predictions"
-        ):
-            # Calculate train metrics from stored data
-            train_psnr, train_corr = (
-                pl_module.calculate_metrics_from_stored_data(
-                    pl_module.train_predictions, pl_module.train_targets
-                )
-            )
-            self.train_psnr.append(train_psnr)
-            self.train_correlation.append(train_corr)
-
-            # Calculate validation metrics from stored data
-            val_psnr, val_corr = pl_module.calculate_metrics_from_stored_data(
-                pl_module.val_predictions, pl_module.val_targets
-            )
-            self.val_psnr.append(val_psnr)
-            self.val_correlation.append(val_corr)
-
-            # Clear stored data to free memory
-            pl_module.clear_stored_data()
-
-        # Update progress
-        if self.progress_callback:
-            progress = (trainer.current_epoch + 1) / trainer.max_epochs
-            self.progress_callback(
-                progress,
-                f"Epoch {trainer.current_epoch + 1}/{trainer.max_epochs}",
-            )
-
-        # Update metrics
-        if self.metrics_callback:
-            best_val_loss = (
-                min(self.val_losses) if self.val_losses else val_loss
-            )
-            self.metrics_callback(train_loss, val_loss, best_val_loss)
-
-        # Update plots
-        if self.plot_callback and len(self.train_losses) > 1:
-            self.plot_callback(self.train_losses, self.val_losses)
-
-        # Update PSNR plot
-        if self.psnr_callback and len(self.train_psnr) > 1:
-            self.psnr_callback(self.train_psnr, self.val_psnr)
-
-        # Update correlation plot
-        if self.correlation_callback and len(self.train_correlation) > 1:
-            self.correlation_callback(
-                self.train_correlation, self.val_correlation
-            )
-
-
 def load_latest_data(dataset_to_load):
     """Load the latest neural data file"""
     # Convert Path object to string if needed
@@ -597,13 +508,6 @@ def train_model_lightning(
     callbacks.extend(
         [
             LearningRateMonitor(logging_interval="epoch"),
-            StreamlitCallback(
-                progress_callback=progress_callback,
-                metrics_callback=metrics_callback,
-                plot_callback=plot_callback,
-                psnr_callback=psnr_callback,
-                correlation_callback=correlation_callback,
-            ),
         ]
     )
 

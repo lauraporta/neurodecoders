@@ -13,7 +13,6 @@ dependencies = [
     "matplotlib",
     "scikit-learn",
     "tqdm",
-    "streamlit",
     "noise",
     "pytorch-lightning",
     "scikit-image",
