@@ -45,8 +45,12 @@ class MEIOptimizer:
     def get_expected_firing_rate(self, image, target_neuron_idx):
         """Get expected firing rate using SimulateResponse"""
         if self.sta_patterns is None or self.rf_coords is None:
-            # Fallback: return a random firing rate if no STA data available
-            return torch.tensor(50.0, device=self.device, dtype=torch.float32)
+            raise ValueError(
+                "Cannot compute expected firing rate: STA patterns or RF "
+                "coordinates not available. Please provide a valid "
+                "--data_path with synthetic data containing STA patterns "
+                "and RF coordinates."
+            )
 
         # If image is a patch (smaller than full image), create a full image
         # with patch at RF location
@@ -682,6 +686,11 @@ def main():
                 y = (i // 10) * 20 + 10
                 rf_coords.append([x, y])
             print(f"Loaded STA patterns for {len(sta_patterns)} neurons")
+            print(f"STA pattern shape: {sta_patterns[0].shape}")
+            print(
+                "STA pattern range: "
+                f"[{sta_patterns[0].min():.3f}, {sta_patterns[0].max():.3f}]"
+            )
         except Exception as e:
             print(
                 "Warning: Could not load STA "
@@ -738,7 +747,6 @@ def main():
     print(f"Final predicted firing rate: {firing_rate_history[-1]:.2f}")
 
     # Compare with STA if available
-    comparison_metrics = None
     if sta_patterns is not None and args.neuron_idx < len(sta_patterns):
         sta_pattern = sta_patterns[args.neuron_idx]
         comparison_metrics = optimizer.compare_with_sta(
@@ -752,14 +760,20 @@ def main():
         )
         print(f"  SSIM: {comparison_metrics['ssim']:.3f}")
     else:
-        # Create dummy comparison metrics
-        comparison_metrics = {
-            "correlation": 0.0,
-            "cosine_similarity": 0.0,
-            "mse": 0.0,
-            "ssim": 0.0,
-            "neuron_idx": args.neuron_idx,
-        }
+        # Raise error if STA patterns are not available
+        if sta_patterns is None:
+            raise ValueError(
+                f"No STA patterns available. Please provide a "
+                "valid --data_path with synthetic data "
+                f"containing STA patterns for neuron {args.neuron_idx}."
+            )
+        else:
+            raise ValueError(
+                f"Neuron index {args.neuron_idx} out of range for STA "
+                f"patterns (len={len(sta_patterns)}). Please provide data "
+                f"with at least {args.neuron_idx + 1} neurons or use a "
+                f"smaller neuron index."
+            )
 
     # Save results
     image_path, history_path = save_mei_results(
@@ -780,18 +794,32 @@ def main():
     if args.save_plots:
         if sta_patterns is not None and args.neuron_idx < len(sta_patterns):
             sta_pattern = sta_patterns[args.neuron_idx]
+            print(f"Using STA pattern {args.neuron_idx} from loaded patterns")
+            fig = plot_mei_optimization(
+                optimized_image=optimized_image,
+                sta_pattern=sta_pattern,
+                loss_history=loss_history,
+                firing_rate_history=firing_rate_history,
+                comparison_metrics=comparison_metrics,
+                neuron_idx=args.neuron_idx,
+            )
         else:
-            # Create a dummy STA pattern for plotting
-            sta_pattern = np.zeros((args.sta_size, args.sta_size))
-
-        fig = plot_mei_optimization(
-            optimized_image=optimized_image,
-            sta_pattern=sta_pattern,
-            loss_history=loss_history,
-            firing_rate_history=firing_rate_history,
-            comparison_metrics=comparison_metrics,
-            neuron_idx=args.neuron_idx,
-        )
+            # Raise error if STA patterns are not available for plotting
+            if sta_patterns is None:
+                raise ValueError(
+                    "Cannot create plots: No STA patterns available. "
+                    f"Please provide a valid --data_path "
+                    f"with synthetic data containing STA patterns for "
+                    f"neuron {args.neuron_idx}."
+                )
+            else:
+                raise ValueError(
+                    f"Cannot create plots: Neuron index {args.neuron_idx} "
+                    f"out of range for STA patterns "
+                    f"(len={len(sta_patterns)}). Please provide data with "
+                    f"at least {args.neuron_idx + 1} "
+                    f"neurons or use a smaller neuron index."
+                )
 
         model_name = os.path.basename(args.model_path).replace(".pth", "")
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
