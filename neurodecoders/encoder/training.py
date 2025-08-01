@@ -7,6 +7,7 @@ model architecture from the models module.
 
 from typing import Optional
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -75,6 +76,29 @@ class EncoderLightningModule(pl.LightningModule):
 
         # Log test loss
         self.log("test_loss", loss, on_step=False, on_epoch=True)
+
+        # Calculate correlation coefficient between true and predicted firing
+        # rates
+        # Convert to numpy for correlation calculation
+        y_np = y.detach().cpu().numpy()
+        pred_np = pred.detach().cpu().numpy()
+
+        # Calculate correlation for each neuron and take the mean
+        correlations = []
+        for i in range(y_np.shape[1]):
+            corr = np.corrcoef(y_np[:, i], pred_np[:, i])[0, 1]
+            if not np.isnan(corr):  # Handle NaN values
+                correlations.append(corr)
+
+        if correlations:
+            mean_correlation = np.mean(correlations)
+            self.log(
+                "test_correlation",
+                mean_correlation,
+                on_step=False,
+                on_epoch=True,
+            )
+
         return loss
 
     def configure_optimizers(self):
