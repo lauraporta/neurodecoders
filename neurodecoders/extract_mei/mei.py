@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import os
 import sys
@@ -531,3 +532,245 @@ def plot_mei_optimization(
         )
     plt.tight_layout()
     return fig
+
+
+def main():
+    """Main function to run MEI optimization from command line"""
+    parser = argparse.ArgumentParser(
+        description="Run MEI optimization on a trained encoder model"
+    )
+
+    # Required arguments
+    parser.add_argument(
+        "--model_path",
+        type=str,
+        required=True,
+        help="Path to the trained encoder model (.pth file)",
+    )
+
+    # Optional arguments
+    parser.add_argument(
+        "--neuron_idx",
+        type=int,
+        default=0,
+        help="Index of the target neuron to optimize for (default: 0)",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="workspace/mei_results",
+        help="Directory to save results (default: workspace/mei_results)",
+    )
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=0.01,
+        help="Learning rate for optimization (default: 0.01)",
+    )
+    parser.add_argument(
+        "--num_iterations",
+        type=int,
+        default=1000,
+        help="Number of optimization iterations (default: 1000)",
+    )
+    parser.add_argument(
+        "--regularization_weight",
+        type=float,
+        default=0.001,
+        help="L2 regularization weight (default: 0.001)",
+    )
+    parser.add_argument(
+        "--sta_size",
+        type=int,
+        default=11,
+        help="Size of STA pattern for initialization (default: 11)",
+    )
+    parser.add_argument(
+        "--noise_std",
+        type=float,
+        default=0.1,
+        help="Standard deviation for random initialization (default: 0.1)",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        help="Device to use ('cpu', 'cuda', or 'auto' for automatic)",
+    )
+    parser.add_argument(
+        "--save_plots", action="store_true", help="Save optimization plots"
+    )
+    parser.add_argument(
+        "--data_path",
+        type=str,
+        default=None,
+        help="Path to synthetic data file for STA patterns (optional)",
+    )
+
+    args = parser.parse_args()
+
+    # Set device
+    if args.device == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(args.device)
+
+    print(f"Using device: {device}")
+    print(f"Loading model from: {args.model_path}")
+
+    # Load the encoder model
+    try:
+        encoder_model = load_encoder_model(args.model_path, device)
+        print("Model loaded successfully")
+    except Exception as e:
+        print(f"Error loading model: {e}")
+        return
+
+    # Load STA patterns if data path is provided
+    sta_patterns = None
+    rf_coords = None
+    sta_type = None
+
+    if args.data_path:
+        try:
+            images, firing_rates, sta_type = load_synthetic_data(
+                args.data_path
+            )
+            sta_patterns = generate_sta_patterns(
+                sta_type, firing_rates.shape[1]
+            )
+            # Generate RF coordinates (simple grid for now)
+            n_neurons = firing_rates.shape[1]
+            rf_coords = []
+            for i in range(n_neurons):
+                x = (i % 10) * 20 + 10  # Simple grid layout
+                y = (i // 10) * 20 + 10
+                rf_coords.append([x, y])
+            print(f"Loaded STA patterns for {len(sta_patterns)} neurons")
+        except Exception as e:
+            print(
+                "Warning: Could not load STA "
+                f"patterns from {args.data_path}: {e}"
+            )
+            print("Continuing without STA patterns...")
+
+    # Create MEI optimizer
+    optimizer = MEIOptimizer(
+        device=device,
+        encoder_model=encoder_model,
+        target_neuron_idx=args.neuron_idx,
+        sta_patterns=sta_patterns,
+        rf_coords=rf_coords,
+    )
+
+    # Initialize random image
+    initial_image = optimizer.initialize_random_image(
+        sta_size=args.sta_size, noise_std=args.noise_std
+    )
+
+    print(f"Starting MEI optimization for neuron {args.neuron_idx}")
+    print(f"Initial image shape: {initial_image.shape}")
+
+    # Define callback for progress updates
+    def progress_callback(
+        iteration, image, loss, predicted_rate, expected_rate, lr
+    ):
+        if iteration % 100 == 0:
+            print(
+                f"Iteration {iteration}: Loss={loss:.4f}, "
+                f"Predicted Rate={predicted_rate:.2f}, "
+                f"Expected Rate={expected_rate:.2f}, "
+                f"LR={lr:.6f}"
+            )
+
+    # Run optimization
+    (
+        optimized_image,
+        loss_history,
+        firing_rate_history,
+        expected_firing_rate_history,
+        lr_history,
+    ) = optimizer.optimize_image(
+        initial_image=initial_image,
+        learning_rate=args.learning_rate,
+        num_iterations=args.num_iterations,
+        regularization_weight=args.regularization_weight,
+        callback=progress_callback,
+    )
+
+    print("Optimization completed!")
+    print(f"Final loss: {loss_history[-1]:.4f}")
+    print(f"Final predicted firing rate: {firing_rate_history[-1]:.2f}")
+
+    # Compare with STA if available
+    comparison_metrics = None
+    if sta_patterns is not None and args.neuron_idx < len(sta_patterns):
+        sta_pattern = sta_patterns[args.neuron_idx]
+        comparison_metrics = optimizer.compare_with_sta(
+            optimized_image, sta_pattern, args.neuron_idx
+        )
+        print("Comparison with STA:")
+        print(f"  Correlation: {comparison_metrics['correlation']:.3f}")
+        print(
+            f"  Cosine Similarity: "
+            f"{comparison_metrics['cosine_similarity']:.3f}"
+        )
+        print(f"  SSIM: {comparison_metrics['ssim']:.3f}")
+    else:
+        # Create dummy comparison metrics
+        comparison_metrics = {
+            "correlation": 0.0,
+            "cosine_similarity": 0.0,
+            "mse": 0.0,
+            "ssim": 0.0,
+            "neuron_idx": args.neuron_idx,
+        }
+
+    # Save results
+    image_path, history_path = save_mei_results(
+        optimized_image=optimized_image,
+        loss_history=loss_history,
+        firing_rate_history=firing_rate_history,
+        comparison_metrics=comparison_metrics,
+        model_path=args.model_path,
+        neuron_idx=args.neuron_idx,
+        output_dir=args.output_dir,
+    )
+
+    print("Results saved:")
+    print(f"  Image: {image_path}")
+    print(f"  History: {history_path}")
+
+    # Create and save plots if requested
+    if args.save_plots:
+        if sta_patterns is not None and args.neuron_idx < len(sta_patterns):
+            sta_pattern = sta_patterns[args.neuron_idx]
+        else:
+            # Create a dummy STA pattern for plotting
+            sta_pattern = np.zeros((args.sta_size, args.sta_size))
+
+        fig = plot_mei_optimization(
+            optimized_image=optimized_image,
+            sta_pattern=sta_pattern,
+            loss_history=loss_history,
+            firing_rate_history=firing_rate_history,
+            comparison_metrics=comparison_metrics,
+            neuron_idx=args.neuron_idx,
+        )
+
+        model_name = os.path.basename(args.model_path).replace(".pth", "")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        plot_filename = (
+            f"mei_plots_model-{model_name}_neuron-"
+            f"{args.neuron_idx}_{timestamp}.png"
+        )
+        plots_dir = "workspace/plots"
+        os.makedirs(plots_dir, exist_ok=True)
+        plot_path = os.path.join(plots_dir, plot_filename)
+        fig.savefig(plot_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  Plots: {plot_path}")
+
+
+if __name__ == "__main__":
+    main()
