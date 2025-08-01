@@ -529,9 +529,12 @@ def main():
     # Mode selection
     parser.add_argument(
         "--mode",
-        choices=["single", "comparison", "config"],
+        choices=["single", "comparison", "config", "hyperparameter_sweep"],
         default="single",
-        help="Training mode: single experiment, comparison, or config file",
+        help=(
+            "Training mode: single experiment, comparison, config file, "
+            "or hyperparameter sweep"
+        ),
     )
 
     # Configuration file
@@ -583,6 +586,11 @@ def main():
         help="MLflow experiment name",
     )
     parser.add_argument("--run-name", help="MLflow run name")
+    parser.add_argument(
+        "--array-task-id",
+        type=int,
+        help="SLURM array task ID for hyperparameter sweep",
+    )
 
     args = parser.parse_args()
 
@@ -598,6 +606,57 @@ def main():
         # Run comparison with sample configs
         configs = create_sample_configs()
         run_experiment_comparison(configs)
+
+    elif args.mode == "hyperparameter_sweep":
+        # Hyperparameter sweep mode for SLURM job arrays
+        if args.array_task_id is None:
+            raise ValueError(
+                "--array-task-id is required for hyperparameter_sweep mode"
+            )
+
+        # Define hyperparameter combinations
+        learning_rates = [0.00001, 0.0001, 0.001, 0.01]
+        batch_sizes = [8, 16, 32, 64]
+
+        # Calculate which combination this array task should run
+        lr_idx = args.array_task_id // len(batch_sizes)
+        bs_idx = args.array_task_id % len(batch_sizes)
+
+        if lr_idx >= len(learning_rates):
+            raise ValueError(
+                f"Array task ID {args.array_task_id} is out of range"
+            )
+
+        lr = learning_rates[lr_idx]
+        batch_size = batch_sizes[bs_idx]
+        run_name = f"resnet_lr{lr}_bs{batch_size}"
+
+        print(
+            f"Array Task {args.array_task_id}: lr={lr}, "
+            f"batch_size={batch_size}"
+        )
+
+        config = {
+            "model_type": "resnet",
+            "out_neurons": 1000,
+            "learning_rate": lr,
+            "epochs": 10000,
+            "batch_size": batch_size,
+            "dataset_type": "mnist",
+            "sta_type": "perlin_noise_patterns,11,11",
+            "n_neurons": 1000,
+            "n_images": 1000,
+            "mlflow_experiment_name": "resnet_hyperparameter_sweep_mnist",
+            "mlflow_run_name": run_name,
+        }
+
+        trainer, model, _ = train_with_config(config)
+
+        print(f"\nTraining completed for {run_name}!")
+        if model.train_losses:
+            print(f"Final train loss: {model.train_losses[-1]:.4f}")
+        if model.val_losses:
+            print(f"Final validation loss: {model.val_losses[-1]:.4f}")
 
     else:
         # Single experiment with command line arguments
