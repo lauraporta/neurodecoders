@@ -14,7 +14,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "encoder"))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "synthetic"))
 
-from neurodecoders.encoder.models import SimpleEncoder
 from neurodecoders.synthetic.sta import STA
 
 
@@ -354,32 +353,68 @@ def load_encoder_model(model_path, device):
         # Load the saved state dict
         state_dict = torch.load(model_path, map_location=device)
 
-        # Determine the number of output neurons from the saved model
-        # Check for different possible layer names
-        if "model.fc.6.weight" in state_dict:
-            saved_out_neurons = state_dict["model.fc.6.weight"].shape[0]
-        elif "fc.6.weight" in state_dict:
-            saved_out_neurons = state_dict["fc.6.weight"].shape[0]
-        elif "fc.2.weight" in state_dict:
-            saved_out_neurons = state_dict["fc.2.weight"].shape[0]
-        elif "model.fc.2.weight" in state_dict:
-            saved_out_neurons = state_dict["model.fc.2.weight"].shape[0]
-        else:
-            # Try to find any fc layer weight
-            fc_keys = [
-                k for k in state_dict.keys() if "fc" in k and "weight" in k
-            ]
-            if fc_keys:
-                # Get the last fc layer (highest index)
-                last_fc_key = sorted(fc_keys)[-1]
-                saved_out_neurons = state_dict[last_fc_key].shape[0]
+        # Determine model type and number of output neurons
+        # Check for ResNet encoder (has firing_head layers)
+        if any("firing_head" in k for k in state_dict.keys()):
+            # ResNet encoder
+            if "firing_head.6.weight" in state_dict:
+                saved_out_neurons = state_dict["firing_head.6.weight"].shape[0]
+            elif "model.firing_head.6.weight" in state_dict:
+                saved_out_neurons = state_dict[
+                    "model.firing_head.6.weight"
+                ].shape[0]
             else:
-                raise ValueError(
-                    "Could not determine model architecture from saved weights"
-                )
+                # Find the last firing_head layer
+                firing_head_keys = [
+                    k
+                    for k in state_dict.keys()
+                    if "firing_head" in k and "weight" in k
+                ]
+                if firing_head_keys:
+                    last_firing_head_key = sorted(firing_head_keys)[-1]
+                    saved_out_neurons = state_dict[last_firing_head_key].shape[
+                        0
+                    ]
+                else:
+                    raise ValueError(
+                        "Could not determine ResNet model architecture "
+                        "from saved weights"
+                    )
 
-        # Create model with correct architecture
-        model = SimpleEncoder(saved_out_neurons)
+            # Import and create ResNet encoder
+            from neurodecoders.encoder.models import ResNetEncoder
+
+            model = ResNetEncoder(saved_out_neurons, resnet_type="resnet18")
+
+        else:
+            # Simple encoder (has fc layers)
+            if "model.fc.6.weight" in state_dict:
+                saved_out_neurons = state_dict["model.fc.6.weight"].shape[0]
+            elif "fc.6.weight" in state_dict:
+                saved_out_neurons = state_dict["fc.6.weight"].shape[0]
+            elif "fc.2.weight" in state_dict:
+                saved_out_neurons = state_dict["fc.2.weight"].shape[0]
+            elif "model.fc.2.weight" in state_dict:
+                saved_out_neurons = state_dict["model.fc.2.weight"].shape[0]
+            else:
+                # Try to find any fc layer weight
+                fc_keys = [
+                    k for k in state_dict.keys() if "fc" in k and "weight" in k
+                ]
+                if fc_keys:
+                    # Get the last fc layer (highest index)
+                    last_fc_key = sorted(fc_keys)[-1]
+                    saved_out_neurons = state_dict[last_fc_key].shape[0]
+                else:
+                    raise ValueError(
+                        "Could not determine model architecture "
+                        "from saved weights"
+                    )
+
+            # Create SimpleEncoder model
+            from neurodecoders.encoder.models import SimpleEncoder
+
+            model = SimpleEncoder(saved_out_neurons)
 
         # Handle nested model structure in state dict
         # If keys have 'model.' prefix, remove it
