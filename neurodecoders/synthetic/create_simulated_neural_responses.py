@@ -31,8 +31,9 @@ def save_output(
         f"{n_neurons}_n_images-{n_images}_datetime-"
         f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
     )
+    filepath = os.path.join(output_dir, filename)
     np.savez(
-        filename,
+        filepath,
         images=images.cpu().numpy(),
         responses=responses,
         stas=stas,
@@ -52,6 +53,14 @@ def plot_sta_and_spikes(
     n_plot_images=5,
     n_top_neurons=5,
 ):
+    # Infer RF size from STA data
+    if len(stas.shape) == 3:
+        rf_size = stas.shape[1]  # (n_neurons, height, width)
+    else:
+        rf_size = stas.shape[2]  # (n_neurons, channels, height, width)
+    
+    print(f"Inferred RF size from STA data: {rf_size}x{rf_size}")
+    
     # First sort images by their maximum firing rate
     image_max_responses = np.max(responses, axis=1)
     image_sort_idx = np.argsort(image_max_responses)[::-1]  # Descending order
@@ -104,7 +113,6 @@ def plot_sta_and_spikes(
         # Add receptive field rectangles for all neurons
         for n in range(n_top_neurons):
             x, y = sorted_coords[n]
-            rf_size = 63
             rect = Rectangle(
                 (x, y),
                 rf_size,
@@ -179,7 +187,6 @@ def plot_sta_and_spikes(
         # Add receptive field rectangles for all neurons
         for n in range(n_top_neurons):
             x, y = sorted_coords[n]
-            rf_size = 63
             rect = Rectangle(
                 (x, y),
                 rf_size,
@@ -424,7 +431,7 @@ def main():
 
     print("Loading data and model...")
     images, labels = ImageDataset().get_data("cifar10", n_images=n_images)
-    stas = STA().get_simulated_sta("perlin_noise_patterns,11,11")
+    stas = STA().get_simulated_sta("periodic_patterns,70,70")
 
     print("Generating responses...")
     simulator = SimulateResponse(device, images, stas, n_neurons)
@@ -472,7 +479,7 @@ def main():
         adaptation_states,
         labels,
         "cifar10",
-        "perlin_noise_patterns,11,11",
+        "periodic_patterns,70,70",
         n_neurons,
         n_images,
     )
