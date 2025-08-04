@@ -1,0 +1,632 @@
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import torch
+from matplotlib.patches import Rectangle
+from scipy.stats import pearsonr
+
+
+def load_synthetic_data(data_path):
+    """
+    Load synthetic neural response data from .npz file.
+    """
+    data = np.load(data_path)
+    return {
+        'images': torch.from_numpy(data['images']),
+        'responses': data['responses'],
+        'stas': data['stas'],
+        'rf_coords': data['rf_coords'],
+        'adaptation_states': data['adaptation_states'],
+        'labels': torch.from_numpy(data['labels'])
+    }
+
+
+def create_top10_neuron_average_images(images, responses, n_neurons=None, n_top_images=10):
+    """
+    Create average images for each neuron using only the top N images by firing rate.
+    
+    Args:
+        images (torch.Tensor): Image tensor of shape (n_images, channels, height, width)
+        responses (np.ndarray): Firing rates of shape (n_images, n_neurons)
+        n_neurons (int, optional): Number of neurons to process. If None, process all.
+        n_top_images (int): Number of top images to use for each neuron
+        
+    Returns:
+        np.ndarray: Average images of shape (n_neurons, channels, height, width)
+        np.ndarray: Indices of top images for each neuron
+    """
+    if n_neurons is None:
+        n_neurons = responses.shape[1]
+    
+    # Convert images to numpy if needed
+    if isinstance(images, torch.Tensor):
+        images_np = images.cpu().numpy()
+    else:
+        images_np = images
+    
+    # Initialize output array
+    n_channels, height, width = images_np.shape[1:]
+    average_images = np.zeros((n_neurons, n_channels, height, width))
+    top_image_indices = np.zeros((n_neurons, n_top_images), dtype=int)
+    
+    print(f"Creating top-{n_top_images} average images for {n_neurons} neurons...")
+    
+    for neuron_idx in range(n_neurons):
+        # Get firing rates for this neuron
+        neuron_responses = responses[:, neuron_idx]
+        
+        # Find top N images for this neuron
+        top_indices = np.argsort(neuron_responses)[::-1][:n_top_images]
+        top_image_indices[neuron_idx] = top_indices
+        
+        # Get weights (firing rates) for top images
+        weights = neuron_responses[top_indices]
+        
+        # Get the top images
+        top_images = images_np[top_indices]
+        
+        # Compute weighted average
+        # Reshape weights for broadcasting: (n_top_images, 1, 1, 1)
+        weights_reshaped = weights.reshape(-1, 1, 1, 1)
+        
+        # Weighted sum: (n_top_images, channels, height, width) * (n_top_images, 1, 1, 1)
+        weighted_images = top_images * weights_reshaped
+        
+        # Sum over images
+        average_images[neuron_idx] = np.sum(weighted_images, axis=0)
+        
+        if (neuron_idx + 1) % 100 == 0:
+            print(f"Processed {neuron_idx + 1}/{n_neurons} neurons")
+    
+    return average_images, top_image_indices
+
+
+def create_all_images_neuron_average_images(images, responses, n_neurons=None):
+    """
+    Create average images for each neuron using ALL images with firing rates as weights.
+    
+    Args:
+        images (torch.Tensor): Image tensor of shape (n_images, channels, height, width)
+        responses (np.ndarray): Firing rates of shape (n_images, n_neurons)
+        n_neurons (int, optional): Number of neurons to process. If None, process all.
+        
+    Returns:
+        np.ndarray: Average images of shape (n_neurons, channels, height, width)
+    """
+    if n_neurons is None:
+        n_neurons = responses.shape[1]
+    
+    # Convert images to numpy if needed
+    if isinstance(images, torch.Tensor):
+        images_np = images.cpu().numpy()
+    else:
+        images_np = images
+    
+    # Initialize output array
+    n_channels, height, width = images_np.shape[1:]
+    average_images = np.zeros((n_neurons, n_channels, height, width))
+    
+    print(f"Creating all-images average images for {n_neurons} neurons...")
+    
+    for neuron_idx in range(n_neurons):
+        # Get firing rates for this neuron
+        neuron_responses = responses[:, neuron_idx]
+        
+        # Use responses as weights (raw firing rates, not normalized)
+        weights = neuron_responses.copy()
+        
+        # Compute weighted average
+        # Reshape weights for broadcasting: (n_images, 1, 1, 1)
+        weights_reshaped = weights.reshape(-1, 1, 1, 1)
+        
+        # Weighted sum: (n_images, channels, height, width) * (n_images, 1, 1, 1)
+        weighted_images = images_np * weights_reshaped
+        
+        # Sum over images
+        average_images[neuron_idx] = np.sum(weighted_images, axis=0)
+        
+        if (neuron_idx + 1) % 100 == 0:
+            print(f"Processed {neuron_idx + 1}/{n_neurons} neurons")
+    
+    return average_images
+
+
+def create_zscore_neuron_average_images(images, responses, n_neurons=None):
+    """
+    Create average images for each neuron using z-score normalized firing rates as weights.
+    
+    Args:
+        images (torch.Tensor): Image tensor of shape (n_images, channels, height, width)
+        responses (np.ndarray): Firing rates of shape (n_images, n_neurons)
+        n_neurons (int, optional): Number of neurons to process. If None, process all.
+        
+    Returns:
+        np.ndarray: Average images of shape (n_neurons, channels, height, width)
+    """
+    if n_neurons is None:
+        n_neurons = responses.shape[1]
+    
+    # Convert images to numpy if needed
+    if isinstance(images, torch.Tensor):
+        images_np = images.cpu().numpy()
+    else:
+        images_np = images
+    
+    # Initialize output array
+    n_channels, height, width = images_np.shape[1:]
+    average_images = np.zeros((n_neurons, n_channels, height, width))
+    
+    print(f"Creating z-score normalized average images for {n_neurons} neurons...")
+    
+    for neuron_idx in range(n_neurons):
+        # Get firing rates for this neuron
+        neuron_responses = responses[:, neuron_idx]
+        
+        # Z-score normalization: (fr - mean) / std
+        mean_fr = np.mean(neuron_responses)
+        std_fr = np.std(neuron_responses)
+        
+        if std_fr > 0:
+            # Z-score normalization
+            weights = (neuron_responses - mean_fr) / std_fr
+        else:
+            # If std is 0, use uniform weights
+            weights = np.ones_like(neuron_responses) / len(neuron_responses)
+        
+        # Compute weighted average
+        # Reshape weights for broadcasting: (n_images, 1, 1, 1)
+        weights_reshaped = weights.reshape(-1, 1, 1, 1)
+        
+        # Weighted sum: (n_images, channels, height, width) * (n_images, 1, 1, 1)
+        weighted_images = images_np * weights_reshaped
+        
+        # Sum over images
+        average_images[neuron_idx] = np.sum(weighted_images, axis=0)
+        
+        if (neuron_idx + 1) % 100 == 0:
+            print(f"Processed {neuron_idx + 1}/{n_neurons} neurons")
+    
+    return average_images
+
+
+def analyze_correlation_with_std(average_images, responses):
+    """
+    Analyze correlation between max firing rate and std of average image.
+    
+    Args:
+        average_images (np.ndarray): Average images of shape (n_neurons, channels, height, width)
+        responses (np.ndarray): Firing rates of shape (n_images, n_neurons)
+        
+    Returns:
+        dict: Analysis results
+    """
+    # Calculate max firing rates for each neuron
+    max_firing_rates = np.max(responses, axis=0)
+    
+    # Calculate std of average images for each neuron
+    avg_image_stds = np.std(average_images, axis=(1, 2, 3))
+    
+    # Calculate correlation
+    correlation, p_value = pearsonr(max_firing_rates, avg_image_stds)
+    
+    # Additional statistics
+    mean_firing_rates = np.mean(responses, axis=0)
+    std_firing_rates = np.std(responses, axis=0)
+    
+    # Correlations with other metrics
+    corr_mean_fr, p_mean_fr = pearsonr(mean_firing_rates, avg_image_stds)
+    corr_std_fr, p_std_fr = pearsonr(std_firing_rates, avg_image_stds)
+    
+    return {
+        'max_fr_vs_avg_std_corr': correlation,
+        'max_fr_vs_avg_std_p': p_value,
+        'mean_fr_vs_avg_std_corr': corr_mean_fr,
+        'mean_fr_vs_avg_std_p': p_mean_fr,
+        'std_fr_vs_avg_std_corr': corr_std_fr,
+        'std_fr_vs_avg_std_p': p_std_fr,
+        'max_firing_rates': max_firing_rates,
+        'avg_image_stds': avg_image_stds,
+        'mean_firing_rates': mean_firing_rates,
+        'std_firing_rates': std_firing_rates
+    }
+
+
+def analyze_correlation_sta_vs_zscore_avg(stas, average_images_zscore, rf_coords):
+    """
+    Analyze correlation between STAs and corresponding patches from z-score normalized average images.
+    
+    Args:
+        stas (np.ndarray): STAs of shape (n_neurons, height, width)
+        average_images_zscore (np.ndarray): Z-score average images of shape (n_neurons, channels, height, width)
+        rf_coords (np.ndarray): Receptive field coordinates of shape (n_neurons, 2)
+        
+    Returns:
+        dict: Analysis results
+    """
+    # For each neuron, compute correlation between its STA and corresponding patch from z-score average image
+    sta_avg_correlations = []
+    
+    for neuron_idx in range(stas.shape[0]): # Use stas.shape[0] to get n_neurons
+        sta = stas[neuron_idx]
+        avg_img = average_images_zscore[neuron_idx]
+        x, y = rf_coords[neuron_idx]
+        
+        # Get the patch from the average image corresponding to the STA location
+        if len(avg_img.shape) == 3:
+            # Take first channel if 3D
+            patch = avg_img[0, y:y+sta.shape[0], x:x+sta.shape[1]]
+        else:
+            patch = avg_img[y:y+sta.shape[0], x:x+sta.shape[1]]
+        
+        # Flatten both to 1D arrays
+        sta_flat = sta.flatten()
+        patch_flat = patch.flatten()
+        
+        # Ensure both arrays have the same length
+        min_length = min(len(sta_flat), len(patch_flat))
+        sta_flat = sta_flat[:min_length]
+        patch_flat = patch_flat[:min_length]
+        
+        # Compute correlation
+        correlation, p_value = pearsonr(sta_flat, patch_flat)
+        sta_avg_correlations.append(correlation)
+    
+    sta_avg_correlations = np.array(sta_avg_correlations)
+    
+    # Additional statistics
+    if len(stas.shape) == 3:
+        sta_std = np.std(stas, axis=(1, 2))  # (n_neurons, height, width)
+    else:
+        sta_std = np.std(stas, axis=(1, 2, 3))  # (n_neurons, channels, height, width)
+    
+    if len(average_images_zscore.shape) == 3:
+        avg_img_std = np.std(average_images_zscore, axis=(1, 2))  # (n_neurons, height, width)
+    else:
+        avg_img_std = np.std(average_images_zscore, axis=(1, 2, 3))  # (n_neurons, channels, height, width)
+    
+    # Correlation between STA std and average image std
+    sta_std_vs_avg_std_corr, sta_std_vs_avg_std_p = pearsonr(sta_std, avg_img_std)
+    
+    return {
+        'sta_avg_correlations': sta_avg_correlations,
+        'mean_sta_avg_corr': np.mean(sta_avg_correlations),
+        'std_sta_avg_corr': np.std(sta_avg_correlations),
+        'sta_std_vs_avg_std_corr': sta_std_vs_avg_std_corr,
+        'sta_std_vs_avg_std_p': sta_std_vs_avg_std_p,
+        'sta_std': sta_std,
+        'avg_img_std': avg_img_std
+    }
+
+
+def plot_correlation_analysis(analysis_results, save_path=None):
+    """
+    Plot correlation analysis between firing rates and average image statistics.
+    """
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    
+    max_fr = analysis_results['max_firing_rates']
+    mean_fr = analysis_results['mean_firing_rates']
+    std_fr = analysis_results['std_firing_rates']
+    avg_std = analysis_results['avg_image_stds']
+    
+    # Max firing rate vs average image std
+    axes[0, 0].scatter(max_fr, avg_std, alpha=0.6)
+    axes[0, 0].set_xlabel('Max Firing Rate (Hz)')
+    axes[0, 0].set_ylabel('Std of Average Image')
+    axes[0, 0].set_title(f'Max FR vs Avg Image Std\nr={analysis_results["max_fr_vs_avg_std_corr"]:.3f}, p={analysis_results["max_fr_vs_avg_std_p"]:.3e}')
+    
+    # Mean firing rate vs average image std
+    axes[0, 1].scatter(mean_fr, avg_std, alpha=0.6)
+    axes[0, 1].set_xlabel('Mean Firing Rate (Hz)')
+    axes[0, 1].set_ylabel('Std of Average Image')
+    axes[0, 1].set_title(f'Mean FR vs Avg Image Std\nr={analysis_results["mean_fr_vs_avg_std_corr"]:.3f}, p={analysis_results["mean_fr_vs_avg_std_p"]:.3e}')
+    
+    # Std firing rate vs average image std
+    axes[0, 2].scatter(std_fr, avg_std, alpha=0.6)
+    axes[0, 2].set_xlabel('Std Firing Rate (Hz)')
+    axes[0, 2].set_ylabel('Std of Average Image')
+    axes[0, 2].set_title(f'Std FR vs Avg Image Std\nr={analysis_results["std_fr_vs_avg_std_corr"]:.3f}, p={analysis_results["std_fr_vs_avg_std_p"]:.3e}')
+    
+    # Histograms
+    axes[1, 0].hist(max_fr, bins=50, alpha=0.7)
+    axes[1, 0].set_xlabel('Max Firing Rate (Hz)')
+    axes[1, 0].set_ylabel('Count')
+    axes[1, 0].set_title('Distribution of Max Firing Rates')
+    
+    axes[1, 1].hist(avg_std, bins=50, alpha=0.7)
+    axes[1, 1].set_xlabel('Std of Average Image')
+    axes[1, 1].set_ylabel('Count')
+    axes[1, 1].set_title('Distribution of Average Image Stds')
+    
+    # Scatter plot of max vs mean firing rates
+    axes[1, 2].scatter(max_fr, mean_fr, alpha=0.6)
+    axes[1, 2].set_xlabel('Max Firing Rate (Hz)')
+    axes[1, 2].set_ylabel('Mean Firing Rate (Hz)')
+    axes[1, 2].set_title('Max vs Mean Firing Rates')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Correlation analysis saved to {save_path}")
+    
+    return fig
+
+
+def plot_sta_vs_zscore_analysis(analysis_results, responses, save_path=None):
+    """
+    Plot correlation analysis between STAs and z-score average images.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    
+    sta_avg_correlations = analysis_results['sta_avg_correlations']
+    mean_firing_rates = np.mean(responses, axis=0)
+    
+    # Scatter plot of STA vs Average image correlations vs Mean firing rate
+    ax.scatter(mean_firing_rates, sta_avg_correlations, alpha=0.6, color='blue')
+    ax.set_xlabel('Mean Firing Rate (Hz)')
+    ax.set_ylabel('STA vs Z-score Avg Image Correlation')
+    ax.set_title(f'STA vs Z-score Avg Image Correlations vs Mean Firing Rate\nMean Correlation: {analysis_results["mean_sta_avg_corr"]:.4f}')
+    ax.axhline(y=0, color='red', linestyle='--', alpha=0.5)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"STA vs Z-score analysis saved to {save_path}")
+    
+    return fig
+
+
+def plot_neuron_average_images(average_images_zscore, responses, rf_coords, stas, 
+                              n_plot_neurons=20, save_path=None):
+    """
+    Plot z-score average images and STAs for selected neurons.
+    
+    Args:
+        average_images_zscore (np.ndarray): Z-score normalized average images of shape (n_neurons, channels, height, width)
+        responses (np.ndarray): Firing rates of shape (n_images, n_neurons)
+        rf_coords (np.ndarray): Receptive field coordinates of shape (n_neurons, 2)
+        stas (np.ndarray): STAs of shape (n_neurons, channels, height, width)
+        n_plot_neurons (int): Number of neurons to plot
+        save_path (str, optional): Path to save the figure
+    """
+    # Infer RF size from STA data
+    if len(stas.shape) == 3:
+        rf_size = stas.shape[1]  # (n_neurons, height, width)
+    else:
+        rf_size = stas.shape[2]  # (n_neurons, channels, height, width)
+    
+    print(f"Inferred RF size from STA data: {rf_size}x{rf_size}")
+    
+    # Sort neurons by their maximum firing rate
+    max_responses = np.max(responses, axis=0)
+    neuron_sort_idx = np.argsort(max_responses)[::-1]  # Descending order
+    top_neurons = neuron_sort_idx[:n_plot_neurons]
+    
+    # Create figure with 2 columns: Z-score Avg, STA
+    fig, axes = plt.subplots(n_plot_neurons, 2, figsize=(10, 5 * n_plot_neurons))
+    if n_plot_neurons == 1:
+        axes = axes.reshape(1, -1)
+    
+    colors = plt.cm.tab10(np.linspace(0, 1, n_plot_neurons))
+    
+    for i, neuron_idx in enumerate(top_neurons):
+        # Plot z-score normalized average image
+        ax1 = axes[i, 0]
+        avg_img_zscore = average_images_zscore[neuron_idx]
+        if avg_img_zscore.shape[0] == 1:  # Grayscale
+            img_display = avg_img_zscore[0]
+        else:  # RGB, take first channel for display
+            img_display = avg_img_zscore[0]
+        
+        # Normalize for display
+        img_display = (img_display - img_display.min()) / (img_display.max() - img_display.min() + 1e-8)
+        ax1.imshow(img_display, cmap='gray')
+        ax1.set_title(f'Neuron {neuron_idx}\nZ-score Avg (Max FR: {max_responses[neuron_idx]:.2f})')
+        ax1.axis('off')
+        
+        # Add receptive field rectangle
+        x, y = rf_coords[neuron_idx]
+        rect = Rectangle((x, y), rf_size, rf_size, 
+                        linewidth=2, edgecolor=colors[i], facecolor='none', alpha=0.8)
+        ax1.add_patch(rect)
+        
+        # Plot STA
+        ax2 = axes[i, 1]
+        sta = stas[neuron_idx]
+        if len(sta.shape) == 3:
+            sta_display = sta[0]  # Take first channel if 3D
+        else:
+            sta_display = sta
+        
+        # Normalize STA for display
+        sta_display = (sta_display - sta_display.min()) / (sta_display.max() - sta_display.min() + 1e-8)
+        ax2.imshow(sta_display, cmap='gray')
+        ax2.set_title(f'STA')
+        ax2.axis('off')
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to {save_path}")
+    
+    return fig
+
+
+def plot_high_vs_low_std_examples(average_images, responses, rf_coords, stas, 
+                                  n_examples=6, save_path=None):
+    """
+    Plot examples of neurons with high vs low std average images.
+    """
+    # Infer RF size from STA data
+    if len(stas.shape) == 3:
+        rf_size = stas.shape[1]  # (n_neurons, height, width)
+    else:
+        rf_size = stas.shape[2]  # (n_neurons, channels, height, width)
+    
+    print(f"Inferred RF size from STA data: {rf_size}x{rf_size}")
+    
+    # Calculate std of average images
+    avg_image_stds = np.std(average_images, axis=(1, 2, 3))
+    
+    # Find neurons with highest and lowest std
+    high_std_indices = np.argsort(avg_image_stds)[::-1][:n_examples//2]
+    low_std_indices = np.argsort(avg_image_stds)[:n_examples//2]
+    
+    fig, axes = plt.subplots(n_examples, 3, figsize=(15, 5 * n_examples))
+    
+    for i, (neuron_idx, std_type) in enumerate(zip(
+        list(high_std_indices) + list(low_std_indices),
+        ['High'] * (n_examples//2) + ['Low'] * (n_examples//2)
+    )):
+        # Plot average image
+        ax1 = axes[i, 0]
+        avg_img = average_images[neuron_idx]
+        if avg_img.shape[0] == 1:
+            img_display = avg_img[0]
+        else:
+            img_display = avg_img[0]
+        
+        # Normalize for display
+        img_display = (img_display - img_display.min()) / (img_display.max() - img_display.min() + 1e-8)
+        ax1.imshow(img_display, cmap='gray')
+        ax1.set_title(f'{std_type} Std Neuron {neuron_idx}\nStd: {avg_image_stds[neuron_idx]:.4f}')
+        ax1.axis('off')
+        
+        # Add receptive field rectangle
+        x, y = rf_coords[neuron_idx]
+        rect = Rectangle((x, y), rf_size, rf_size, 
+                        linewidth=2, edgecolor='red' if std_type == 'High' else 'blue', 
+                        facecolor='none', alpha=0.8)
+        ax1.add_patch(rect)
+        
+        # Plot STA
+        ax2 = axes[i, 1]
+        sta = stas[neuron_idx]
+        if len(sta.shape) == 3:
+            sta_display = sta[0]
+        else:
+            sta_display = sta
+        
+        sta_display = (sta_display - sta_display.min()) / (sta_display.max() - sta_display.min() + 1e-8)
+        ax2.imshow(sta_display, cmap='gray')
+        ax2.set_title(f'STA')
+        ax2.axis('off')
+        
+        # Plot response distribution
+        ax3 = axes[i, 2]
+        neuron_responses = responses[:, neuron_idx]
+        ax3.hist(neuron_responses, bins=30, alpha=0.7, 
+                color='red' if std_type == 'High' else 'blue')
+        ax3.set_title(f'Response Distribution\nMax: {np.max(neuron_responses):.2f}Hz')
+        ax3.set_xlabel('Firing Rate (Hz)')
+        ax3.set_ylabel('Count')
+        
+        for spine in ax3.spines.values():
+            if spine.get_position() in ['top', 'right']:
+                spine.set_visible(False)
+    
+    plt.tight_layout()
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"High vs Low std examples saved to {save_path}")
+    
+    return fig
+
+
+def main():
+    """
+    Main function to create top-10 average images and analyze correlations.
+    """
+    # Find the most recent synthetic data file
+    data_dir = "workspace/datasets/synthetic"
+    if not os.path.exists(data_dir):
+        print(f"Data directory {data_dir} not found. Please run create_simulated_neural_responses.py first.")
+        return
+    
+    # Find the most recent .npz file
+    npz_files = [f for f in os.listdir(data_dir) if f.endswith('.npz')]
+    if not npz_files:
+        print(f"No .npz files found in {data_dir}. Please run create_simulated_neural_responses.py first.")
+        return
+    
+    # Sort by modification time and take the most recent
+    data_file = sorted(npz_files, key=lambda x: os.path.getmtime(os.path.join(data_dir, x)))[-1]
+    data_path = os.path.join(data_dir, data_file)
+    
+    print(f"Loading data from {data_path}")
+    data = load_synthetic_data(data_path)
+    
+    # Create output directory
+    output_dir = "workspace/plots/neuron_averages_top10"
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Create z-score normalized average images
+    print("Creating z-score normalized average images for all neurons...")
+    average_images_zscore = create_zscore_neuron_average_images(
+        data['images'],
+        data['responses'],
+        n_neurons=None
+    )
+    
+    # Analyze correlations
+    print("Analyzing correlations between firing rates and average image statistics...")
+    analysis_results_all = analyze_correlation_with_std(average_images_zscore, data['responses'])
+    
+    # Analyze correlations between STAs and z-score average images
+    print("Analyzing correlations between STAs and z-score average images...")
+    analysis_results_sta_vs_zscore = analyze_correlation_sta_vs_zscore_avg(data['stas'], average_images_zscore, data['rf_coords'])
+    
+    # Print correlation results
+    print(f"\n=== CORRELATION ANALYSIS ===")
+    print(f"Z-score normalized average images:")
+    print(f"  Max firing rate vs Average image std: r={analysis_results_all['max_fr_vs_avg_std_corr']:.4f}, p={analysis_results_all['max_fr_vs_avg_std_p']:.2e}")
+    print(f"  Mean firing rate vs Average image std: r={analysis_results_all['mean_fr_vs_avg_std_corr']:.4f}, p={analysis_results_all['mean_fr_vs_avg_std_p']:.2e}")
+    print(f"  Std firing rate vs Average image std: r={analysis_results_all['std_fr_vs_avg_std_corr']:.4f}, p={analysis_results_all['std_fr_vs_avg_std_p']:.2e}")
+    
+    print(f"\nSTA vs Z-score average images:")
+    print(f"  Mean STA vs Z-score Avg Image Correlation: {analysis_results_sta_vs_zscore['mean_sta_avg_corr']:.4f}")
+    print(f"  STA Std vs Z-score Avg Image Std Correlation: r={analysis_results_sta_vs_zscore['sta_std_vs_avg_std_corr']:.3f}, p={analysis_results_sta_vs_zscore['sta_std_vs_avg_std_p']:.3e}")
+    
+    # Create plots
+    print("Creating visualization plots...")
+    
+    fig1 = plot_neuron_average_images(
+        average_images_zscore,
+        data['responses'],
+        data['rf_coords'],
+        data['stas'],
+        n_plot_neurons=20,
+        save_path=f"{output_dir}/neuron_average_images_zscore.png"
+    )
+    
+    fig2 = plot_sta_vs_zscore_analysis(analysis_results_sta_vs_zscore,
+                                       data['responses'],
+                                       save_path=f"{output_dir}/sta_vs_zscore_analysis.png")
+    
+    # Save average images
+    np.save(f"{output_dir}/neuron_average_images_zscore.npy", average_images_zscore)
+    print(f"Results saved to {output_dir}/")
+    
+    print("Done!")
+    
+    # Display some basic statistics
+    print(f"\nDataset statistics:")
+    print(f"Number of neurons: {data['responses'].shape[1]}")
+    print(f"Number of images: {data['responses'].shape[0]}")
+    print(f"Z-score normalized average image shape: {average_images_zscore.shape}")
+    print(f"Mean firing rate across all neurons: {np.mean(data['responses']):.2f} Hz")
+    print(f"Max firing rate across all neurons: {np.max(data['responses']):.2f} Hz")
+    
+    print(f"\nZ-score normalized average image statistics:")
+    print(f"Mean: {np.mean(average_images_zscore):.4f}")
+    print(f"Std: {np.std(average_images_zscore):.4f}")
+    print(f"Min: {np.min(average_images_zscore):.4f}")
+    print(f"Max: {np.max(average_images_zscore):.4f}")
+
+
+if __name__ == "__main__":
+    main() 
