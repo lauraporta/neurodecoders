@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import os
 
@@ -426,15 +427,52 @@ def plot_neural_correlations(responses):
 
 
 def main():
-    n_images = 1000
-    n_neurons = 1000
+    parser = argparse.ArgumentParser(
+        description="Create synthetic neural responses "
+        "with configurable parameters."
+    )
+    parser.add_argument(
+        "--n_images",
+        type=int,
+        default=100,
+        help="Number of images to generate responses for (default: 100)",
+    )
+    parser.add_argument(
+        "--n_neurons",
+        type=int,
+        default=100,
+        help="Number of neurons to simulate (default: 100)",
+    )
+    parser.add_argument(
+        "--dataset_type",
+        type=str,
+        default="cifar10",
+        help="Dataset type to use (default: cifar10)",
+    )
+    parser.add_argument(
+        "--sta_type",
+        type=str,
+        default="periodic_patterns,70,70",
+        help="STA type and parameters (default: periodic_patterns,70,70)",
+    )
+
+    args = parser.parse_args()
+
+    print("Configuration:")
+    print(f"  Dataset: {args.dataset_type}")
+    print(f"  STA type: {args.sta_type}")
+    print(f"  Number of images: {args.n_images}")
+    print(f"  Number of neurons: {args.n_neurons}")
+    print()
 
     print("Loading data and model...")
-    images, labels = ImageDataset().get_data("cifar10", n_images=n_images)
-    stas = STA().get_simulated_sta("periodic_patterns,70,70")
+    images, labels = ImageDataset().get_data(
+        args.dataset_type, n_images=args.n_images
+    )
+    stas = STA().get_simulated_sta(args.sta_type)
 
     print("Generating responses...")
-    simulator = SimulateResponse(device, images, stas, n_neurons)
+    simulator = SimulateResponse(device, images, stas, args.n_neurons)
     firing_rates, dot_products, adaptation_states = (
         simulator.simulate_neural_responses_vectorized()
     )
@@ -478,10 +516,10 @@ def main():
         simulator.rf_coords,
         adaptation_states,
         labels,
-        "cifar10",
-        "periodic_patterns,70,70",
-        n_neurons,
-        n_images,
+        args.dataset_type,
+        args.sta_type,
+        args.n_neurons,
+        args.n_images,
     )
     print("Done.")
 
