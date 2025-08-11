@@ -1,7 +1,11 @@
+import argparse
+import datetime
 import glob
 import os
+import re
 import sys
 import warnings
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,9 +14,15 @@ from sklearn.decomposition import PCA
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.svm import SVC
 
 # Add parent directories to path for imports
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
+# Import encoder models
+from neurodecoders.encoder.models import ResNetEncoder, SimpleEncoder
 
 warnings.filterwarnings("ignore")
 
@@ -35,9 +45,6 @@ class EncoderVerifier:
 
     def setup_plots_directory(self, model_path):
         """Create a dedicated directory for saving verification plots"""
-        import datetime
-        from pathlib import Path
-
         # Extract model name and timestamp for folder naming
         model_name = Path(model_path).stem
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -107,9 +114,7 @@ class EncoderVerifier:
                 last_firing_head_key = sorted(firing_head_keys)[-1]
                 out_neurons = state_dict[last_firing_head_key].shape[0]
 
-            # Import and create ResNet encoder
-            from neurodecoders.encoder.models import ResNetEncoder
-
+            # Create ResNet encoder
             self.encoder = ResNetEncoder(out_neurons, resnet_type="resnet18")
 
         else:  # Simple encoder
@@ -131,8 +136,6 @@ class EncoderVerifier:
 
             # Simple approach: just create a basic encoder with right output
             # size
-            from neurodecoders.encoder.models import SimpleEncoder
-
             self.encoder = SimpleEncoder(out_neurons)
 
         # Handle nested model structure for both encoder types
@@ -570,9 +573,6 @@ class EncoderVerifier:
         )
 
         # Test multiple classifiers
-        from sklearn.neural_network import MLPClassifier
-        from sklearn.preprocessing import StandardScaler
-        from sklearn.svm import SVC
 
         classifiers = {
             "Random Forest": RandomForestClassifier(
@@ -968,12 +968,6 @@ class EncoderVerifier:
             print("No image labels available. Skipping analysis.")
             return None
 
-        import matplotlib.pyplot as plt
-        from sklearn.metrics import accuracy_score
-        from sklearn.model_selection import train_test_split
-        from sklearn.preprocessing import MinMaxScaler, StandardScaler
-        from sklearn.svm import SVC
-
         # Prepare data
         X_pred = self.predicted_firing_rates
         X_true = self.true_firing_rates
@@ -1048,8 +1042,6 @@ class EncoderVerifier:
         print("-" * 60)
 
         # Use PCA to visualize separability in 2D
-        from sklearn.decomposition import PCA
-
         # Standardize for PCA
         scaler = StandardScaler()
         X_pred_scaled = scaler.fit_transform(X_pred)
@@ -1277,8 +1269,6 @@ class EncoderVerifier:
 
 def main():
     """Main function to run encoder verification"""
-    import argparse
-    import re
 
     # Use argparse for proper argument handling
     parser = argparse.ArgumentParser(

@@ -9,6 +9,7 @@ both the workspace folder and MLflow.
 import datetime
 import os
 import sys
+import traceback
 from typing import Any, Dict, Optional
 
 import mlflow
@@ -315,8 +316,6 @@ class EncoderVerificationCallback(Callback):
 
         except Exception as e:
             print(f"Error during verification analysis: {e}")
-            import traceback
-
             traceback.print_exc()
             return None
 
@@ -401,8 +400,6 @@ class EncoderVerificationCallback(Callback):
 
         except Exception as e:
             print(f"Error logging verification results to MLflow: {e}")
-            import traceback
-
             traceback.print_exc()
 
 

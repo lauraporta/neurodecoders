@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
+from skimage.metrics import structural_similarity as ssim
 from skimage.transform import resize
 
 # Add parent directories to path for imports
@@ -14,6 +15,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "encoder"))
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", "synthetic"))
 
+from synthetic.simulate_response import SimulateResponse
+
+from neurodecoders.encoder.models import ResNetEncoder, SimpleEncoder
 from neurodecoders.synthetic.sta import STA
 
 
@@ -87,10 +91,6 @@ class MEIOptimizer:
         single_image = single_image.float()
 
         # Use the existing SimulateResponse class
-        import os
-        import sys
-
-        from synthetic.simulate_response import SimulateResponse
 
         # Temporarily disable tqdm output to suppress progress bars
         original_stdout = sys.stdout
@@ -336,8 +336,6 @@ class MEIOptimizer:
         mse = np.mean((mei_np - sta_np) ** 2)
 
         # Calculate structural similarity (SSIM-like)
-        from skimage.metrics import structural_similarity as ssim
-
         ssim_score = ssim(
             mei_np, sta_np, data_range=2.0
         )  # data_range = max - min = 1 - (-1) = 2
@@ -385,9 +383,7 @@ def load_encoder_model(model_path, device):
                         "from saved weights"
                     )
 
-            # Import and create ResNet encoder
-            from neurodecoders.encoder.models import ResNetEncoder
-
+            # Create ResNet encoder
             model = ResNetEncoder(saved_out_neurons, resnet_type="resnet18")
 
         else:
@@ -416,8 +412,6 @@ def load_encoder_model(model_path, device):
                     )
 
             # Create SimpleEncoder model
-            from neurodecoders.encoder.models import SimpleEncoder
-
             model = SimpleEncoder(saved_out_neurons)
 
         # Handle nested model structure in state dict

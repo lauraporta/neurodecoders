@@ -5,11 +5,15 @@ This module provides MLflow integration for tracking experiments,
 hyperparameters, metrics, and model artifacts during encoder training.
 """
 
+import datetime
+import json
 import os
 from typing import Any, Dict, Optional
 
+import matplotlib.pyplot as plt
 import mlflow
 import mlflow.pytorch
+import pandas as pd
 import torch
 from pytorch_lightning import LightningModule
 from pytorch_lightning.loggers import MLFlowLogger
@@ -147,8 +151,6 @@ class MLflowExperimentTracker:
             dataset_info: Information about the dataset used
             training_info: Information about the training process
         """
-        import json
-
         metadata = {
             "model_type": model_type,
             "model_path": model_path,
@@ -267,10 +269,6 @@ def log_encoder_experiment(
 
         # Log training curves as artifacts
         if lightning_module.train_losses and lightning_module.val_losses:
-            import datetime
-
-            import matplotlib.pyplot as plt
-
             # Create workspace plots directory if it doesn't exist
             plots_dir = "workspace/plots/training"
             os.makedirs(plots_dir, exist_ok=True)
@@ -308,7 +306,6 @@ def get_experiment_comparison(experiment_name: str = "neural_encoder"):
     Returns:
         DataFrame with run comparisons
     """
-    import pandas as pd
 
     experiment = mlflow.get_experiment_by_name(experiment_name)
     if experiment is None:

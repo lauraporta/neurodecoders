@@ -15,6 +15,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import MLFlowLogger, TensorBoardLogger
 
 from .mlflow_utils import log_encoder_experiment
+from .models import ResNetEncoder, SimpleEncoder
 from .verification_callback import create_verification_callback
 
 
@@ -335,8 +336,6 @@ def train_simple_encoder(data_module, out_neurons: int, **kwargs):
     """
     Convenience function to train a SimpleEncoder.
     """
-    from .models import SimpleEncoder
-
     model = SimpleEncoder(out_neurons=out_neurons)
     return train_encoder(
         model=model,
@@ -358,8 +357,6 @@ def train_resnet_encoder(
     """
     Convenience function to train a ResNetEncoder.
     """
-    from .models import ResNetEncoder
-
     model = ResNetEncoder(
         out_neurons=out_neurons,
         resnet_type=resnet_type,
