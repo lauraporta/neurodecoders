@@ -63,32 +63,12 @@ mlflow ui
 
 ## Advanced Usage
 
-### Configuration Files
-
-Use JSON configuration files for complex experiments:
-
-```bash
-python neurodecoders/encoder/mlflow_training.py \
-    --mode config \
-    --config neurodecoders/encoder/configs/single_experiment.json
-```
-
-### Experiment Comparison
-
-Run multiple experiments for comparison:
-
-```bash
-python neurodecoders/encoder/mlflow_training.py \
-    --mode comparison
-```
-
 ### Hyperparameter Sweep
 
 For SLURM job arrays:
 
 ```bash
 python neurodecoders/encoder/mlflow_training.py \
-    --mode hyperparameter_sweep \
     --array-task-id 0
 ```
 

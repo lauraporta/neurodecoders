@@ -8,7 +8,6 @@ experiments with MLflow.
 """
 
 import argparse
-import json
 import os
 import sys
 from typing import Any, Dict
@@ -19,7 +18,6 @@ sys.path.append(os.path.dirname(__file__))
 import numpy as np
 import torch
 
-from neurodecoders.encoder.mlflow_utils import get_experiment_comparison
 from neurodecoders.encoder.models import (
     ResNetEncoder,
     SimpleEncoder,
@@ -373,187 +371,13 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     return trainer, model, data_module
 
 
-def run_experiment_comparison(configs: list) -> None:
-    """
-    Run multiple experiments with different configurations.
-
-    Args:
-        configs: List of configuration dictionaries
-    """
-    print(f"\n=== Running {len(configs)} experiments ===")
-
-    results = []
-    for i, config in enumerate(configs):
-        print(f"\n--- Experiment {i + 1}/{len(configs)} ---")
-
-        # Generate run name if not provided
-        if not config.get("mlflow_run_name"):
-            config["mlflow_run_name"] = (
-                f"{config.get('model_type', 'model')}_{i + 1}"
-            )
-
-        try:
-            trainer, model, data_module = train_with_config(config)
-
-            # Store results
-            result = {
-                "config": config,
-                "trainer": trainer,
-                "model": model,
-                "final_train_loss": model.train_losses[-1]
-                if model.train_losses
-                else None,
-                "final_val_loss": model.val_losses[-1]
-                if model.val_losses
-                else None,
-            }
-            results.append(result)
-
-            print(f"✓ Experiment {i + 1} completed successfully")
-
-        except Exception as e:
-            print(f"✗ Experiment {i + 1} failed: {e}")
-
-    # Compare results
-    if results and configs[0].get("enable_mlflow", True):
-        experiment_name = configs[0].get(
-            "mlflow_experiment_name", "neural_encoder"
-        )
-        print("\n=== Experiment Comparison ===")
-        comparison_df = get_experiment_comparison(experiment_name)
-
-        if not comparison_df.empty:
-            print("Experiment Results:")
-            print(
-                comparison_df[
-                    [
-                        "run_name",
-                        "params.learning_rate",
-                        "params.epochs",
-                        "metrics.final_train_loss",
-                        "metrics.final_val_loss",
-                    ]
-                ].to_string()
-            )
-        else:
-            print("No experiment data found.")
-
-
-def load_config_from_file(config_path: str) -> Dict[str, Any]:
-    """
-    Load configuration from JSON file.
-
-    Args:
-        config_path: Path to configuration file
-
-    Returns:
-        config: Configuration dictionary
-    """
-    # Handle relative paths from root directory
-    if not os.path.isabs(config_path):
-        # Try different possible locations
-        possible_paths = [
-            config_path,  # As provided
-            os.path.join("neurodecoders", "encoder", config_path),  # From root
-            os.path.join(
-                "neurodecoders", "encoder", "configs", config_path
-            ),  # From root with configs
-            os.path.join(
-                os.path.dirname(__file__), config_path
-            ),  # Relative to script
-            os.path.join(
-                os.path.dirname(__file__), "configs", config_path
-            ),  # Relative to script with configs
-        ]
-
-        for path in possible_paths:
-            if os.path.exists(path):
-                config_path = path
-                break
-        else:
-            raise FileNotFoundError(
-                f"Config file not found. Tried: {possible_paths}"
-            )
-
-    with open(config_path, "r") as f:
-        return json.load(f)
-
-
-def create_sample_configs() -> list:
-    """
-    Create sample configurations for demonstration.
-
-    Returns:
-        configs: List of sample configurations
-    """
-    return [
-        # Simple encoder with default parameters
-        {
-            "model_type": "simple",
-            "out_neurons": 50,
-            "learning_rate": 1e-3,
-            "epochs": 10,
-            "dataset_type": "cifar10",
-            "sta_type": "perlin_noise_patterns,11,11",
-            "n_neurons": 1000,
-            "n_images": 1000,
-            "mlflow_experiment_name": "encoder_comparison",
-            "mlflow_run_name": "simple_default",
-        },
-        # Simple encoder with high learning rate
-        {
-            "model_type": "simple",
-            "out_neurons": 50,
-            "learning_rate": 1e-2,
-            "epochs": 10,
-            "dataset_type": "cifar10",
-            "sta_type": "perlin_noise_patterns,11,11",
-            "n_neurons": 1000,
-            "n_images": 1000,
-            "mlflow_experiment_name": "encoder_comparison",
-            "mlflow_run_name": "simple_high_lr",
-        },
-        # ResNet encoder
-        {
-            "model_type": "resnet",
-            "resnet_type": "resnet18",
-            "out_neurons": 50,
-            "freeze_backbone": True,
-            "unfreeze_epoch": 5,
-            "epochs": 10,
-            "dataset_type": "cifar10",
-            "sta_type": "perlin_noise_patterns,11,11",
-            "n_neurons": 1000,
-            "n_images": 1000,
-            "mlflow_experiment_name": "encoder_comparison",
-            "mlflow_run_name": "resnet_encoder",
-        },
-    ]
-
-
 def main():
     """Main function with command line interface."""
     parser = argparse.ArgumentParser(
         description="Generic MLflow Encoder Training"
     )
 
-    # Mode selection
-    parser.add_argument(
-        "--mode",
-        choices=["single", "comparison", "config", "hyperparameter_sweep"],
-        default="single",
-        help=(
-            "Training mode: single experiment, comparison, config file, "
-            "or hyperparameter sweep"
-        ),
-    )
-
-    # Configuration file
-    parser.add_argument(
-        "--config", type=str, help="Path to JSON configuration file"
-    )
-
-    # Quick parameters for single mode
+    # Model parameters
     parser.add_argument(
         "--model-type", default="simple", help="Model type (simple, resnet)"
     )
@@ -605,26 +429,9 @@ def main():
 
     args = parser.parse_args()
 
-    if args.mode == "config" and args.config:
-        # Load configuration from file
-        config = load_config_from_file(args.config)
-        if isinstance(config, list):
-            run_experiment_comparison(config)
-        else:
-            trainer, model, _ = train_with_config(config)
-
-    elif args.mode == "comparison":
-        # Run comparison with sample configs
-        configs = create_sample_configs()
-        run_experiment_comparison(configs)
-
-    elif args.mode == "hyperparameter_sweep":
+    # Check if this is a hyperparameter sweep
+    if args.array_task_id is not None:
         # Hyperparameter sweep mode for SLURM job arrays
-        if args.array_task_id is None:
-            raise ValueError(
-                "--array-task-id is required for hyperparameter_sweep mode"
-            )
-
         # Define hyperparameter combinations
         learning_rates = [0.00001, 0.0001, 0.001, 0.01]
         batch_sizes = [8, 16, 32, 64]
