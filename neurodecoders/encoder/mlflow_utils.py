@@ -16,7 +16,6 @@ import mlflow.pytorch
 import pandas as pd
 import torch
 from pytorch_lightning import LightningModule
-from pytorch_lightning.loggers import MLFlowLogger
 
 
 class MLflowExperimentTracker:
@@ -47,16 +46,23 @@ class MLflowExperimentTracker:
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
 
-        # Set up experiment
-        mlflow.set_experiment(experiment_name)
-
-        # Set artifact location if provided
-        if artifact_location:
-            experiment = mlflow.get_experiment_by_name(experiment_name)
-            if experiment is None:
+        # Set up experiment - handle deleted experiments gracefully
+        try:
+            mlflow.set_experiment(experiment_name)
+        except Exception as e:
+            print(
+                f"Warning: Could not set experiment '{experiment_name}': {e}"
+            )
+            print("Creating new experiment...")
+            try:
                 mlflow.create_experiment(
                     experiment_name, artifact_location=artifact_location
                 )
+                mlflow.set_experiment(experiment_name)
+            except Exception as e2:
+                print(f"Error creating experiment: {e2}")
+                # Fall back to default experiment
+                mlflow.set_experiment("Default")
 
     def start_run(
         self,
@@ -180,9 +186,10 @@ def create_mlflow_logger(
     run_name: Optional[str] = None,
     tracking_uri: Optional[str] = None,
     log_model: bool = True,
-) -> MLFlowLogger:
+) -> None:
     """
-    Create an MLflow logger for PyTorch Lightning.
+    DEPRECATED: This function is no longer used.
+    MLflow logging is now handled directly via the native API.
 
     Args:
         experiment_name: Name of the MLflow experiment
@@ -191,14 +198,13 @@ def create_mlflow_logger(
         log_model: Whether to log the model automatically
 
     Returns:
-        MLFlowLogger instance
+        None
     """
-    return MLFlowLogger(
-        experiment_name=experiment_name,
-        run_name=run_name,
-        tracking_uri=tracking_uri,
-        log_model=log_model,
+    print(
+        "Warning: create_mlflow_logger is deprecated. "
+        "Use native MLflow API instead."
     )
+    return None
 
 
 def log_encoder_experiment(

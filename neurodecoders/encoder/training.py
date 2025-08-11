@@ -1,18 +1,22 @@
 """
-Generic training pipeline for neural encoder models.
-
-This module provides a unified training interface that works with any
-model architecture from the models module.
+Training utilities for neural encoders.
 """
 
-from typing import Optional
+import datetime
+import os
+import subprocess
+import traceback
+from typing import Any, Dict, Optional
 
+import mlflow
 import numpy as np
+import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.loggers import MLFlowLogger
+from pytorch_lightning.loggers import Logger
+from sklearn.model_selection import KFold
 
 from .mlflow_utils import log_encoder_experiment
 from .models import (
@@ -123,7 +127,9 @@ class EncoderLightningModule(pl.LightningModule):
         Configure optimizers based on the optimizer_config.
         Supports different strategies for different model types.
         """
-        if self.optimizer_config["type"] == "resnet_differential":
+        optimizer_type = self.optimizer_config.get("type", "adam")
+
+        if optimizer_type == "resnet_differential":
             # Different learning rates for backbone vs head (for ResNet models)
             backbone_params = []
             head_params = []
@@ -152,13 +158,17 @@ class EncoderLightningModule(pl.LightningModule):
 
         else:
             # Standard optimizer for all parameters
+            weight_decay = self.optimizer_config.get("weight_decay", 0.0)
             optimizer = torch.optim.Adam(
                 self.parameters(),
                 lr=self.learning_rate,
+                weight_decay=weight_decay,
             )
 
         # Configure scheduler
-        if self.scheduler_config["type"] == "reduce_lr_on_plateau":
+        scheduler_type = self.scheduler_config.get("type", "none")
+
+        if scheduler_type == "reduce_lr_on_plateau":
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode="min",
@@ -227,6 +237,7 @@ def train_encoder(
     mlflow_run_name: Optional[str] = None,
     mlflow_tracking_uri: Optional[str] = None,
     n_folds: int = 1,  # Default to 1 (no CV)
+    dataset_metadata: Optional[Dict[str, Any]] = None,
 ):
     """
     Generic training function that works with any model architecture.
@@ -276,6 +287,7 @@ def train_encoder(
             mlflow_experiment_name=mlflow_experiment_name,
             mlflow_run_name=mlflow_run_name,
             mlflow_tracking_uri=mlflow_tracking_uri,
+            dataset_metadata=dataset_metadata,
         )
 
     # Otherwise, do k-fold cross-validation
@@ -297,6 +309,7 @@ def train_encoder(
         mlflow_experiment_name=mlflow_experiment_name,
         mlflow_run_name=mlflow_run_name,
         mlflow_tracking_uri=mlflow_tracking_uri,
+        dataset_metadata=dataset_metadata,
     )
 
 
@@ -317,6 +330,7 @@ def _train_single_fold(
     mlflow_experiment_name: str = "neural_encoder",
     mlflow_run_name: Optional[str] = None,
     mlflow_tracking_uri: Optional[str] = None,
+    dataset_metadata: Optional[Dict[str, Any]] = None,
 ):
     """Train a single model (no cross-validation)."""
 
@@ -356,12 +370,195 @@ def _train_single_fold(
 
     # MLflow logger if enabled
     if enable_mlflow:
-        mlflow_logger = MLFlowLogger(
-            experiment_name=mlflow_experiment_name,
-            run_name=mlflow_run_name,
-            tracking_uri=mlflow_tracking_uri,
-            log_model=True,
-        )
+        # Set up MLflow experiment
+        if mlflow_tracking_uri:
+            mlflow.set_tracking_uri(mlflow_tracking_uri)
+
+        # Try to set experiment, create if it doesn't exist
+        try:
+            mlflow.set_experiment(mlflow_experiment_name)
+        except Exception as e:
+            print(
+                f"Warning: Could not set experiment "
+                f"'{mlflow_experiment_name}': {e}"
+            )
+            print("Creating new experiment...")
+            try:
+                mlflow.create_experiment(mlflow_experiment_name)
+                mlflow.set_experiment(mlflow_experiment_name)
+            except Exception as e2:
+                print(f"Error creating experiment: {e2}")
+                # Fall back to default experiment
+                mlflow.set_experiment("Default")
+
+        # Start MLflow run
+        mlflow.start_run(run_name=mlflow_run_name)
+
+        # PROPER DATASET TRACKING FOR COMPLEX DATA
+        try:
+            # Get git commit information
+            git_commit = "unknown"
+            git_branch = "unknown"
+            try:
+                # Get current git commit hash
+                git_commit = (
+                    subprocess.check_output(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=os.getcwd(),
+                        stderr=subprocess.DEVNULL,
+                    )
+                    .decode("utf-8")
+                    .strip()[:8]
+                )  # First 8 characters
+
+                # Get current git branch
+                git_branch = (
+                    subprocess.check_output(
+                        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                        cwd=os.getcwd(),
+                        stderr=subprocess.DEVNULL,
+                    )
+                    .decode("utf-8")
+                    .strip()
+                )
+            except Exception as e:
+                print(f"Warning: Could not get git information: {e}")
+
+            # Get current timestamp
+            timestamp = datetime.datetime.now().isoformat()
+
+            # Create dataset identifier
+            dataset_id = (
+                (
+                    f"{dataset_metadata.get('dataset_type', 'unknown')}_"
+                    f"{dataset_metadata.get('sta_pattern', 'unknown')}_"
+                    f"{dataset_metadata.get('n_neurons', 'unknown')}n_"
+                    f"{dataset_metadata.get('n_images', 'unknown')}i"
+                )
+                if dataset_metadata
+                else "synthetic_dataset"
+            )
+
+            # Create metadata summary for the dataset
+            metadata_summary = pd.DataFrame(
+                {
+                    "component": ["images", "firing_rates", "labels"],
+                    "shape": [
+                        str(data_module.images.shape),
+                        str(data_module.firing_rates.shape),
+                        str(data_module.labels.shape)
+                        if data_module.labels is not None
+                        else "None",
+                    ],
+                    "dtype": [
+                        str(data_module.images.dtype),
+                        str(data_module.firing_rates.dtype),
+                        str(data_module.labels.dtype)
+                        if data_module.labels is not None
+                        else "None",
+                    ],
+                    "size_mb": [
+                        data_module.images.nbytes / (1024 * 1024),
+                        data_module.firing_rates.nbytes / (1024 * 1024),
+                        data_module.labels.nbytes / (1024 * 1024)
+                        if data_module.labels is not None
+                        else 0,
+                    ],
+                }
+            )
+
+            # Create source information
+            source_info = (
+                f"workspace/datasets/synthetic/"
+                f"{dataset_metadata.get('dataset_filename', 'unknown')}"
+                if dataset_metadata and "dataset_filename" in dataset_metadata
+                else "synthetic_data_generation"
+            )
+
+            # Log the metadata dataset
+            summary_dataset = mlflow.data.from_pandas(
+                metadata_summary,
+                source=source_info,
+                name=f"neural_data_{dataset_id}",
+            )
+            mlflow.log_input(summary_dataset, context="training_data")
+
+            # Log git and timestamp information as parameters
+            mlflow.log_params(
+                {
+                    "git_commit": git_commit,
+                    "git_branch": git_branch,
+                    "training_timestamp": timestamp,
+                    "dataset_timestamp": dataset_metadata.get(
+                        "dataset_timestamp", "unknown"
+                    )
+                    if dataset_metadata
+                    else "unknown",
+                }
+            )
+
+            print("Logged neural dataset metadata to MLflow:")
+            print(f"  Dataset ID: {dataset_id}")
+            print(f"  Git Commit: {git_commit}")
+            print(f"  Git Branch: {git_branch}")
+            print(f"  Training Timestamp: {timestamp}")
+            print(f"  Images: {data_module.images.shape}")
+            print(f"  Firing Rates: {data_module.firing_rates.shape}")
+            labels_shape = (
+                data_module.labels.shape
+                if data_module.labels is not None
+                else "None"
+            )
+            print(f"  Labels: {labels_shape}")
+            print(f"  Total Size: {sum(metadata_summary['size_mb']):.2f} MB")
+
+        except Exception as e:
+            print(f"Warning: Could not log dataset metadata to MLflow: {e}")
+            traceback.print_exc()
+
+        # Create a simple logger for PyTorch Lightning that doesn't interfere
+        class MLflowCompatibleLogger(Logger):
+            def __init__(self):
+                super().__init__()
+                self._experiment = None
+                self._run_id = None
+
+            @property
+            def name(self):
+                return "mlflow"
+
+            @property
+            def version(self):
+                return "1.0"
+
+            @property
+            def experiment(self):
+                return self._experiment
+
+            @property
+            def run_id(self):
+                return (
+                    mlflow.active_run().info.run_id
+                    if mlflow.active_run()
+                    else None
+                )
+
+            def log_hyperparams(self, params):
+                mlflow.log_params(params)
+
+            def log_metrics(self, metrics, step=None):
+                mlflow.log_metrics(metrics, step=step)
+
+            def log_model(self, model, artifact_path):
+                mlflow.pytorch.log_model(model, artifact_path)
+
+            def save(self):
+                pass
+
+            def finalize(self, status):
+                pass
+
+        mlflow_logger = MLflowCompatibleLogger()
         loggers.append(mlflow_logger)
 
     # Create trainer
@@ -386,6 +583,10 @@ def _train_single_fold(
     # Test the model
     trainer.test(lightning_model, data_module)
 
+    # End MLflow run if enabled
+    if enable_mlflow:
+        mlflow.end_run()
+
     # Log experiment to MLflow if enabled
     if enable_mlflow:
         # Prepare hyperparameters for logging
@@ -408,6 +609,16 @@ def _train_single_fold(
             "input_shape": data_module.images.shape,
             "output_neurons": data_module.firing_rates.shape[1],
         }
+
+        # Add dataset metadata if available
+        if dataset_metadata:
+            # Add dataset metadata as parameters for MLflow display
+            for key, value in dataset_metadata.items():
+                if key not in ["dataset_timestamp", "dataset_filename"]:
+                    hyperparams[f"dataset_{key}"] = value
+                else:
+                    # Add timestamp and filename to dataset_info
+                    dataset_info[key] = value
 
         # Save model path for logging - always save in encoders directory
         model_save_path = (
@@ -450,8 +661,6 @@ def _train_with_cv(
         list: List of tuples (trainer, lightning_model, data_module)
         for each fold
     """
-    from sklearn.model_selection import KFold
-
     # Get all training indices
     train_indices = np.arange(len(data_module.train_dataset))
 

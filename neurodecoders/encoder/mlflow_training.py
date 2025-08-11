@@ -8,9 +8,10 @@ experiments with MLflow.
 """
 
 import argparse
+import datetime
 import os
 import sys
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 # Add the encoder directory to the path
 sys.path.append(os.path.dirname(__file__))
@@ -31,7 +32,64 @@ from neurodecoders.encoder.training import (
 from neurodecoders.encoder.utils import NeuralDataModule, preprocess_data
 
 
-def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
+def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
+    """
+    Parse dataset metadata from synthetic data filename.
+
+    Expected format: synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-
+    {n_neurons}_n_images-{n_images}.npz
+
+    Args:
+        filename: Synthetic data filename
+
+    Returns:
+        Dictionary containing parsed metadata
+    """
+    metadata = {}
+
+    try:
+        # Remove .npz extension
+        name = filename.replace(".npz", "")
+
+        # Parse dataset type
+        if "dataset-" in name:
+            dataset_part = name.split("dataset-")[1].split("_")[0]
+            metadata["dataset_type"] = dataset_part
+
+        # Parse STA type and parameters
+        if "sta-" in name:
+            sta_part = name.split("sta-")[1].split("_n_neurons")[0]
+            metadata["sta_type"] = sta_part
+
+            # Parse STA parameters if present
+            if "," in sta_part:
+                sta_parts = sta_part.split(",")
+                metadata["sta_pattern"] = sta_parts[0]
+                if len(sta_parts) >= 3:
+                    metadata["sta_patch_width"] = str(int(sta_parts[1]))
+                    metadata["sta_patch_height"] = str(int(sta_parts[2]))
+
+        # Parse number of neurons
+        if "n_neurons-" in name:
+            neurons_part = name.split("n_neurons-")[1].split("_")[0]
+            metadata["n_neurons"] = str(int(neurons_part))
+
+        # Parse number of images
+        if "n_images-" in name:
+            images_part = name.split("n_images-")[1].split("_")[0]
+            metadata["n_images"] = str(int(images_part))
+
+    except Exception as e:
+        print(
+            f"Warning: Could not parse metadata from filename {filename}: {e}"
+        )
+
+    return metadata
+
+
+def load_synthetic_data_from_workspace(
+    config: Dict[str, Any],
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Load synthetic data from workspace/datasets/synthetic based on
     configuration.
@@ -40,7 +98,7 @@ def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
         config: Configuration dictionary with data parameters
 
     Returns:
-        images, firing_rates, labels: Synthetic data loaded from workspace
+        images, firing_rates, labels, metadata: Synthetic data and metadata
     """
     synthetic_dir = "workspace/datasets/synthetic"
 
@@ -105,6 +163,13 @@ def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
         selected_file = matching_files[0]
         print(f"Using exact match: {selected_file}")
 
+    # Parse metadata from filename
+    metadata = parse_dataset_metadata(selected_file)
+
+    # Add timestamp for dataset identification
+    metadata["dataset_timestamp"] = datetime.datetime.now().isoformat()
+    metadata["dataset_filename"] = selected_file
+
     # Load the data
     file_path = os.path.join(synthetic_dir, selected_file)
     print(f"Loading synthetic data from: {file_path}")
@@ -138,7 +203,7 @@ def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
                 "'responses'"
             )
 
-        return images, firing_rates, labels
+        return images, firing_rates, labels, metadata
 
     except Exception as e:
         raise RuntimeError(
@@ -238,7 +303,9 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     print(f"  Learning Rate: {config.get('learning_rate', 1e-3)}")
 
     # Always load synthetic data from workspace
-    images, firing_rates, labels = load_synthetic_data_from_workspace(config)
+    images, firing_rates, labels, dataset_metadata = (
+        load_synthetic_data_from_workspace(config)
+    )
 
     # Ensure data matches model configuration
     out_neurons = config.get("out_neurons", 100)
@@ -278,29 +345,42 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     model_type = config.get("model_type", "simple")
     mlflow_config = get_mlflow_config(config)
 
+    # Add dataset metadata to MLflow config for logging
+    mlflow_config["dataset_metadata"] = dataset_metadata
+
     if model_type == "simple":
+        # Include weight_decay in optimizer_config
+        optimizer_config = training_config["optimizer_config"] or {}
+        optimizer_config["weight_decay"] = training_config["weight_decay"]
+
         trainer, model, _ = train_simple_encoder(
             data_module=data_module,
             out_neurons=config.get("out_neurons", 100),
             learning_rate=training_config["learning_rate"],
-            weight_decay=training_config["weight_decay"],
             epochs=training_config["epochs"],
             unfreeze_epoch=training_config["unfreeze_epoch"],
-            optimizer_config=training_config["optimizer_config"],
+            optimizer_config=optimizer_config,
             **mlflow_config,
         )
     elif model_type == "skip":
+        # Include weight_decay in optimizer_config
+        optimizer_config = training_config["optimizer_config"] or {}
+        optimizer_config["weight_decay"] = training_config["weight_decay"]
+
         trainer, model, _ = train_skip_connection_encoder(
             data_module=data_module,
             out_neurons=config.get("out_neurons", 100),
             learning_rate=training_config["learning_rate"],
-            weight_decay=training_config["weight_decay"],
             epochs=training_config["epochs"],
             unfreeze_epoch=training_config["unfreeze_epoch"],
-            optimizer_config=training_config["optimizer_config"],
+            optimizer_config=optimizer_config,
             **mlflow_config,
         )
     elif model_type == "resnet":
+        # Include weight_decay in optimizer_config
+        optimizer_config = training_config["optimizer_config"] or {}
+        optimizer_config["weight_decay"] = training_config["weight_decay"]
+
         trainer, model, _ = train_resnet_encoder(
             data_module=data_module,
             out_neurons=config.get("out_neurons", 100),
@@ -308,9 +388,8 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
             freeze_backbone=config.get("freeze_backbone", True),
             unfreeze_epoch=training_config["unfreeze_epoch"],
             learning_rate=training_config["learning_rate"],
-            weight_decay=training_config["weight_decay"],
             epochs=training_config["epochs"],
-            optimizer_config=training_config["optimizer_config"],
+            optimizer_config=optimizer_config,
             **mlflow_config,
         )
 
