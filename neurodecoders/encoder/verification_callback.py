@@ -401,35 +401,3 @@ class EncoderVerificationCallback(Callback):
         except Exception as e:
             print(f"Error logging verification results to MLflow: {e}")
             traceback.print_exc()
-
-
-def create_verification_callback(
-    data_module,
-    save_model: bool = True,
-    model_save_dir: str = "workspace/models/encoders",
-    plots_save_dir: str = "workspace/plots/verification",
-    enable_mlflow_logging: bool = True,
-    verification_config: Optional[Dict[str, Any]] = None,
-) -> EncoderVerificationCallback:
-    """
-    Create a verification callback for encoder training.
-
-    Args:
-        data_module: The data module used for training
-        save_model: Whether to save the model before verification
-        model_save_dir: Directory to save the model
-        plots_save_dir: Directory to save verification plots
-        enable_mlflow_logging: Whether to log results to MLflow
-        verification_config: Additional configuration for verification
-
-    Returns:
-        EncoderVerificationCallback instance
-    """
-    return EncoderVerificationCallback(
-        data_module=data_module,
-        save_model=save_model,
-        model_save_dir=model_save_dir,
-        plots_save_dir=plots_save_dir,
-        enable_mlflow_logging=enable_mlflow_logging,
-        verification_config=verification_config,
-    )

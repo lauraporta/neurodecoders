@@ -15,8 +15,12 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import MLFlowLogger
 
 from .mlflow_utils import log_encoder_experiment
-from .models import ResNetEncoder, SimpleEncoder
-from .verification_callback import create_verification_callback
+from .models import (
+    ResNetEncoder,
+    SimpleEncoder,
+    SimpleEncoderWithSkipConnection,
+)
+from .verification_callback import EncoderVerificationCallback
 
 
 class EncoderLightningModule(pl.LightningModule):
@@ -31,17 +35,29 @@ class EncoderLightningModule(pl.LightningModule):
         self,
         model: nn.Module,
         learning_rate: float = 1e-3,
-        weight_decay: float = 1e-5,
         optimizer_config: Optional[dict] = None,
+        loss_fn: str = "mse",  # "mse", "l1", "smooth_l1", "huber"
+        scheduler_config: Optional[dict] = None,
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["model"])
 
         self.model = model
-        self.loss_fn = nn.MSELoss()
         self.learning_rate = learning_rate
-        self.weight_decay = weight_decay
         self.optimizer_config = optimizer_config or {"type": "adam"}
+        self.scheduler_config = scheduler_config or {"type": "none"}
+
+        # Set up loss function
+        if loss_fn == "mse":
+            self.loss_fn = nn.MSELoss()
+        elif loss_fn == "l1":
+            self.loss_fn = nn.L1Loss()
+        elif loss_fn == "smooth_l1":
+            self.loss_fn = nn.SmoothL1Loss()
+        elif loss_fn == "huber":
+            self.loss_fn = nn.HuberLoss()
+        else:
+            raise ValueError(f"Unsupported loss function: {loss_fn}")
 
         # Store training history for plotting
         self.train_losses: list[float] = []
@@ -125,12 +141,10 @@ class EncoderLightningModule(pl.LightningModule):
                 {
                     "params": head_params,
                     "lr": self.learning_rate,
-                    "weight_decay": self.weight_decay,
                 },
                 {
                     "params": backbone_params,
                     "lr": self.learning_rate * 0.1,  # Lower LR for backbone
-                    "weight_decay": self.weight_decay,
                 },
             ]
 
@@ -141,10 +155,28 @@ class EncoderLightningModule(pl.LightningModule):
             optimizer = torch.optim.Adam(
                 self.parameters(),
                 lr=self.learning_rate,
-                weight_decay=self.weight_decay,
             )
 
-        return optimizer
+        # Configure scheduler
+        if self.scheduler_config["type"] == "reduce_lr_on_plateau":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                optimizer,
+                mode="min",
+                factor=0.5,
+                patience=5,
+                verbose=True,
+                min_lr=1e-6,
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "monitor": "val_loss",
+                },
+            }
+        else:
+            # No scheduler
+            return optimizer
 
     def on_train_epoch_end(self):
         # Store losses for plotting
@@ -182,9 +214,101 @@ def train_encoder(
     data_module,
     model_name: str = "encoder",
     learning_rate: float = 1e-3,
-    weight_decay: float = 1e-5,
     epochs: int = 30,
     optimizer_config: Optional[dict] = None,
+    loss_fn: str = "mse",
+    scheduler_config: Optional[dict] = None,
+    callbacks: Optional[list] = None,
+    enable_progress_bar: bool = True,
+    log_every_n_steps: int = 50,
+    unfreeze_epoch: Optional[int] = None,
+    enable_mlflow: bool = True,
+    mlflow_experiment_name: str = "neural_encoder",
+    mlflow_run_name: Optional[str] = None,
+    mlflow_tracking_uri: Optional[str] = None,
+    n_folds: int = 1,  # Default to 1 (no CV)
+):
+    """
+    Generic training function that works with any model architecture.
+    Supports both single training and k-fold cross-validation.
+
+    Args:
+        model: The neural network model to train
+        data_module: Lightning data module with train/val/test dataloaders
+        model_name: Name for the model (used in logging)
+        learning_rate: Learning rate for training
+        epochs: Number of training epochs
+        optimizer_config: Dictionary specifying optimizer configuration
+        loss_fn: Loss function type ("mse", "l1", "smooth_l1", "huber")
+        scheduler_config: Dictionary specifying scheduler configuration
+        callbacks: List of additional callbacks
+        enable_progress_bar: Whether to show progress bar
+        log_every_n_steps: Logging frequency
+        unfreeze_epoch: Epoch to start unfreezing backbone (for transfer
+        learning)
+        enable_mlflow: Whether to enable MLflow logging
+        mlflow_experiment_name: MLflow experiment name
+        mlflow_run_name: MLflow run name
+        mlflow_tracking_uri: MLflow tracking URI
+        n_folds: Number of cross-validation folds (1 = no CV)
+
+    Returns:
+        If n_folds=1: (trainer, lightning_model, data_module)
+        If n_folds>1: list of (trainer, lightning_model, data_module) tuples
+    """
+
+    # If n_folds=1, do regular training
+    if n_folds == 1:
+        return _train_single_fold(
+            model=model,
+            data_module=data_module,
+            model_name=model_name,
+            learning_rate=learning_rate,
+            epochs=epochs,
+            optimizer_config=optimizer_config,
+            loss_fn=loss_fn,
+            scheduler_config=scheduler_config,
+            callbacks=callbacks,
+            enable_progress_bar=enable_progress_bar,
+            log_every_n_steps=log_every_n_steps,
+            unfreeze_epoch=unfreeze_epoch,
+            enable_mlflow=enable_mlflow,
+            mlflow_experiment_name=mlflow_experiment_name,
+            mlflow_run_name=mlflow_run_name,
+            mlflow_tracking_uri=mlflow_tracking_uri,
+        )
+
+    # Otherwise, do k-fold cross-validation
+    return _train_with_cv(
+        model=model,
+        data_module=data_module,
+        model_name=model_name,
+        n_folds=n_folds,
+        learning_rate=learning_rate,
+        epochs=epochs,
+        optimizer_config=optimizer_config,
+        loss_fn=loss_fn,
+        scheduler_config=scheduler_config,
+        callbacks=callbacks,
+        enable_progress_bar=enable_progress_bar,
+        log_every_n_steps=log_every_n_steps,
+        unfreeze_epoch=unfreeze_epoch,
+        enable_mlflow=enable_mlflow,
+        mlflow_experiment_name=mlflow_experiment_name,
+        mlflow_run_name=mlflow_run_name,
+        mlflow_tracking_uri=mlflow_tracking_uri,
+    )
+
+
+def _train_single_fold(
+    model: nn.Module,
+    data_module,
+    model_name: str = "encoder",
+    learning_rate: float = 1e-3,
+    epochs: int = 30,
+    optimizer_config: Optional[dict] = None,
+    loss_fn: str = "mse",
+    scheduler_config: Optional[dict] = None,
     callbacks: Optional[list] = None,
     enable_progress_bar: bool = True,
     log_every_n_steps: int = 50,
@@ -194,35 +318,15 @@ def train_encoder(
     mlflow_run_name: Optional[str] = None,
     mlflow_tracking_uri: Optional[str] = None,
 ):
-    """
-    Generic training function that works with any model architecture.
-
-    Args:
-        model: The neural network model to train
-        data_module: Lightning data module with train/val/test dataloaders
-        model_name: Name for the model (used in logging)
-        learning_rate: Learning rate for training
-        weight_decay: Weight decay for regularization
-        epochs: Number of training epochs
-        optimizer_config: Dictionary specifying optimizer configuration
-        callbacks: List of additional callbacks
-        enable_progress_bar: Whether to show progress bar
-        log_every_n_steps: Logging frequency
-        unfreeze_epoch: Epoch to start unfreezing backbone (for transfer
-        learning)
-
-    Returns:
-        trainer: The trained trainer object
-        lightning_model: The trained Lightning module
-        data_module: The data module
-    """
+    """Train a single model (no cross-validation)."""
 
     # Create Lightning module
     lightning_model = EncoderLightningModule(
         model=model,
         learning_rate=learning_rate,
-        weight_decay=weight_decay,
         optimizer_config=optimizer_config,
+        loss_fn=loss_fn,
+        scheduler_config=scheduler_config,
     )
 
     # Setup callbacks
@@ -238,7 +342,7 @@ def train_encoder(
 
     # Add verification callback if MLflow is enabled
     if enable_mlflow:
-        verification_callback = create_verification_callback(
+        verification_callback = EncoderVerificationCallback(
             data_module=data_module,
             save_model=True,
             model_save_dir="workspace/models/encoders",
@@ -287,9 +391,10 @@ def train_encoder(
         # Prepare hyperparameters for logging
         hyperparams = {
             "learning_rate": learning_rate,
-            "weight_decay": weight_decay,
             "epochs": epochs,
             "optimizer_config": optimizer_config or {},
+            "loss_fn": loss_fn,
+            "scheduler_config": scheduler_config or {},
             "model_name": model_name,
             "unfreeze_epoch": unfreeze_epoch,
         }
@@ -324,6 +429,107 @@ def train_encoder(
     return trainer, lightning_model, data_module
 
 
+def _train_with_cv(
+    model: nn.Module,
+    data_module,
+    model_name: str = "encoder",
+    n_folds: int = 5,
+    **kwargs,
+):
+    """
+    Train with k-fold cross-validation.
+
+    Args:
+        model: The model to train (will be cloned for each fold)
+        data_module: Lightning data module
+        model_name: Base name for the model
+        n_folds: Number of cross-validation folds
+        **kwargs: Additional arguments passed to _train_single_fold
+
+    Returns:
+        list: List of tuples (trainer, lightning_model, data_module)
+        for each fold
+    """
+    from sklearn.model_selection import KFold
+
+    # Get all training indices
+    train_indices = np.arange(len(data_module.train_dataset))
+
+    # Initialize k-fold splitter
+    kfold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+
+    # Store results for each fold
+    fold_results = []
+
+    print(f"Starting {n_folds}-fold cross-validation...")
+
+    for fold, (train_idx, val_idx) in enumerate(kfold.split(train_indices)):
+        print(f"\n=== Fold {fold + 1}/{n_folds} ===")
+
+        # Create fold-specific data module
+        fold_data_module = data_module.__class__(
+            train_indices=train_idx,
+            val_indices=val_idx,
+            **{
+                k: v
+                for k, v in data_module.__dict__.items()
+                if not k.startswith("_")
+                and k not in ["train_indices", "val_indices"]
+            },
+        )
+
+        # Clone the model for this fold
+        fold_model = type(model)(
+            **{
+                k: v
+                for k, v in model.__dict__.items()
+                if not k.startswith("_")
+            }
+        )
+        fold_model.load_state_dict(model.state_dict())
+
+        # Train the model for this fold
+        fold_model_name = f"{model_name}_fold_{fold + 1}"
+
+        try:
+            result = _train_single_fold(
+                model=fold_model,
+                data_module=fold_data_module,
+                model_name=fold_model_name,
+                **kwargs,
+            )
+
+            fold_results.append(result)
+            print(f"Fold {fold + 1} completed successfully")
+
+        except Exception as e:
+            print(f"Error in fold {fold + 1}: {e}")
+            fold_results.append(None)
+
+    # Print cross-validation summary
+    successful_folds = [r for r in fold_results if r is not None]
+    print("\n=== Cross-Validation Summary ===")
+    print(f"Successful folds: {len(successful_folds)}/{n_folds}")
+
+    if successful_folds:
+        # Calculate average metrics across folds
+        final_val_losses = []
+
+        for _, lightning_model, _ in successful_folds:
+            if lightning_model.val_losses:
+                final_val_losses.append(lightning_model.val_losses[-1])
+
+        if final_val_losses:
+            avg_val_loss = np.mean(final_val_losses)
+            std_val_loss = np.std(final_val_losses)
+            print(
+                "Average final validation loss: "
+                f"{avg_val_loss:.4f} ± {std_val_loss:.4f}"
+            )
+
+    return fold_results
+
+
 def train_simple_encoder(data_module, out_neurons: int, **kwargs):
     """
     Convenience function to train a SimpleEncoder.
@@ -333,6 +539,19 @@ def train_simple_encoder(data_module, out_neurons: int, **kwargs):
         model=model,
         data_module=data_module,
         model_name="simple_encoder",
+        **kwargs,
+    )
+
+
+def train_skip_connection_encoder(data_module, out_neurons: int, **kwargs):
+    """
+    Convenience function to train a SimpleEncoderWithSkipConnection.
+    """
+    model = SimpleEncoderWithSkipConnection(out_neurons=out_neurons)
+    return train_encoder(
+        model=model,
+        data_module=data_module,
+        model_name="skip_connection_encoder",
         **kwargs,
     )
 
