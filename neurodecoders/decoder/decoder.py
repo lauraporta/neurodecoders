@@ -11,7 +11,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger
 from torch.utils.data import DataLoader, Dataset, random_split
 
 
@@ -511,14 +510,10 @@ def train_model_lightning(
         ]
     )
 
-    # Setup logger
-    logger = TensorBoardLogger("workspace/logs/lightning_logs", name="decoder")
-
     # Create trainer
     trainer = pl.Trainer(
         max_epochs=epochs,
         callbacks=callbacks,
-        logger=logger,
         enable_progress_bar=enable_progress_bar,
         log_every_n_steps=log_every_n_steps,
         accelerator="auto",  # Let Lightning automatically detect the best

@@ -305,7 +305,7 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
         # Filter out parameters that train_encoder doesn't accept
         # train_encoder only accepts: learning_rate, weight_decay, epochs,
         # optimizer_config, callbacks, enable_progress_bar,
-        # log_every_n_steps, logger_name, unfreeze_epoch, enable_mlflow,
+        # log_every_n_steps, unfreeze_epoch, enable_mlflow,
         # mlflow_experiment_name, mlflow_run_name, mlflow_tracking_uri
         accepted_params = {
             "learning_rate",
@@ -315,7 +315,6 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
             "callbacks",
             "enable_progress_bar",
             "log_every_n_steps",
-            "logger_name",
             "unfreeze_epoch",
             "enable_mlflow",
             "mlflow_experiment_name",
@@ -331,7 +330,6 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
             model=model,
             data_module=data_module,
             model_name=f"{model_type}_encoder",
-            logger_name=f"{model_type}_encoder",
             **encoder_params,
             **mlflow_config,
         )

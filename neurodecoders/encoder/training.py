@@ -12,7 +12,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.loggers import MLFlowLogger, TensorBoardLogger
+from pytorch_lightning.loggers import MLFlowLogger
 
 from .mlflow_utils import log_encoder_experiment
 from .models import ResNetEncoder, SimpleEncoder
@@ -188,7 +188,6 @@ def train_encoder(
     callbacks: Optional[list] = None,
     enable_progress_bar: bool = True,
     log_every_n_steps: int = 50,
-    logger_name: str = "encoder",
     unfreeze_epoch: Optional[int] = None,
     enable_mlflow: bool = True,
     mlflow_experiment_name: str = "neural_encoder",
@@ -209,7 +208,6 @@ def train_encoder(
         callbacks: List of additional callbacks
         enable_progress_bar: Whether to show progress bar
         log_every_n_steps: Logging frequency
-        logger_name: Name for the experiment logger
         unfreeze_epoch: Epoch to start unfreezing backbone (for transfer
         learning)
 
@@ -251,12 +249,6 @@ def train_encoder(
 
     # Setup loggers
     loggers = []
-
-    # TensorBoard logger
-    tensorboard_logger = TensorBoardLogger(
-        "workspace/logs/lightning_logs", name=logger_name
-    )
-    loggers.append(tensorboard_logger)
 
     # MLflow logger if enabled
     if enable_mlflow:
@@ -341,7 +333,6 @@ def train_simple_encoder(data_module, out_neurons: int, **kwargs):
         model=model,
         data_module=data_module,
         model_name="simple_encoder",
-        logger_name="simple_encoder",
         **kwargs,
     )
 
@@ -371,7 +362,6 @@ def train_resnet_encoder(
         model=model,
         data_module=data_module,
         model_name=f"resnet_{resnet_type}",
-        logger_name=f"resnet_{resnet_type}",
         unfreeze_epoch=unfreeze_epoch,
         **kwargs,
     )
