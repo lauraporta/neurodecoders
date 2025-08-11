@@ -145,37 +145,6 @@ def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
         )
 
 
-def load_real_data(config: Dict[str, Any]) -> tuple:
-    """
-    Load real data based on configuration.
-
-    Args:
-        config: Configuration dictionary with data parameters
-
-    Returns:
-        images, firing_rates: Real data
-    """
-    data_path = config.get("data_path")
-    if not data_path or not os.path.exists(data_path):
-        raise FileNotFoundError(
-            f"Real data path {data_path} not found. "
-            "Please provide a valid path to real data or use synthetic data "
-            "from workspace."
-        )
-
-    # Load data from file
-    try:
-        data = np.load(data_path)
-        if "images" in data and "firing_rates" in data:
-            return data["images"], data["firing_rates"]
-        else:
-            raise ValueError(
-                "Invalid data file format: missing 'images' or 'firing_rates'"
-            )
-    except Exception as e:
-        raise RuntimeError(f"Error loading real data from {data_path}: {e}")
-
-
 def get_model(config: Dict[str, Any]) -> torch.nn.Module:
     """
     Create model based on configuration.

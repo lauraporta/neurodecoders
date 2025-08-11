@@ -372,60 +372,6 @@ def plot_sta_and_spikes(
     return fig1, fig2
 
 
-def plot_response_heatmaps(
-    responses,
-    dot_products,
-    adaptation_states,
-    n_plot_images=10,
-    n_plot_neurons=10,
-):
-    """
-    Plot heatmaps of firing rates, dot products, and adaptation states.
-    """
-    # Sort images by their maximum firing rate
-    image_max_responses = np.max(responses, axis=1)
-    image_sort_idx = np.argsort(image_max_responses)[::-1]
-    sorted_responses = responses[image_sort_idx]
-    sorted_dot_products = dot_products[image_sort_idx]
-    sorted_adaptation = adaptation_states[image_sort_idx]
-
-    # Sort neurons by their response to the highest responding image
-    neuron_sort_idx = np.argsort(sorted_responses[0])[::-1][:n_plot_neurons]
-    sorted_responses = sorted_responses[:n_plot_images, :][:, neuron_sort_idx]
-    sorted_dot_products = sorted_dot_products[:n_plot_images, :][
-        :, neuron_sort_idx
-    ]
-    sorted_adaptation = sorted_adaptation[:n_plot_images, :][
-        :, neuron_sort_idx
-    ]
-
-    fig, axes = plt.subplots(1, 3, figsize=(20, 8))  # Increased from (15, 5)
-    im1 = axes[0].imshow(sorted_responses.T, aspect="auto", cmap="viridis")
-    axes[0].set_title("Firing Rates (Hz)")
-    axes[0].set_xlabel("Image")
-    axes[0].set_ylabel("Neuron")
-    plt.colorbar(im1, ax=axes[0])
-
-    im2 = axes[1].imshow(
-        sorted_dot_products.T, aspect="auto", cmap="viridis", vmin=0, vmax=1
-    )
-    axes[1].set_title("Dot Products")
-    axes[1].set_xlabel("Image")
-    axes[1].set_ylabel("Neuron")
-    plt.colorbar(im2, ax=axes[1])
-
-    im3 = axes[2].imshow(
-        sorted_adaptation.T, aspect="auto", cmap="viridis", vmin=0, vmax=1
-    )
-    axes[2].set_title("Adaptation States")
-    axes[2].set_xlabel("Image")
-    axes[2].set_ylabel("Neuron")
-    plt.colorbar(im3, ax=axes[2])
-
-    plt.tight_layout()
-    return fig
-
-
 def plot_response_heatmaps_all(responses, dot_products, adaptation_states):
     """
     Plot heatmaps of firing rates, dot products, and adaptation states for all

@@ -23,9 +23,6 @@ class SimulateResponse:
             0, 224 - self.rf_size, size=(n_neurons, 2)
         )
 
-    def get_receptive_field(self, image, x, y, size):
-        return image[:, y : y + size, x : x + size]
-
     def simulate_neural_responses_vectorized(self, noise_level=0.1):
         """
         Vectorized version of neural response simulation for GPU acceleration.
@@ -143,18 +140,3 @@ class SimulateResponse:
             dot_products.cpu().numpy(),
             adaptation_states.cpu().numpy(),
         )
-
-    def spike_train_from_firing_rate(
-        self, firing_rate, sampling_rate, timepoints
-    ):
-        prob = firing_rate / sampling_rate
-        spikes = np.zeros(timepoints)
-        t = 0
-        refractory_bins = int(0.002 * sampling_rate)  # 2 ms
-        while t < timepoints:
-            if np.random.rand() < prob:
-                spikes[t] = 1.0
-                t += refractory_bins
-            else:
-                t += 1
-        return spikes
