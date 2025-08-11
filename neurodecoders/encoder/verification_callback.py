@@ -70,6 +70,7 @@ class EncoderVerificationCallback(Callback):
         # Store training data for verification
         self.training_images = None
         self.training_firing_rates = None
+        self.training_labels = None
 
     def on_train_start(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
@@ -77,23 +78,33 @@ class EncoderVerificationCallback(Callback):
         """Store training data for later verification."""
         # Extract training data from data module
         try:
-            # Get a sample of training data
-            train_dataloader = self.data_module.train_dataloader()
-            batch = next(iter(train_dataloader))
-            images, firing_rates = batch
+            # Store the full training dataset for verification
+            # This ensures we have all the data with correct labels
+            self.training_images = self.data_module.images
+            self.training_firing_rates = self.data_module.firing_rates
 
-            # Store as numpy arrays
-            self.training_images = images.cpu().numpy()
-            self.training_firing_rates = firing_rates.cpu().numpy()
+            # Ensure we have the data before proceeding
+            assert self.training_images is not None
+            assert self.training_firing_rates is not None
 
+            # Store labels if available
             if (
-                self.training_images is not None
-                and self.training_firing_rates is not None
+                hasattr(self.data_module, "labels")
+                and self.data_module.labels is not None
             ):
+                self.training_labels = self.data_module.labels
                 print(
                     f"Stored training data for verification: "
                     f"{self.training_images.shape} images, "
-                    f"{self.training_firing_rates.shape[1]} neurons"
+                    f"{self.training_firing_rates.shape[1]} neurons, "
+                    f"{len(self.training_labels)} labels"
+                )
+            else:
+                print(
+                    f"Stored training data for verification: "
+                    f"{self.training_images.shape} images, "
+                    f"{self.training_firing_rates.shape[1]} neurons "
+                    "(no labels available)"
                 )
 
         except Exception as e:
@@ -166,11 +177,23 @@ class EncoderVerificationCallback(Callback):
             ):
                 verifier.images = self.training_images
                 verifier.true_firing_rates = self.training_firing_rates
-                print(
-                    f"Using training data for verification: "
-                    f"{verifier.images.shape} images, "
-                    f"{verifier.true_firing_rates.shape[1]} neurons"
-                )
+
+                # Set labels if available
+                if self.training_labels is not None:
+                    verifier.image_labels = self.training_labels
+                    print(
+                        f"Using training data for verification: "
+                        f"{verifier.images.shape} images, "
+                        f"{verifier.true_firing_rates.shape[1]} neurons, "
+                        f"{len(self.training_labels)} labels"
+                    )
+                else:
+                    print(
+                        f"Using training data for verification: "
+                        f"{verifier.images.shape} images, "
+                        f"{verifier.true_firing_rates.shape[1]} neurons "
+                        "(no labels available)"
+                    )
             else:
                 # Load synthetic data from workspace for verification
                 print(
@@ -197,10 +220,19 @@ class EncoderVerificationCallback(Callback):
                             if "images" in data and "responses" in data:
                                 verifier.images = data["images"]
                                 verifier.true_firing_rates = data["responses"]
-                                print(
-                                    f"Loaded verification data from: "
-                                    f"{selected_file}"
-                                )
+
+                                # Load labels if available
+                                if "labels" in data:
+                                    verifier.image_labels = data["labels"]
+                                    print(
+                                        f"Loaded verification data from: "
+                                        f"{selected_file} with labels"
+                                    )
+                                else:
+                                    print(
+                                        f"Loaded verification data from: "
+                                        f"{selected_file} (no labels)"
+                                    )
                             else:
                                 raise ValueError(
                                     "Invalid synthetic data format"

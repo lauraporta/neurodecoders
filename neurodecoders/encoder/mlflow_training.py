@@ -114,22 +114,32 @@ def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
     try:
         data = np.load(file_path)
 
-        # Extract images and responses (firing rates)
+        # Extract images, responses (firing rates), and labels
         if "images" in data and "responses" in data:
             images = data["images"]
             firing_rates = data["responses"]
+
+            # Extract labels if available
+            labels = data.get("labels", None)
+            if labels is not None:
+                print(
+                    f"Loaded data: {images.shape} images, "
+                    f"{firing_rates.shape} firing rates, "
+                    f"{len(labels)} labels"
+                )
+            else:
+                print(
+                    f"Loaded data: {images.shape} images, "
+                    f"{firing_rates.shape} firing rates "
+                    "(no labels available)"
+                )
         else:
             raise ValueError(
                 "Invalid synthetic data format: missing 'images' or "
                 "'responses'"
             )
 
-        print(
-            f"Loaded data: {images.shape} images, "
-            f"{firing_rates.shape} firing rates"
-        )
-
-        return images, firing_rates
+        return images, firing_rates, labels
 
     except Exception as e:
         raise RuntimeError(
@@ -260,7 +270,7 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     print(f"  Learning Rate: {config.get('learning_rate', 1e-3)}")
 
     # Always load synthetic data from workspace
-    images, firing_rates = load_synthetic_data_from_workspace(config)
+    images, firing_rates, labels = load_synthetic_data_from_workspace(config)
 
     # Ensure data matches model configuration
     out_neurons = config.get("out_neurons", 100)
@@ -287,6 +297,7 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     data_module = NeuralDataModule(
         images=images,
         firing_rates=firing_rates,
+        labels=labels,
         train_split=training_config["train_split"],
         val_split=training_config["val_split"],
         batch_size=training_config["batch_size"],

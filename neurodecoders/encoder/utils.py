@@ -22,11 +22,12 @@ from torch.utils.data import DataLoader, Dataset, random_split
 class NeuralDataset(Dataset):
     """Dataset for neural firing rate data paired with images."""
 
-    def __init__(self, images, firing_rates):
+    def __init__(self, images, firing_rates, labels=None):
         self.images = torch.tensor(
             images[:, None, :, :], dtype=torch.float32
         )  # Add channel dim if needed
         self.firing_rates = torch.tensor(firing_rates, dtype=torch.float32)
+        self.labels = labels
 
     def __len__(self):
         return len(self.images)
@@ -43,6 +44,7 @@ class NeuralDataModule(pl.LightningDataModule):
         self,
         images,
         firing_rates,
+        labels=None,
         train_split=0.7,
         val_split=0.15,
         batch_size=32,
@@ -51,13 +53,14 @@ class NeuralDataModule(pl.LightningDataModule):
         super().__init__()
         self.images = images
         self.firing_rates = firing_rates
+        self.labels = labels
         self.train_split = train_split
         self.val_split = val_split
         self.batch_size = batch_size
         self.num_workers = num_workers
 
         # Create full dataset
-        self.full_dataset = NeuralDataset(images, firing_rates)
+        self.full_dataset = NeuralDataset(images, firing_rates, labels)
         self.setup_splits()
 
     def setup_splits(self):
