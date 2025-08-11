@@ -7,10 +7,90 @@ import numpy as np
 import torch
 from image_datasets import ImageDataset
 from matplotlib.patches import Rectangle
+from scipy.stats import pearsonr
 from simulate_response import SimulateResponse
 from sta import STA
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def calculate_sta_vs_zscore_correlations(images, responses, stas, rf_coords):
+    """
+    Calculate correlations between STAs and corresponding patches from
+    z-score normalized average images.
+
+    Args:
+        images (torch.Tensor): Image tensor of shape (n_images, channels,
+            height, width)
+        responses (np.ndarray): Firing rates of shape (n_images, n_neurons)
+        stas (np.ndarray): STAs of shape (n_neurons, height, width) or
+            (n_neurons, channels, height, width)
+        rf_coords (np.ndarray): Receptive field coordinates of shape
+            (n_neurons, 2)
+
+    Returns:
+        np.ndarray: Correlations for each neuron
+    """
+    print("Calculating STA vs z-score average image correlations...")
+
+    # Convert images to numpy if needed
+    if isinstance(images, torch.Tensor):
+        images_np = images.cpu().numpy()
+    else:
+        images_np = images
+
+    n_neurons = responses.shape[1]
+    sta_avg_correlations = np.zeros(n_neurons)
+
+    for neuron_idx in range(n_neurons):
+        # Get firing rates for this neuron
+        neuron_responses = responses[:, neuron_idx]
+
+        # Z-score normalization: (fr - mean) / std
+        mean_fr = np.mean(neuron_responses)
+        std_fr = np.std(neuron_responses)
+
+        if std_fr > 0:
+            # Z-score normalization
+            weights = (neuron_responses - mean_fr) / std_fr
+        else:
+            # If std is 0, use uniform weights
+            weights = np.ones_like(neuron_responses) / len(neuron_responses)
+
+        # Compute weighted average image for this neuron
+        weights_reshaped = weights.reshape(-1, 1, 1, 1)
+        weighted_images = images_np * weights_reshaped
+        avg_img = np.sum(weighted_images, axis=0)
+
+        # Get STA and patch from average image
+        sta = stas[neuron_idx]
+        x, y = rf_coords[neuron_idx]
+
+        # Get the patch from the average image corresponding
+        # to the STA location
+        if len(avg_img.shape) == 3:
+            # Take first channel if 3D
+            patch = avg_img[0, y : y + sta.shape[0], x : x + sta.shape[1]]
+        else:
+            patch = avg_img[y : y + sta.shape[0], x : x + sta.shape[1]]
+
+        # Flatten both to 1D arrays
+        sta_flat = sta.flatten()
+        patch_flat = patch.flatten()
+
+        # Ensure both arrays have the same length
+        min_length = min(len(sta_flat), len(patch_flat))
+        sta_flat = sta_flat[:min_length]
+        patch_flat = patch_flat[:min_length]
+
+        # Compute correlation
+        correlation, _ = pearsonr(sta_flat, patch_flat)
+        sta_avg_correlations[neuron_idx] = correlation
+
+        if (neuron_idx + 1) % 100 == 0:
+            print(f"Processed {neuron_idx + 1}/{n_neurons} neurons")
+
+    return sta_avg_correlations
 
 
 def save_output(
@@ -24,6 +104,7 @@ def save_output(
     sta_type,
     n_neurons,
     n_images,
+    sta_avg_correlations=None,
 ):
     output_dir = "workspace/datasets/synthetic"
     os.makedirs(output_dir, exist_ok=True)
@@ -33,15 +114,22 @@ def save_output(
         f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
     )
     filepath = os.path.join(output_dir, filename)
-    np.savez(
-        filepath,
-        images=images.cpu().numpy(),
-        responses=responses,
-        stas=stas,
-        rf_coords=coords,
-        adaptation_states=adaptation_states,
-        labels=labels.cpu().numpy(),
-    )
+
+    # Prepare save data
+    save_data = {
+        "images": images.cpu().numpy(),
+        "responses": responses,
+        "stas": stas,
+        "rf_coords": coords,
+        "adaptation_states": adaptation_states,
+        "labels": labels.cpu().numpy(),
+    }
+
+    # Add correlations if provided
+    if sta_avg_correlations is not None:
+        save_data["sta_avg_correlations"] = sta_avg_correlations
+
+    np.savez(filepath, **save_data)
 
 
 def plot_sta_and_spikes(
@@ -509,6 +597,25 @@ def main():
     fig5.savefig(f"{plots_dir}/neural_correlations.png")
 
     print("Saving dataset...")
+    sta_avg_correlations = calculate_sta_vs_zscore_correlations(
+        images, firing_rates, simulator.selected_stas, simulator.rf_coords
+    )
+
+    # Print correlation statistics
+    print("\n=== STA vs Z-score Average Image Correlations ===")
+    print(f"Mean correlation: {np.mean(sta_avg_correlations):.4f}")
+    print(f"Std correlation: {np.std(sta_avg_correlations):.4f}")
+    print(f"Min correlation: {np.min(sta_avg_correlations):.4f}")
+    print(f"Max correlation: {np.max(sta_avg_correlations):.4f}")
+    print(
+        f"Number of neurons with correlation > 0.5: "
+        f"{np.sum(sta_avg_correlations > 0.5)}/{len(sta_avg_correlations)}"
+    )
+    print(
+        f"Number of neurons with correlation > 0.7: "
+        f"{np.sum(sta_avg_correlations > 0.7)}/{len(sta_avg_correlations)}"
+    )
+
     save_output(
         images,
         firing_rates,
@@ -520,6 +627,7 @@ def main():
         args.sta_type,
         args.n_neurons,
         args.n_images,
+        sta_avg_correlations,
     )
     print("Done.")
 

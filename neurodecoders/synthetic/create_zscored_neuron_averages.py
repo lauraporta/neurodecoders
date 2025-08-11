@@ -12,7 +12,7 @@ def load_synthetic_data(data_path):
     Load synthetic neural response data from .npz file.
     """
     data = np.load(data_path)
-    return {
+    result = {
         "images": torch.from_numpy(data["images"]),
         "responses": data["responses"],
         "stas": data["stas"],
@@ -20,6 +20,12 @@ def load_synthetic_data(data_path):
         "adaptation_states": data["adaptation_states"],
         "labels": torch.from_numpy(data["labels"]),
     }
+
+    # Add correlations if they exist in the file
+    if "sta_avg_correlations" in data:
+        result["sta_avg_correlations"] = data["sta_avg_correlations"]
+
+    return result
 
 
 def create_top10_neuron_average_images(
@@ -253,90 +259,6 @@ def analyze_correlation_with_std(average_images, responses):
         "avg_image_stds": avg_image_stds,
         "mean_firing_rates": mean_firing_rates,
         "std_firing_rates": std_firing_rates,
-    }
-
-
-def analyze_correlation_sta_vs_zscore_avg(
-    stas, average_images_zscore, rf_coords
-):
-    """
-    Analyze correlation between STAs and corresponding patches from
-    z-score normalized average images.
-
-    Args:
-        stas (np.ndarray): STAs of shape (n_neurons, height, width)
-        average_images_zscore (np.ndarray): Z-score average images of
-            shape (n_neurons, channels, height, width)
-        rf_coords (np.ndarray): Receptive field coordinates of shape
-            (n_neurons, 2)
-
-    Returns:
-        dict: Analysis results
-    """
-    # For each neuron, compute correlation between its STA and
-    # corresponding patch from z-score average image
-    sta_avg_correlations = []
-
-    for neuron_idx in range(
-        stas.shape[0]
-    ):  # Use stas.shape[0] to get n_neurons
-        sta = stas[neuron_idx]
-        avg_img = average_images_zscore[neuron_idx]
-        x, y = rf_coords[neuron_idx]
-
-        # Get the patch from the average image corresponding to the STA
-        # location
-        if len(avg_img.shape) == 3:
-            # Take first channel if 3D
-            patch = avg_img[0, y : y + sta.shape[0], x : x + sta.shape[1]]
-        else:
-            patch = avg_img[y : y + sta.shape[0], x : x + sta.shape[1]]
-
-        # Flatten both to 1D arrays
-        sta_flat = sta.flatten()
-        patch_flat = patch.flatten()
-
-        # Ensure both arrays have the same length
-        min_length = min(len(sta_flat), len(patch_flat))
-        sta_flat = sta_flat[:min_length]
-        patch_flat = patch_flat[:min_length]
-
-        # Compute correlation
-        correlation, p_value = pearsonr(sta_flat, patch_flat)
-        sta_avg_correlations.append(correlation)
-
-    sta_avg_correlations = np.array(sta_avg_correlations)
-
-    # Additional statistics
-    if len(stas.shape) == 3:
-        sta_std = np.std(stas, axis=(1, 2))  # (n_neurons, height, width)
-    else:
-        sta_std = np.std(
-            stas, axis=(1, 2, 3)
-        )  # (n_neurons, channels, height, width)
-
-    if len(average_images_zscore.shape) == 3:
-        avg_img_std = np.std(
-            average_images_zscore, axis=(1, 2)
-        )  # (n_neurons, height, width)
-    else:
-        avg_img_std = np.std(
-            average_images_zscore, axis=(1, 2, 3)
-        )  # (n_neurons, channels, height, width)
-
-    # Correlation between STA std and average image std
-    sta_std_vs_avg_std_corr, sta_std_vs_avg_std_p = pearsonr(
-        sta_std, avg_img_std
-    )
-
-    return {
-        "sta_avg_correlations": sta_avg_correlations,
-        "mean_sta_avg_corr": np.mean(sta_avg_correlations),
-        "std_sta_avg_corr": np.std(sta_avg_correlations),
-        "sta_std_vs_avg_std_corr": sta_std_vs_avg_std_corr,
-        "sta_std_vs_avg_std_p": sta_std_vs_avg_std_p,
-        "sta_std": sta_std,
-        "avg_img_std": avg_img_std,
     }
 
 
@@ -695,9 +617,45 @@ def main():
 
     # Analyze correlations between STAs and z-score average images
     print("Analyzing correlations between STAs and z-score average images...")
-    analysis_results_sta_vs_zscore = analyze_correlation_sta_vs_zscore_avg(
-        data["stas"], average_images_zscore, data["rf_coords"]
-    )
+
+    # Check if correlations are already calculated and saved
+    if "sta_avg_correlations" in data:
+        print("Using pre-calculated correlations from saved data...")
+        sta_avg_correlations = data["sta_avg_correlations"]
+        analysis_results_sta_vs_zscore = {
+            "sta_avg_correlations": sta_avg_correlations,
+            "mean_sta_avg_corr": np.mean(sta_avg_correlations),
+            "std_sta_avg_corr": np.std(sta_avg_correlations),
+        }
+
+        # Calculate additional statistics
+        if len(data["stas"].shape) == 3:
+            sta_std = np.std(data["stas"], axis=(1, 2))
+        else:
+            sta_std = np.std(data["stas"], axis=(1, 2, 3))
+
+        if len(average_images_zscore.shape) == 3:
+            avg_img_std = np.std(average_images_zscore, axis=(1, 2))
+        else:
+            avg_img_std = np.std(average_images_zscore, axis=(1, 2, 3))
+
+        sta_std_vs_avg_std_corr, sta_std_vs_avg_std_p = pearsonr(
+            sta_std, avg_img_std
+        )
+
+        analysis_results_sta_vs_zscore.update(
+            {
+                "sta_std_vs_avg_std_corr": sta_std_vs_avg_std_corr,
+                "sta_std_vs_avg_std_p": sta_std_vs_avg_std_p,
+                "sta_std": sta_std,
+                "avg_img_std": avg_img_std,
+            }
+        )
+    else:
+        raise ValueError(
+            "STA correlations not found in saved data. "
+            "Please regenerate the synthetic data with correlations included."
+        )
 
     # Print correlation results
     print("\n=== CORRELATION ANALYSIS ===")
@@ -751,6 +709,18 @@ def main():
     np.save(
         f"{output_dir}/neuron_average_images_zscore.npy", average_images_zscore
     )
+
+    # Save correlations if available
+    if "sta_avg_correlations" in data:
+        np.save(
+            f"{output_dir}/sta_avg_correlations.npy",
+            data["sta_avg_correlations"],
+        )
+        print(
+            "Saved pre-calculated correlations to "
+            f"{output_dir}/sta_avg_correlations.npy"
+        )
+
     print(f"Results saved to {output_dir}/")
 
     print("Done!")
