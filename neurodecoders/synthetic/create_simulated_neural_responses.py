@@ -58,9 +58,9 @@ def plot_sta_and_spikes(
         rf_size = stas.shape[1]  # (n_neurons, height, width)
     else:
         rf_size = stas.shape[2]  # (n_neurons, channels, height, width)
-    
+
     print(f"Inferred RF size from STA data: {rf_size}x{rf_size}")
-    
+
     # First sort images by their maximum firing rate
     image_max_responses = np.max(responses, axis=1)
     image_sort_idx = np.argsort(image_max_responses)[::-1]  # Descending order
@@ -436,7 +436,7 @@ def main():
     print("Generating responses...")
     simulator = SimulateResponse(device, images, stas, n_neurons)
     firing_rates, dot_products, adaptation_states = (
-        simulator.simulate_neural_responses()
+        simulator.simulate_neural_responses_vectorised()
     )
 
     print("Plotting example results...")
