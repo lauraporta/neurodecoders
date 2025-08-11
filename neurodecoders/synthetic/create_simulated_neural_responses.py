@@ -436,7 +436,7 @@ def main():
     print("Generating responses...")
     simulator = SimulateResponse(device, images, stas, n_neurons)
     firing_rates, dot_products, adaptation_states = (
-        simulator.simulate_neural_responses_vectorised()
+        simulator.simulate_neural_responses_vectorized()
     )
 
     print("Plotting example results...")
