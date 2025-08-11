@@ -24,9 +24,9 @@ from neurodecoders.encoder.models import (
     SimpleEncoderWithSkipConnection,
 )
 from neurodecoders.encoder.training import (
-    train_encoder,
     train_resnet_encoder,
     train_simple_encoder,
+    train_skip_connection_encoder,
 )
 from neurodecoders.encoder.utils import NeuralDataModule, preprocess_data
 
@@ -40,7 +40,7 @@ def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
         config: Configuration dictionary with data parameters
 
     Returns:
-        images, firing_rates: Synthetic data loaded from workspace
+        images, firing_rates, labels: Synthetic data loaded from workspace
     """
     synthetic_dir = "workspace/datasets/synthetic"
 
@@ -119,6 +119,7 @@ def load_synthetic_data_from_workspace(config: Dict[str, Any]) -> tuple:
 
             # Extract labels if available
             labels = data.get("labels", None)
+
             if labels is not None:
                 print(
                     f"Loaded data: {images.shape} images, "
@@ -242,19 +243,22 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     # Ensure data matches model configuration
     out_neurons = config.get("out_neurons", 100)
     if firing_rates.shape[1] != out_neurons:
-        print(
-            f"Adjusting firing rates from {firing_rates.shape[1]} to "
-            f"{out_neurons} neurons"
-        )
         if firing_rates.shape[1] > out_neurons:
-            # Truncate to match model
+            # Truncate to match model - warn about waste
+            print(
+                f"WARNING: Truncating firing rates from "
+                f"{firing_rates.shape[1]} to {out_neurons} neurons. "
+                f"This wastes {firing_rates.shape[1] - out_neurons} neurons."
+            )
             firing_rates = firing_rates[:, :out_neurons]
         else:
-            # Pad with zeros to match model
-            padding = np.zeros(
-                (firing_rates.shape[0], out_neurons - firing_rates.shape[1])
+            # Raise error for insufficient neurons
+            raise ValueError(
+                f"Model expects {out_neurons} neurons but dataset only has "
+                f"{firing_rates.shape[1]} neurons. Please either: "
+                f"1) Reduce model out_neurons to {firing_rates.shape[1]}, or "
+                f"2) Generate synthetic data with more neurons."
             )
-            firing_rates = np.hstack([firing_rates, padding])
 
     # Preprocess data
     images, firing_rates = preprocess_data(images, firing_rates)
@@ -285,6 +289,17 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
             optimizer_config=training_config["optimizer_config"],
             **mlflow_config,
         )
+    elif model_type == "skip":
+        trainer, model, _ = train_skip_connection_encoder(
+            data_module=data_module,
+            out_neurons=config.get("out_neurons", 100),
+            learning_rate=training_config["learning_rate"],
+            weight_decay=training_config["weight_decay"],
+            epochs=training_config["epochs"],
+            unfreeze_epoch=training_config["unfreeze_epoch"],
+            optimizer_config=training_config["optimizer_config"],
+            **mlflow_config,
+        )
     elif model_type == "resnet":
         trainer, model, _ = train_resnet_encoder(
             data_module=data_module,
@@ -298,42 +313,6 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
             optimizer_config=training_config["optimizer_config"],
             **mlflow_config,
         )
-    else:
-        # Generic training for custom models
-        model = get_model(config)
-
-        # Filter out parameters that train_encoder doesn't accept
-        # train_encoder only accepts: learning_rate, weight_decay, epochs,
-        # optimizer_config, callbacks, enable_progress_bar,
-        # log_every_n_steps, unfreeze_epoch, enable_mlflow,
-        # mlflow_experiment_name, mlflow_run_name, mlflow_tracking_uri
-        accepted_params = {
-            "learning_rate",
-            "weight_decay",
-            "epochs",
-            "optimizer_config",
-            "callbacks",
-            "enable_progress_bar",
-            "log_every_n_steps",
-            "unfreeze_epoch",
-            "enable_mlflow",
-            "mlflow_experiment_name",
-            "mlflow_run_name",
-            "mlflow_tracking_uri",
-        }
-
-        encoder_params = {
-            k: v for k, v in training_config.items() if k in accepted_params
-        }
-
-        trainer, lightning_model, _ = train_encoder(
-            model=model,
-            data_module=data_module,
-            model_name=f"{model_type}_encoder",
-            **encoder_params,
-            **mlflow_config,
-        )
-        model = lightning_model
 
     return trainer, model, data_module
 
@@ -346,7 +325,9 @@ def main():
 
     # Model parameters
     parser.add_argument(
-        "--model-type", default="simple", help="Model type (simple, resnet)"
+        "--model-type",
+        default="simple",
+        help="Model type (simple, skip, resnet)",
     )
     parser.add_argument(
         "--out-neurons", type=int, default=100, help="Number of output neurons"
