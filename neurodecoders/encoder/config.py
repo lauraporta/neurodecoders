@@ -20,7 +20,6 @@ TRAINING_DEFAULTS = {
     "epochs": 10000,  # Increased to 10k epochs
     "batch_size": 32,
     "optimizer": "adam",
-    "weight_decay": 0.0,
     "loss_function": "mse",
     "scheduler": "none",
     "scheduler_step_size": 30,
@@ -64,7 +63,6 @@ HYPERPARAMETER_SWEEP_DEFAULTS = {
     "sweep_model_type": ["resnet", "simple", "skip"],  # Model comparison
     "sweep_dataset_type": "cifar10",
     "optimizers": ["adam", "adamw", "sgd"],  # Optimizer comparison
-    "weight_decay": [0.0, 1e-4, 1e-3],  # Regularization
     "schedulers": ["none", "cosine", "plateau"],  # Learning rate scheduling
     "loss_functions": ["mse", "smooth_l1"],  # Loss function comparison
 }

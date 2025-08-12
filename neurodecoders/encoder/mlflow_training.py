@@ -286,7 +286,6 @@ def train_with_config(config: Dict[str, Any]):
     print(f"Epochs: {config.get('epochs', 30)}")
     print(f"Batch size: {config.get('batch_size', 32)}")
     print(f"Optimizer: {config.get('optimizer', 'adam')}")
-    print(f"Weight decay: {config.get('weight_decay', 0.0)}")
     print(f"Loss function: {config.get('loss_function', 'mse')}")
     print(f"Scheduler: {config.get('scheduler', 'none')}")
     print(f"Dataset: {config.get('dataset_type', 'cifar10')}")
@@ -326,7 +325,6 @@ def train_with_config(config: Dict[str, Any]):
     # Create optimizer and scheduler configurations
     optimizer_config = {
         "type": config.get("optimizer", "adam"),
-        "weight_decay": config.get("weight_decay", 0.0),
     }
 
     scheduler_config = {
@@ -380,14 +378,6 @@ def main():
         help="Type of encoder model",
     )
     parser.add_argument(
-        "--out-neurons",
-        type=int,
-        default=None,
-        help=(
-            "Number of output neurons (inferred from dataset if not specified)"
-        ),
-    )
-    parser.add_argument(
         "--resnet-type",
         choices=["resnet18", "resnet34", "resnet50"],
         default="resnet18",
@@ -431,12 +421,6 @@ def main():
         help="Optimizer type",
     )
     parser.add_argument(
-        "--weight-decay",
-        type=float,
-        default=0.0,
-        help="Weight decay (L2 regularization)",
-    )
-    parser.add_argument(
         "--loss-function",
         choices=["mse", "l1", "smooth_l1", "huber"],
         default="mse",
@@ -458,7 +442,7 @@ def main():
         "--scheduler-gamma",
         type=float,
         default=0.1,
-        help="Gamma for step scheduler",
+        help="Gamma for step scheduler (multiplies LR by this factor)",
     )
 
     # Data configuration
@@ -481,7 +465,7 @@ def main():
     parser.add_argument(
         "--n-images",
         type=int,
-        default=100000,
+        default=10000,
         help="Number of images in synthetic data",
     )
 
@@ -494,20 +478,20 @@ def main():
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=10000,
+        default=100,
         help="Chunk size for data loading",
     )
     parser.add_argument(
         "--prefetch-factor",
         type=int,
         default=2,
-        help="DataLoader prefetch factor",
+        help="Number of batches to prefetch in background (0=disable)",
     )
     parser.add_argument(
         "--num-workers",
         type=int,
         default=0,
-        help="Number of workers for data loading",
+        help="Number of subprocesses for data loading (0=main process)",
     )
     parser.add_argument(
         "--pin-memory",
@@ -536,7 +520,7 @@ def main():
 
     # Enhanced training options
     parser.add_argument(
-        "--enable-mixed-precision",
+        "--mixed-precision",
         action="store_true",
         default=True,
         help="Enable mixed precision training (16-bit)",
@@ -544,11 +528,10 @@ def main():
     parser.add_argument(
         "--no-mixed-precision",
         action="store_true",
-        help="Disable mixed precision training (overrides "
-        "--enable-mixed-precision)",
+        help="Disable mixed precision training",
     )
     parser.add_argument(
-        "--enable-early-stopping",
+        "--early-stopping",
         action="store_true",
         default=True,
         help="Enable early stopping",
@@ -556,7 +539,7 @@ def main():
     parser.add_argument(
         "--no-early-stopping",
         action="store_true",
-        help="Disable early stopping (overrides --enable-early-stopping)",
+        help="Disable early stopping",
     )
     parser.add_argument(
         "--early-stopping-patience",
@@ -565,7 +548,7 @@ def main():
         help="Patience for early stopping",
     )
     parser.add_argument(
-        "--enable-checkpointing",
+        "--checkpointing",
         action="store_true",
         default=True,
         help="Enable model checkpointing",
@@ -573,7 +556,7 @@ def main():
     parser.add_argument(
         "--no-checkpointing",
         action="store_true",
-        help="Disable model checkpointing (overrides --enable-checkpointing)",
+        help="Disable model checkpointing",
     )
     parser.add_argument(
         "--gradient-clip-val",
@@ -592,14 +575,10 @@ def main():
 
     # Handle enhanced training options
     enable_mixed_precision = (
-        args.enable_mixed_precision and not args.no_mixed_precision
+        args.mixed_precision and not args.no_mixed_precision
     )
-    enable_early_stopping = (
-        args.enable_early_stopping and not args.no_early_stopping
-    )
-    enable_checkpointing = (
-        args.enable_checkpointing and not args.no_checkpointing
-    )
+    enable_early_stopping = args.early_stopping and not args.no_early_stopping
+    enable_checkpointing = args.checkpointing and not args.no_checkpointing
 
     # Check if this is a hyperparameter sweep
     if args.array_task_id is not None:
@@ -662,14 +641,13 @@ def main():
         # Single experiment with command line arguments
         config = {
             "model_type": args.model_type,
-            "out_neurons": args.out_neurons,  # None means infer from dataset
+            "out_neurons": None,  # None means infer from dataset
             "resnet_type": args.resnet_type,
             "freeze_backbone": freeze_backbone,
             "learning_rate": args.learning_rate,
             "epochs": args.epochs,
             "batch_size": args.batch_size,
             "optimizer": args.optimizer,
-            "weight_decay": args.weight_decay,
             "loss_function": args.loss_function,
             "scheduler": args.scheduler,
             "scheduler_step_size": args.scheduler_step_size,
