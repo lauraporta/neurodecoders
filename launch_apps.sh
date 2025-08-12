@@ -17,12 +17,16 @@ fi
 BASE_PATH=$(python -c "import yaml; print(yaml.safe_load(open('config.yaml'))['base_path'])")
 export MLFLOW_TRACKING_URI="file:${BASE_PATH}/mlruns"
 
+# Get current hostname
+HOSTNAME=$(hostname)
+USERNAME=$(whoami)
+
 # Launch MLflow UI
 echo "Starting MLflow UI on port 5001..."
 echo "📊 MLflow UI will be available at: http://localhost:5001"
 echo ""
 echo "🌐 For remote access, use SSH port forwarding:"
-echo "   ssh -L 5001:localhost:5001 your-username@gpu-380-18"
+echo "   ssh -N ${USERNAME}@${HOSTNAME} -J ${USERNAME}@ssh.swc.ucl.ac.uk,${USERNAME}@hpc-gw2 -L 5001:localhost:5001"
 echo ""
 echo "💡 To stop MLflow UI, press Ctrl+C"
 echo ""
