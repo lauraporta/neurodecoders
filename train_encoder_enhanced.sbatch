@@ -36,6 +36,8 @@ echo "=== Enhanced Encoder Training ==="
 echo "Initialization completed."
 echo "Activating the environment and setting up the package"
 
+# Load modules and activate conda environment
+source /etc/profile.d/modules.sh
 module load miniconda
 conda activate /nfs/nhome/live/lporta/.conda/envs/decoders
 
@@ -62,10 +64,10 @@ EPOCHS=2  # Start with 2 epochs for testing, then increase to 10000 for full tra
 python neurodecoders/encoder/mlflow_training.py \
     --array-task-id $SLURM_ARRAY_TASK_ID \
     --epochs $EPOCHS \
-    --enable-mixed-precision \
-    --enable-early-stopping \
+    --mixed-precision \
+    --early-stopping \
     --early-stopping-patience 100 \
-    --enable-checkpointing \
+    --checkpointing \
     --gradient-clip-val 1.0
 
 echo "Enhanced training completed for task $SLURM_ARRAY_TASK_ID"
