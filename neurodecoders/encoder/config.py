@@ -17,7 +17,7 @@ MODEL_DEFAULTS = {
 # Training configuration defaults
 TRAINING_DEFAULTS = {
     "learning_rate": 0.001,
-    "epochs": 30,
+    "epochs": 10000,  # Increased to 10k epochs
     "batch_size": 32,
     "optimizer": "adam",
     "weight_decay": 0.0,
@@ -25,6 +25,12 @@ TRAINING_DEFAULTS = {
     "scheduler": "none",
     "scheduler_step_size": 30,
     "scheduler_gamma": 0.1,
+    # Enhanced training options
+    "enable_mixed_precision": True,
+    "enable_early_stopping": True,
+    "early_stopping_patience": 100,  # Increased to 100 epochs
+    "enable_checkpointing": True,
+    "gradient_clip_val": 1.0,
 }
 
 # Data configuration defaults
@@ -52,11 +58,15 @@ MLFLOW_DEFAULTS = {
 
 # Hyperparameter sweep defaults
 HYPERPARAMETER_SWEEP_DEFAULTS = {
-    "learning_rates": [0.00001, 0.0001, 0.001, 0.01],
-    "batch_sizes": [8, 16, 32, 64],
-    "sweep_epochs": 10000,
-    "sweep_model_type": ["resnet", "simple", "skip"],
+    "learning_rates": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],  # More granular
+    "batch_sizes": [8, 16, 32, 64, 128],  # Larger batch sizes for efficiency
+    "sweep_epochs": 10000,  # Increased to 10k epochs
+    "sweep_model_type": ["resnet", "simple", "skip"],  # Model comparison
     "sweep_dataset_type": "cifar10",
+    "optimizers": ["adam", "adamw", "sgd"],  # Optimizer comparison
+    "weight_decay": [0.0, 1e-4, 1e-3],  # Regularization
+    "schedulers": ["none", "cosine", "plateau"],  # Learning rate scheduling
+    "loss_functions": ["mse", "smooth_l1"],  # Loss function comparison
 }
 
 # Supported options

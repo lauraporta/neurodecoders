@@ -293,6 +293,9 @@ def train_with_config(config: Dict[str, Any]):
     print(f"STA type: {config.get('sta_type', 'perlin_noise_patterns,11,11')}")
     print(f"Neurons: {config.get('n_neurons', 1000)}")
     print(f"Images: {config.get('n_images', 1000)}")
+    print(f"Mixed precision: {config.get('enable_mixed_precision', True)}")
+    print(f"Early stopping: {config.get('enable_early_stopping', True)}")
+    print(f"Checkpointing: {config.get('enable_checkpointing', True)}")
 
     # Load data
     images, firing_rates, labels, metadata = (
@@ -350,6 +353,14 @@ def train_with_config(config: Dict[str, Any]):
             "mlflow_experiment_name", "neural_encoder"
         ),
         mlflow_run_name=config.get("mlflow_run_name"),
+        # Enhanced training options
+        enable_mixed_precision=config.get("enable_mixed_precision", True),
+        enable_early_stopping=config.get("enable_early_stopping", True),
+        early_stopping_patience=config.get(
+            "early_stopping_patience", 100
+        ),  # Updated default
+        enable_checkpointing=config.get("enable_checkpointing", True),
+        gradient_clip_val=config.get("gradient_clip_val", 1.0),
     )
 
     return trainer, lightning_model, data_module
@@ -404,7 +415,7 @@ def main():
     parser.add_argument(
         "--epochs",
         type=int,
-        default=30,
+        default=10000,  # Updated default
         help="Number of training epochs",
     )
     parser.add_argument(
@@ -523,6 +534,54 @@ def main():
         help="SLURM array task ID for hyperparameter sweep",
     )
 
+    # Enhanced training options
+    parser.add_argument(
+        "--enable-mixed-precision",
+        action="store_true",
+        default=True,
+        help="Enable mixed precision training (16-bit)",
+    )
+    parser.add_argument(
+        "--no-mixed-precision",
+        action="store_true",
+        help="Disable mixed precision training (overrides "
+        "--enable-mixed-precision)",
+    )
+    parser.add_argument(
+        "--enable-early-stopping",
+        action="store_true",
+        default=True,
+        help="Enable early stopping",
+    )
+    parser.add_argument(
+        "--no-early-stopping",
+        action="store_true",
+        help="Disable early stopping (overrides --enable-early-stopping)",
+    )
+    parser.add_argument(
+        "--early-stopping-patience",
+        type=int,
+        default=100,  # Updated default
+        help="Patience for early stopping",
+    )
+    parser.add_argument(
+        "--enable-checkpointing",
+        action="store_true",
+        default=True,
+        help="Enable model checkpointing",
+    )
+    parser.add_argument(
+        "--no-checkpointing",
+        action="store_true",
+        help="Disable model checkpointing (overrides --enable-checkpointing)",
+    )
+    parser.add_argument(
+        "--gradient-clip-val",
+        type=float,
+        default=1.0,
+        help="Gradient clipping value",
+    )
+
     args = parser.parse_args()
 
     # Handle freeze_backbone logic
@@ -530,6 +589,17 @@ def main():
 
     # Handle pin_memory logic
     pin_memory = args.pin_memory and not args.no_pin_memory
+
+    # Handle enhanced training options
+    enable_mixed_precision = (
+        args.enable_mixed_precision and not args.no_mixed_precision
+    )
+    enable_early_stopping = (
+        args.enable_early_stopping and not args.no_early_stopping
+    )
+    enable_checkpointing = (
+        args.enable_checkpointing and not args.no_checkpointing
+    )
 
     # Check if this is a hyperparameter sweep
     if args.array_task_id is not None:
@@ -568,6 +638,12 @@ def main():
             ],
             "mlflow_experiment_name": "resnet_hyperparameter_sweep_mnist",
             "mlflow_run_name": run_name,
+            # Enhanced training options
+            "enable_mixed_precision": enable_mixed_precision,
+            "enable_early_stopping": enable_early_stopping,
+            "early_stopping_patience": args.early_stopping_patience,
+            "enable_checkpointing": enable_checkpointing,
+            "gradient_clip_val": args.gradient_clip_val,
         }
 
         # Merge with defaults and validate
@@ -609,6 +685,12 @@ def main():
             "pin_memory": pin_memory,
             "mlflow_experiment_name": args.experiment_name,
             "mlflow_run_name": args.run_name,
+            # Enhanced training options
+            "enable_mixed_precision": enable_mixed_precision,
+            "enable_early_stopping": enable_early_stopping,
+            "early_stopping_patience": args.early_stopping_patience,
+            "enable_checkpointing": enable_checkpointing,
+            "gradient_clip_val": args.gradient_clip_val,
         }
 
         # Merge with defaults and validate
