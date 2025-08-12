@@ -374,94 +374,6 @@ def plot_sta_and_spikes(
     return fig1, fig2
 
 
-def plot_response_heatmaps_all(responses, dot_products, adaptation_states):
-    """
-    Plot heatmaps of firing rates, dot products, and adaptation states for all
-    images and neurons.
-    """
-    fig, axes = plt.subplots(1, 3, figsize=(25, 8))  # Increased from (18, 5)
-    im1 = axes[0].imshow(responses.T, aspect="auto", cmap="viridis")
-    axes[0].set_title("Firing Rates (Hz)")
-    axes[0].set_xlabel("Image")
-    axes[0].set_ylabel("Neuron")
-    plt.colorbar(im1, ax=axes[0])
-
-    im2 = axes[1].imshow(
-        dot_products.T, aspect="auto", cmap="viridis", vmin=0, vmax=1
-    )
-    axes[1].set_title("Dot Products")
-    axes[1].set_xlabel("Image")
-    axes[1].set_ylabel("Neuron")
-    plt.colorbar(im2, ax=axes[1])
-
-    im3 = axes[2].imshow(
-        adaptation_states.T, aspect="auto", cmap="viridis", vmin=0, vmax=1
-    )
-    axes[2].set_title("Adaptation States")
-    axes[2].set_xlabel("Image")
-    axes[2].set_ylabel("Neuron")
-    plt.colorbar(im3, ax=axes[2])
-
-    plt.tight_layout()
-    return fig
-
-
-def plot_response_histograms(responses, dot_products, adaptation_states):
-    """
-    Plot histograms of firing rates, dot products, and adaptation states across
-    all neurons and images.
-    Neurons are sorted by their response to the first image.
-    """
-    # Sort neurons by their response to the first image
-    neuron_sort_idx = np.argsort(responses[0])[::-1]  # Descending order
-    sorted_responses = responses[:, neuron_sort_idx]
-    sorted_dot_products = dot_products[:, neuron_sort_idx]
-    sorted_adaptation = adaptation_states[:, neuron_sort_idx]
-
-    fig, axes = plt.subplots(1, 3, figsize=(25, 8))  # Increased from (18, 5)
-
-    # Firing rate histogram
-    axes[0].hist(sorted_responses.flatten(), bins=50, color="C0", alpha=0.8)
-    axes[0].set_title("Firing Rate Distribution")
-    axes[0].set_xlabel("Firing Rate (Hz)")
-    axes[0].set_ylabel("Count")
-
-    # Dot product histogram
-    axes[1].hist(sorted_dot_products.flatten(), bins=50, color="C1", alpha=0.8)
-    axes[1].set_title("Dot Product Distribution")
-    axes[1].set_xlabel("Dot Product")
-    axes[1].set_ylabel("Count")
-
-    # Adaptation state histogram
-    axes[2].hist(sorted_adaptation.flatten(), bins=50, color="C2", alpha=0.8)
-    axes[2].set_title("Adaptation State Distribution")
-    axes[2].set_xlabel("Adaptation State")
-    axes[2].set_ylabel("Count")
-
-    plt.tight_layout()
-    return fig
-
-
-def plot_neural_correlations(responses):
-    """
-    Plot correlation matrix of neural firing rates across images.
-    """
-    # Compute correlation matrix between neurons
-    corr_matrix = np.corrcoef(
-        responses.T
-    )  # Transpose to get neuron-neuron correlations
-
-    fig, ax = plt.subplots(figsize=(15, 12))  # Increased from (10, 8)
-    im = ax.imshow(corr_matrix, cmap="RdBu_r", vmin=-1, vmax=1)
-    ax.set_title("Neural Firing Rate Correlations")
-    ax.set_xlabel("Neuron")
-    ax.set_ylabel("Neuron")
-    plt.colorbar(im, ax=ax, label="Pearson Correlation")
-
-    plt.tight_layout()
-    return fig
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Create synthetic neural responses "
@@ -544,24 +456,6 @@ def main():
 
     # Create output directory
     os.makedirs("output", exist_ok=True)
-
-    # Add heatmap plot (all neurons, all images)
-    fig3 = plot_response_heatmaps_all(
-        firing_rates, dot_products, adaptation_states
-    )
-    plots_dir = get_path("workspace/plots/analysis")
-    os.makedirs(plots_dir, exist_ok=True)
-    fig3.savefig(f"{plots_dir}/heatmaps_all.png")
-
-    # Add histogram plot
-    fig4 = plot_response_histograms(
-        firing_rates, dot_products, adaptation_states
-    )
-    fig4.savefig(f"{plots_dir}/response_histograms.png")
-
-    # Add neural correlation plot
-    fig5 = plot_neural_correlations(firing_rates)
-    fig5.savefig(f"{plots_dir}/neural_correlations.png")
 
     print("Saving dataset...")
     sta_avg_correlations = calculate_sta_vs_zscore_correlations(
