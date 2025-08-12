@@ -43,6 +43,7 @@ conda activate /nfs/nhome/live/lporta/.conda/envs/decoders
 
 echo "Setting up environment variables"
 export CUDA_VISIBLE_DEVICES=0
+export MLFLOW_TRACKING_URI="file:/ceph/margrie/laura/neurodecoders/mlruns"
 
 echo "Starting enhanced array..."
 echo "Array task id: $SLURM_ARRAY_TASK_ID"
