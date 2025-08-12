@@ -6,8 +6,8 @@
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-12:00 # time (D-HH:MM)
-#SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/slurm.%N.%j.out.txt # STDOUT
-#SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/slurm.%N.%j.err.txt # STDERR
+#SBATCH -o slurm/slurm.%N.%j.out.txt # STDOUT
+#SBATCH -e slurm/slurm.%N.%j.err.txt # STDERR
 
 echo "Initialization completed."
 echo "Activating the environment and setting up the package"
@@ -17,6 +17,18 @@ conda activate /nfs/nhome/live/lporta/.conda/envs/decoders
 
 echo "Setting up environment variables"
 export CUDA_VISIBLE_DEVICES=0
+
+# Get the current working directory
+CURRENT_DIR=$(pwd)
+echo "Current working directory: $CURRENT_DIR"
+
+# Set MLflow tracking URI to use relative path
+export MLFLOW_TRACKING_URI="file:${CURRENT_DIR}/mlruns"
+echo "MLflow tracking URI: $MLFLOW_TRACKING_URI"
+
+# Ensure mlruns directory exists
+mkdir -p "${CURRENT_DIR}/mlruns"
+echo "Ensured mlruns directory exists: ${CURRENT_DIR}/mlruns"
 
 echo "Starting encoder training..."
 
@@ -57,6 +69,8 @@ for lr in "${LEARNING_RATES[@]}"; do
         echo "  Learning Rate: $lr"
         echo "  Batch Size: $batch_size"
         echo "  Run Name: $RUN_NAME"
+        echo "  Experiment Name: $EXPERIMENT_NAME"
+        echo "  MLflow Tracking URI: $MLFLOW_TRACKING_URI"
         echo "=========================================="
 
         python neurodecoders/encoder/mlflow_training.py \
@@ -81,3 +95,4 @@ for lr in "${LEARNING_RATES[@]}"; do
 done
 
 echo "All encoder training runs completed."
+echo "MLflow experiments should be available in: ${CURRENT_DIR}/mlruns"

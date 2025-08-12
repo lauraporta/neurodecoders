@@ -2,6 +2,7 @@
 Training utilities for neural encoders.
 """
 
+import os
 import traceback
 from typing import List, Optional
 
@@ -210,7 +211,7 @@ def train_encoder(
     data_module,
     model_name: str = "encoder",
     learning_rate: float = 1e-3,
-    epochs: int = 10000,  # Updated default
+    epochs: int = 2,  # Set to 2 epochs for testing
     optimizer_config: Optional[dict] = None,
     loss_fn: str = "mse",
     scheduler_config: Optional[dict] = None,
@@ -322,7 +323,7 @@ def _train_single_fold(
     data_module,
     model_name: str = "encoder",
     learning_rate: float = 1e-3,
-    epochs: int = 10000,  # Updated default
+    epochs: int = 2,  # Set to 2 epochs for testing
     optimizer_config: Optional[dict] = None,
     loss_fn: str = "mse",
     scheduler_config: Optional[dict] = None,
@@ -398,11 +399,50 @@ def _train_single_fold(
 
     # Add MLflow logger if enabled
     if enable_mlflow:
-        # Set MLflow tracking URI if provided
+        # Set MLflow tracking URI if provided or from environment
         if mlflow_tracking_uri:
             mlflow.set_tracking_uri(mlflow_tracking_uri)
+            print(
+                "Using MLflow tracking URI from parameter: "
+                f"{mlflow_tracking_uri}"
+            )
+        elif os.environ.get("MLFLOW_TRACKING_URI"):
+            mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
+            print(
+                f"Using MLflow tracking URI from environment: "
+                f"{os.environ.get('MLFLOW_TRACKING_URI')}"
+            )
+        else:
+            print("No MLflow tracking URI provided, using default")
 
         # Set experiment
+        print(f"Setting MLflow experiment: {mlflow_experiment_name}")
+
+        # Check if tracking directory exists and is writable
+        tracking_uri = mlflow.get_tracking_uri()
+        if tracking_uri.startswith("file:"):
+            tracking_path = tracking_uri[5:]  # Remove "file:" prefix
+            print(f"MLflow tracking path: {tracking_path}")
+            if os.path.exists(tracking_path):
+                print(f"Tracking directory exists: {tracking_path}")
+                if os.access(tracking_path, os.W_OK):
+                    print(f"Tracking directory is writable: {tracking_path}")
+                else:
+                    print(
+                        f"Warning: Tracking directory is not writable: "
+                        f"{tracking_path}"
+                    )
+            else:
+                print(
+                    f"Warning: Tracking directory does not exist: "
+                    f"{tracking_path}"
+                )
+                try:
+                    os.makedirs(tracking_path, exist_ok=True)
+                    print(f"Created tracking directory: {tracking_path}")
+                except Exception as e:
+                    print(f"Error creating tracking directory: {e}")
+
         mlflow.set_experiment(mlflow_experiment_name)
 
         # Start MLflow run manually (no MLFlowLogger to avoid duplication)
@@ -526,12 +566,16 @@ def _train_single_fold(
                 if lightning_model.val_losses
                 else None,
                 "model_parameters": sum(p.numel() for p in model.parameters()),
-                "best_checkpoint": checkpoint_callback.best_model_path
-                if enable_checkpointing
-                else None,
             }
 
+            # Log metrics (only numeric values)
             mlflow.log_metrics(training_info)
+
+            # Log checkpoint path as parameter (not metric)
+            if enable_checkpointing and checkpoint_callback.best_model_path:
+                mlflow.log_param(
+                    "best_checkpoint_path", checkpoint_callback.best_model_path
+                )
 
         except Exception as e:
             print(f"Warning: Could not log final metrics to MLflow: {e}")
@@ -550,7 +594,7 @@ def _train_with_cv(
     model_name: str = "encoder",
     n_folds: int = 5,
     learning_rate: float = 1e-3,
-    epochs: int = 10000,  # Updated default
+    epochs: int = 2,  # Set to 2 epochs for testing
     optimizer_config: Optional[dict] = None,
     loss_fn: str = "mse",
     scheduler_config: Optional[dict] = None,

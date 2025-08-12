@@ -29,8 +29,8 @@
 #SBATCH -n 1
 #SBATCH -t 00-06:00 # time (D-HH:MM)
 #SBATCH --array=0-89%6 # 90 combinations (3 model types x 6 learning rates x 5 batch sizes), max 6 running simultaneously
-#SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/enhanced_%A_%a.out.txt # STDOUT
-#SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/enhanced_%A_%a.err.txt # STDERR
+#SBATCH -o slurm/enhanced_%A_%a.out.txt # STDOUT
+#SBATCH -e slurm/enhanced_%A_%a.err.txt # STDERR
 
 echo "=== Enhanced Encoder Training ==="
 echo "Initialization completed."
@@ -43,7 +43,18 @@ conda activate /nfs/nhome/live/lporta/.conda/envs/decoders
 
 echo "Setting up environment variables"
 export CUDA_VISIBLE_DEVICES=0
-export MLFLOW_TRACKING_URI="file:/ceph/margrie/laura/neurodecoders/mlruns"
+
+# Get the current working directory
+CURRENT_DIR=$(pwd)
+echo "Current working directory: $CURRENT_DIR"
+
+# Set MLflow tracking URI to use relative path
+export MLFLOW_TRACKING_URI="file:${CURRENT_DIR}/mlruns"
+echo "MLflow tracking URI: $MLFLOW_TRACKING_URI"
+
+# Ensure mlruns directory exists
+mkdir -p "${CURRENT_DIR}/mlruns"
+echo "Ensured mlruns directory exists: ${CURRENT_DIR}/mlruns"
 
 echo "Starting enhanced array..."
 echo "Array task id: $SLURM_ARRAY_TASK_ID"
@@ -72,3 +83,4 @@ python neurodecoders/encoder/mlflow_training.py \
     --gradient-clip-val 1.0
 
 echo "Enhanced training completed for task $SLURM_ARRAY_TASK_ID"
+echo "MLflow experiments should be available in: ${CURRENT_DIR}/mlruns"

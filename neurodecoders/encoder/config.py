@@ -17,7 +17,7 @@ MODEL_DEFAULTS = {
 # Training configuration defaults
 TRAINING_DEFAULTS = {
     "learning_rate": 0.001,
-    "epochs": 10000,  # Increased to 10k epochs
+    "epochs": 2,  # Set to 2 epochs for testing
     "batch_size": 32,
     "optimizer": "adam",
     "loss_function": "mse",
@@ -59,7 +59,7 @@ MLFLOW_DEFAULTS = {
 HYPERPARAMETER_SWEEP_DEFAULTS = {
     "learning_rates": [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3],  # More granular
     "batch_sizes": [8, 16, 32, 64, 128],  # Larger batch sizes for efficiency
-    "sweep_epochs": 10000,  # Increased to 10k epochs
+    "sweep_epochs": 2,  # Set to 2 epochs for testing
     "sweep_model_type": ["resnet", "simple", "skip"],  # Model comparison
     "sweep_dataset_type": "cifar10",
     "optimizers": ["adam", "adamw", "sgd"],  # Optimizer comparison

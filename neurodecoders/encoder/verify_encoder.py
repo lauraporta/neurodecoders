@@ -108,6 +108,9 @@ class EncoderVerifier:
             corr = np.corrcoef(
                 self.true_firing_rates[:, i], self.predicted_firing_rates[:, i]
             )[0, 1]
+            # Handle NaN values from constant arrays
+            if np.isnan(corr):
+                corr = 0.0  # Set correlation to 0 for constant arrays
             correlations[i] = corr
         print(
             f"Mean correlation between true and predicted: "
