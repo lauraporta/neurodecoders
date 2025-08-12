@@ -586,36 +586,53 @@ def main():
         # Use centralized hyperparameter sweep defaults
         learning_rates = HYPERPARAMETER_SWEEP_DEFAULTS["learning_rates"]
         batch_sizes = HYPERPARAMETER_SWEEP_DEFAULTS["batch_sizes"]
+        model_types = HYPERPARAMETER_SWEEP_DEFAULTS["sweep_model_type"]
 
-        # Calculate which combination this array task should run
-        lr_idx = args.array_task_id // len(batch_sizes)
-        bs_idx = args.array_task_id % len(batch_sizes)
+        # Calculate total combinations:
+        # model_types × learning_rates × batch_sizes
+        total_combinations = (
+            len(model_types) * len(learning_rates) * len(batch_sizes)
+        )
 
-        if lr_idx >= len(learning_rates):
+        if args.array_task_id >= total_combinations:
             raise ValueError(
-                f"Array task ID {args.array_task_id} is out of range"
+                f"Array task ID {args.array_task_id} is out of range "
+                f"(max: {total_combinations - 1})"
             )
 
+        # Calculate which combination this array task should run
+        # Order: model_type, learning_rate, batch_size
+        model_idx = args.array_task_id // (
+            len(learning_rates) * len(batch_sizes)
+        )
+        remaining = args.array_task_id % (
+            len(learning_rates) * len(batch_sizes)
+        )
+        lr_idx = remaining // len(batch_sizes)
+        bs_idx = remaining % len(batch_sizes)
+
+        model_type = model_types[model_idx]
         lr = learning_rates[lr_idx]
         batch_size = batch_sizes[bs_idx]
-        run_name = f"resnet_lr{lr}_bs{batch_size}"
+        epochs = args.epochs  # Use command line epochs instead of default
+        run_name = f"lr{lr}_bs{batch_size}_epochs{epochs}"
 
         print(
-            f"Array Task {args.array_task_id}: lr={lr}, "
-            f"batch_size={batch_size}"
+            f"Array Task {args.array_task_id}: model={model_type}, "
+            f"lr={lr}, batch_size={batch_size}, epochs={epochs}"
         )
 
         # Create config with sweep defaults
         config = {
-            "model_type": HYPERPARAMETER_SWEEP_DEFAULTS["sweep_model_type"],
+            "model_type": model_type,
             "out_neurons": None,  # Will be inferred from dataset
             "learning_rate": lr,
-            "epochs": HYPERPARAMETER_SWEEP_DEFAULTS["sweep_epochs"],
+            "epochs": epochs,  # Use command line epochs
             "batch_size": batch_size,
             "dataset_type": HYPERPARAMETER_SWEEP_DEFAULTS[
                 "sweep_dataset_type"
             ],
-            "mlflow_experiment_name": "resnet_hyperparameter_sweep_mnist",
+            "mlflow_experiment_name": f"{model_type}_encoder_comparison",
             "mlflow_run_name": run_name,
             # Enhanced training options
             "enable_mixed_precision": enable_mixed_precision,
