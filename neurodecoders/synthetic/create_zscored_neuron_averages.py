@@ -6,6 +6,8 @@ import torch
 from matplotlib.patches import Rectangle
 from scipy.stats import pearsonr
 
+from neurodecoders.paths import get_path
+
 
 def load_synthetic_data(data_path):
     """
@@ -273,7 +275,7 @@ def main():
     Main function to create top-10 average images and analyze correlations.
     """
     # Find the most recent synthetic data file
-    data_dir = "workspace/datasets/synthetic"
+    data_dir = get_path("workspace/datasets/synthetic")
     if not os.path.exists(data_dir):
         print(
             f"Data directory {data_dir} not found. "
@@ -300,7 +302,7 @@ def main():
     data = load_synthetic_data(data_path)
 
     # Create output directory
-    output_dir = "workspace/plots/neuron_averages_top10"
+    output_dir = get_path("workspace/plots/neuron_averages_top10")
     os.makedirs(output_dir, exist_ok=True)
 
     # Create z-score normalized average images

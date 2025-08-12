@@ -11,6 +11,8 @@ from scipy.stats import pearsonr
 from simulate_response import SimulateResponse
 from sta import STA
 
+from neurodecoders.paths import get_path
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -106,7 +108,7 @@ def save_output(
     n_images,
     sta_avg_correlations=None,
 ):
-    output_dir = "workspace/datasets/synthetic"
+    output_dir = get_path("workspace/datasets/synthetic")
     os.makedirs(output_dir, exist_ok=True)
     filename = (
         f"synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-"
@@ -528,7 +530,7 @@ def main():
     fig3 = plot_response_heatmaps_all(
         firing_rates, dot_products, adaptation_states
     )
-    plots_dir = "workspace/plots/analysis"
+    plots_dir = get_path("workspace/plots/analysis")
     os.makedirs(plots_dir, exist_ok=True)
     fig3.savefig(f"{plots_dir}/heatmaps_all.png")
 

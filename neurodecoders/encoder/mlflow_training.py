@@ -31,6 +31,7 @@ from neurodecoders.encoder.models import (
 )
 from neurodecoders.encoder.training import train_encoder
 from neurodecoders.encoder.utils import NeuralDataModule
+from neurodecoders.paths import get_path
 
 
 def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
@@ -101,7 +102,7 @@ def load_synthetic_data_from_workspace(
     Returns:
         images, firing_rates, labels, metadata: Synthetic data and metadata
     """
-    synthetic_dir = "workspace/datasets/synthetic"
+    synthetic_dir = get_path("workspace/datasets/synthetic")
 
     if not os.path.exists(synthetic_dir):
         raise FileNotFoundError(

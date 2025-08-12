@@ -2,6 +2,22 @@
 
 Neural encoder training and synthetic dataset generation for neuroscience research.
 
+## Configuration
+
+The project uses a simple configuration system to manage artifact paths. See [CONFIGURATION.md](CONFIGURATION.md) for details.
+
+**Quick setup**: Edit `config.yaml` to change where all data is stored:
+
+```yaml
+base_path: "."  # Change this to your desired directory
+```
+
+**Usage in code**:
+```python
+from neurodecoders.paths import get_path, get_synthetic_data_path
+data_dir = get_synthetic_data_path()  # Gets configured path
+```
+
 ## Quick Start
 
 ### 1. Create Synthetic Dataset

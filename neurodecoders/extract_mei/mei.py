@@ -18,6 +18,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "..", "synthetic"))
 from synthetic.simulate_response import SimulateResponse
 
 from neurodecoders.encoder.models import ResNetEncoder, SimpleEncoder
+from neurodecoders.paths import get_path
 from neurodecoders.synthetic.sta import STA
 
 
@@ -591,7 +592,7 @@ def main():
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="workspace/mei_results",
+        default=get_path("workspace/mei_results"),
         help="Directory to save results (default: workspace/mei_results)",
     )
     parser.add_argument(
@@ -821,7 +822,7 @@ def main():
             f"mei_plots_model-{model_name}_neuron-"
             f"{args.neuron_idx}_{timestamp}.png"
         )
-        plots_dir = "workspace/plots"
+        plots_dir = get_path("workspace/plots")
         os.makedirs(plots_dir, exist_ok=True)
         plot_path = os.path.join(plots_dir, plot_filename)
         fig.savefig(plot_path, dpi=300, bbox_inches="tight")

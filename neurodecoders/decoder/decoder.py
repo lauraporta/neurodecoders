@@ -13,6 +13,8 @@ import torch.nn.functional as F
 from pytorch_lightning.callbacks import LearningRateMonitor
 from torch.utils.data import DataLoader, Dataset, random_split
 
+from neurodecoders.paths import get_path
+
 
 # ---- Dataset class ----
 class NeuralDecoderDataset(Dataset):
@@ -317,8 +319,8 @@ def load_latest_data(dataset_to_load):
     files = glob.glob(dataset_to_load)
     if not files:
         raise FileNotFoundError(
-            "No neural data files found in workspace/datasets/synthetic/ "
-            "directory"
+            f"No neural data files found in "
+            f"{get_path('workspace/datasets/synthetic')}/ directory"
         )
 
     latest_file = max(files, key=os.path.getctime)
@@ -552,7 +554,7 @@ def save_predictions(
     firing_rates,
     images,
     input_file_path,
-    output_dir="workspace/predictions/decoder",
+    output_dir=get_path("workspace/predictions/decoder"),
     dataset_to_load=None,
 ):
     """Save model predictions and reconstructed images"""
@@ -694,7 +696,7 @@ def main(dataset_to_load):
     # Save final model
     if isinstance(dataset_to_load, str):
         dataset_to_load = Path(dataset_to_load)
-    model_dir = "workspace/models/decoders"
+    model_dir = get_path("workspace/models/decoders")
     os.makedirs(model_dir, exist_ok=True)
     model_path = f"{model_dir}/decoder_{dataset_to_load.stem}.pth"
     torch.save(model.state_dict(), model_path)
@@ -705,6 +707,8 @@ def main(dataset_to_load):
 
 if __name__ == "__main__":
     dataset_to_load = Path(
-        "workspace/datasets/synthetic/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250725_140202.npz"
+        get_path(
+            "workspace/datasets/synthetic/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250725_140202.npz"
+        )
     )
     main(dataset_to_load)

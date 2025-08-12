@@ -18,6 +18,8 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import Logger
 from sklearn.model_selection import KFold
 
+from neurodecoders.paths import get_path
+
 from .verification_callback import EncoderVerificationCallback
 
 
@@ -383,8 +385,8 @@ def _train_single_fold(
         verification_callback = EncoderVerificationCallback(
             data_module=data_module,
             save_model=True,
-            model_save_dir="workspace/models/encoders",
-            plots_save_dir="workspace/plots/verification",
+            model_save_dir=get_path("workspace/models/encoders"),
+            plots_save_dir=get_path("workspace/plots/verification"),
             enable_mlflow_logging=True,
         )
         callbacks.append(verification_callback)
@@ -508,7 +510,7 @@ def _train_single_fold(
 
             # Create source information
             source_info = (
-                f"workspace/datasets/synthetic/"
+                f"{get_path('workspace/datasets/synthetic')}/"
                 f"{data_module.dataset_filename or 'unknown'}"
             )
 

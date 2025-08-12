@@ -13,7 +13,9 @@ if ! command -v mlflow &> /dev/null; then
 fi
 
 # Set MLflow tracking URI to local file system
-export MLFLOW_TRACKING_URI="file:./mlruns"
+# Read base path from config.yaml
+BASE_PATH=$(python -c "import yaml; print(yaml.safe_load(open('config.yaml'))['base_path'])")
+export MLFLOW_TRACKING_URI="file:${BASE_PATH}/mlruns"
 
 # Launch MLflow UI
 echo "Starting MLflow UI on port 5001..."
@@ -26,4 +28,4 @@ echo "💡 To stop MLflow UI, press Ctrl+C"
 echo ""
 
 # Launch MLflow UI
-mlflow ui --host 0.0.0.0 --port 5001 --backend-store-uri file:./mlruns
+mlflow ui --host 0.0.0.0 --port 5001 --backend-store-uri file:${BASE_PATH}/mlruns

@@ -30,6 +30,7 @@ repos:
           - id: mypy
             additional_dependencies:
                 - types-setuptools
+                - types-PyYAML
 
     - repo: https://github.com/codespell-project/codespell
       # Configuration for codespell is in pyproject.toml

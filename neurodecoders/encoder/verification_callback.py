@@ -21,6 +21,8 @@ from pytorch_lightning.callbacks import Callback
 # Add the encoder directory to the path for imports
 sys.path.append(os.path.dirname(__file__))
 
+from neurodecoders.paths import ensure_dir, get_path
+
 from .verify_encoder import EncoderVerifier
 
 
@@ -40,10 +42,9 @@ class EncoderVerificationCallback(Callback):
         self,
         data_module,
         save_model: bool = True,
-        model_save_dir: str = "workspace/models/encoders",
-        plots_save_dir: str = "workspace/plots/verification",
+        model_save_dir: str = get_path("workspace/models/encoders"),
+        plots_save_dir: str = get_path("workspace/plots/verification"),
         enable_mlflow_logging: bool = True,
-        verification_config: Optional[Dict[str, Any]] = None,
     ):
         """
         Initialize the verification callback.
@@ -54,7 +55,6 @@ class EncoderVerificationCallback(Callback):
             model_save_dir: Directory to save the model
             plots_save_dir: Directory to save verification plots
             enable_mlflow_logging: Whether to log results to MLflow
-            verification_config: Additional configuration for verification
         """
         super().__init__()
         self.data_module = data_module
@@ -62,11 +62,10 @@ class EncoderVerificationCallback(Callback):
         self.model_save_dir = model_save_dir
         self.plots_save_dir = plots_save_dir
         self.enable_mlflow_logging = enable_mlflow_logging
-        self.verification_config = verification_config or {}
 
         # Create directories
-        os.makedirs(self.model_save_dir, exist_ok=True)
-        os.makedirs(self.plots_save_dir, exist_ok=True)
+        ensure_dir(self.model_save_dir)
+        ensure_dir(self.plots_save_dir)
 
         # Store training data for verification
         self.training_images = None
@@ -203,7 +202,7 @@ class EncoderVerificationCallback(Callback):
                 )
 
                 # Try to load synthetic data from workspace
-                synthetic_dir = "workspace/datasets/synthetic"
+                synthetic_dir = get_path("workspace/datasets/synthetic")
                 if os.path.exists(synthetic_dir):
                     available_files = [
                         f
