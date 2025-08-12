@@ -469,6 +469,8 @@ class EncoderVerifier:
         return {
             "true_mean": true_mean,
             "pred_mean": pred_mean,
+            "true_std": true_std,
+            "pred_std": pred_std,
             "correlations": correlations,
             "constant_neurons": constant_neurons,
         }

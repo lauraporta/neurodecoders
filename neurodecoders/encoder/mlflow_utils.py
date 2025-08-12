@@ -253,7 +253,6 @@ def log_encoder_experiment(
 
         # Log model metadata
         training_info = {
-            "total_epochs": len(lightning_module.train_losses),
             "final_train_loss": lightning_module.train_losses[-1]
             if lightning_module.train_losses
             else None,
@@ -261,9 +260,6 @@ def log_encoder_experiment(
             if lightning_module.val_losses
             else None,
             "model_parameters": sum(p.numel() for p in model.parameters()),
-            "trainable_parameters": sum(
-                p.numel() for p in model.parameters() if p.requires_grad
-            ),
         }
 
         tracker.log_model_metadata(

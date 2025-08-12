@@ -650,7 +650,6 @@ def _train_single_fold(
 
             # Log training info
             training_info = {
-                "total_epochs": len(lightning_model.train_losses),
                 "final_train_loss": lightning_model.train_losses[-1]
                 if lightning_model.train_losses
                 else None,
@@ -658,9 +657,6 @@ def _train_single_fold(
                 if lightning_model.val_losses
                 else None,
                 "model_parameters": sum(p.numel() for p in model.parameters()),
-                "trainable_parameters": sum(
-                    p.numel() for p in model.parameters() if p.requires_grad
-                ),
             }
 
             mlflow.log_metrics(training_info)

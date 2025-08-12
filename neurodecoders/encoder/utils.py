@@ -23,9 +23,9 @@ class NeuralDataset(Dataset):
     """Dataset for neural firing rate data paired with images."""
 
     def __init__(self, images, firing_rates, labels=None):
-        self.images = torch.tensor(
-            images[:, None, :, :], dtype=torch.float32
-        )  # Add channel dim if needed
+        # Recent synthetic datasets are consistently built with
+        # (batch, channel, height, width) format
+        self.images = torch.tensor(images, dtype=torch.float32)
         self.firing_rates = torch.tensor(firing_rates, dtype=torch.float32)
         self.labels = labels
 
