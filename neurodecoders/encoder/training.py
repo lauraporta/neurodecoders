@@ -18,7 +18,6 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import Logger
 from sklearn.model_selection import KFold
 
-from .mlflow_utils import log_encoder_experiment
 from .models import (
     ResNetEncoder,
     SimpleEncoder,
@@ -391,10 +390,10 @@ def _train_single_fold(
                 # Fall back to default experiment
                 mlflow.set_experiment("Default")
 
-        # Start MLflow run
+        # Start MLflow run - DON'T END IT HERE
         mlflow.start_run(run_name=mlflow_run_name)
 
-        # PROPER DATASET TRACKING FOR COMPLEX DATA
+        # Log dataset metadata (keep existing code)
         try:
             # Get git commit information
             git_commit = "unknown"
@@ -516,7 +515,7 @@ def _train_single_fold(
             print(f"Warning: Could not log dataset metadata to MLflow: {e}")
             traceback.print_exc()
 
-        # Create a simple logger for PyTorch Lightning that doesn't interfere
+        # Create MLflow logger for PyTorch Lightning
         class MLflowCompatibleLogger(Logger):
             def __init__(self):
                 super().__init__()
@@ -583,11 +582,7 @@ def _train_single_fold(
     # Test the model
     trainer.test(lightning_model, data_module)
 
-    # End MLflow run if enabled
-    if enable_mlflow:
-        mlflow.end_run()
-
-    # Log experiment to MLflow if enabled
+    # Log experiment to MLflow if enabled - MODIFY THIS PART
     if enable_mlflow:
         # Prepare hyperparameters for logging
         hyperparams = {
@@ -612,30 +607,66 @@ def _train_single_fold(
 
         # Add dataset metadata if available
         if dataset_metadata:
-            # Add dataset metadata as parameters for MLflow display
             for key, value in dataset_metadata.items():
                 if key not in ["dataset_timestamp", "dataset_filename"]:
                     hyperparams[f"dataset_{key}"] = value
                 else:
-                    # Add timestamp and filename to dataset_info
                     dataset_info[key] = value
 
-        # Save model path for logging - always save in encoders directory
-        model_save_path = (
-            f"workspace/models/encoders/{model_name}_"
-            f"{mlflow_run_name or 'latest'}.pt"
-        )
+        # Log everything to the CURRENT run (don't create a new one)
+        try:
+            # Log hyperparameters (only if not already logged by Lightning)
+            # Check which parameters are already logged to avoid duplication
+            active_run = mlflow.active_run()
+            if active_run:
+                existing_params = mlflow.get_run(
+                    active_run.info.run_id
+                ).data.params
 
-        # Log experiment
-        log_encoder_experiment(
-            model=model,
-            lightning_module=lightning_model,
-            hyperparams=hyperparams,
-            dataset_info=dataset_info,
-            model_save_path=model_save_path,
-            experiment_name=mlflow_experiment_name,
-            run_name=mlflow_run_name,
-        )
+                # Only log parameters that haven't been logged yet
+                new_hyperparams = {
+                    k: v
+                    for k, v in hyperparams.items()
+                    if k not in existing_params
+                }
+                if new_hyperparams:
+                    mlflow.log_params(new_hyperparams)
+
+                # Log dataset info
+                new_dataset_params = {
+                    f"dataset_{k}": v
+                    for k, v in dataset_info.items()
+                    if f"dataset_{k}" not in existing_params
+                }
+                if new_dataset_params:
+                    mlflow.log_params(new_dataset_params)
+
+            # Log model
+            mlflow.pytorch.log_model(lightning_model, "encoder_model")
+
+            # Log training info
+            training_info = {
+                "total_epochs": len(lightning_model.train_losses),
+                "final_train_loss": lightning_model.train_losses[-1]
+                if lightning_model.train_losses
+                else None,
+                "final_val_loss": lightning_model.val_losses[-1]
+                if lightning_model.val_losses
+                else None,
+                "model_parameters": sum(p.numel() for p in model.parameters()),
+                "trainable_parameters": sum(
+                    p.numel() for p in model.parameters() if p.requires_grad
+                ),
+            }
+
+            mlflow.log_metrics(training_info)
+
+        except Exception as e:
+            print(f"Warning: Could not log experiment to MLflow: {e}")
+            traceback.print_exc()
+
+        # END the run here
+        mlflow.end_run()
 
     return trainer, lightning_model, data_module
 
