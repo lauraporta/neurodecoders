@@ -122,6 +122,7 @@ class EncoderLightningModule(pl.LightningModule):
         Supports different strategies for different model types.
         """
         optimizer_type = self.optimizer_config.get("type", "adam")
+        weight_decay = self.optimizer_config.get("weight_decay", 0.0)
 
         if optimizer_type == "resnet_differential":
             # Different learning rates for backbone vs head (for ResNet models)
@@ -141,28 +142,61 @@ class EncoderLightningModule(pl.LightningModule):
                 {
                     "params": head_params,
                     "lr": self.learning_rate,
+                    "weight_decay": weight_decay,
                 },
                 {
                     "params": backbone_params,
                     "lr": self.learning_rate * 0.1,  # Lower LR for backbone
+                    "weight_decay": weight_decay,
                 },
             ]
 
             optimizer = torch.optim.Adam(param_groups)
 
-        else:
-            # Standard optimizer for all parameters
-            weight_decay = self.optimizer_config.get("weight_decay", 0.0)
+        elif optimizer_type == "adam":
             optimizer = torch.optim.Adam(
                 self.parameters(),
                 lr=self.learning_rate,
                 weight_decay=weight_decay,
             )
+        elif optimizer_type == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.learning_rate,
+                weight_decay=weight_decay,
+            )
+        elif optimizer_type == "sgd":
+            optimizer = torch.optim.SGD(
+                self.parameters(),
+                lr=self.learning_rate,
+                weight_decay=weight_decay,
+                momentum=0.9,
+            )
+        else:
+            raise ValueError(f"Unsupported optimizer type: {optimizer_type}")
 
         # Configure scheduler
         scheduler_type = self.scheduler_config.get("type", "none")
 
-        if scheduler_type == "reduce_lr_on_plateau":
+        if scheduler_type == "step":
+            step_size = self.scheduler_config.get("step_size", 30)
+            gamma = self.scheduler_config.get("gamma", 0.1)
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer, step_size=step_size, gamma=gamma
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": scheduler,
+            }
+        elif scheduler_type == "cosine":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, T_max=self.trainer.max_epochs
+            )
+            return {
+                "optimizer": optimizer,
+                "lr_scheduler": scheduler,
+            }
+        elif scheduler_type == "plateau":
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
                 mode="min",

@@ -19,6 +19,11 @@ sys.path.append(os.path.dirname(__file__))
 import numpy as np
 import torch
 
+from neurodecoders.encoder.config import (
+    HYPERPARAMETER_SWEEP_DEFAULTS,
+    merge_config_with_defaults,
+    validate_config,
+)
 from neurodecoders.encoder.models import (
     ResNetEncoder,
     SimpleEncoder,
@@ -171,7 +176,14 @@ def load_synthetic_data_from_workspace(
     print(f"Loading synthetic data from: {file_path}")
 
     try:
-        data = np.load(file_path)
+        # Check if memory mapping should be used
+        use_memory_mapping = config.get("use_memory_mapping", False)
+
+        if use_memory_mapping:
+            print(f"Loading data with memory mapping: {file_path}")
+            data = np.load(file_path, mmap_mode="r")
+        else:
+            data = np.load(file_path)
 
         # Extract images, responses (firing rates), and labels
         if "images" in data and "responses" in data:
@@ -199,6 +211,21 @@ def load_synthetic_data_from_workspace(
                 "'responses'"
             )
 
+        # Calculate memory usage
+        total_memory_mb = (
+            images.nbytes
+            + firing_rates.nbytes
+            + (labels.nbytes if labels is not None else 0)
+        ) / (1024 * 1024)
+
+        print(f"Dataset memory usage: {total_memory_mb:.1f} MB")
+
+        if total_memory_mb > 1000 and not use_memory_mapping:
+            print(
+                "Warning: Large dataset detected. "
+                "Consider using --use-memory-mapping"
+            )
+
         return images, firing_rates, labels, metadata
 
     except Exception as e:
@@ -218,7 +245,13 @@ def get_model(config: Dict[str, Any]) -> torch.nn.Module:
         model: PyTorch model
     """
     model_type = config.get("model_type", "simple")
-    out_neurons = config.get("out_neurons", 100)
+    out_neurons = config.get("out_neurons")
+
+    if out_neurons is None:
+        raise ValueError(
+            "out_neurons must be specified or inferred from dataset before "
+            "calling get_model"
+        )
 
     if model_type == "simple":
         return SimpleEncoder(out_neurons=out_neurons)
@@ -248,10 +281,13 @@ def train_with_config(config: Dict[str, Any]):
     """
     print("=== ENCODER TRAINING WITH CONFIG ===")
     print(f"Model type: {config.get('model_type', 'simple')}")
-    print(f"Output neurons: {config.get('out_neurons', 100)}")
     print(f"Learning rate: {config.get('learning_rate', 1e-3)}")
     print(f"Epochs: {config.get('epochs', 30)}")
     print(f"Batch size: {config.get('batch_size', 32)}")
+    print(f"Optimizer: {config.get('optimizer', 'adam')}")
+    print(f"Weight decay: {config.get('weight_decay', 0.0)}")
+    print(f"Loss function: {config.get('loss_function', 'mse')}")
+    print(f"Scheduler: {config.get('scheduler', 'none')}")
     print(f"Dataset: {config.get('dataset_type', 'cifar10')}")
     print(f"STA type: {config.get('sta_type', 'perlin_noise_patterns,11,11')}")
     print(f"Neurons: {config.get('n_neurons', 1000)}")
@@ -262,6 +298,13 @@ def train_with_config(config: Dict[str, Any]):
         load_synthetic_data_from_workspace(config)
     )
 
+    # Infer out_neurons from dataset if not specified
+    if config.get("out_neurons") is None:
+        config["out_neurons"] = firing_rates.shape[1]
+        print(f"Inferred output neurons from dataset: {config['out_neurons']}")
+    else:
+        print(f"Output neurons: {config.get('out_neurons')}")
+
     # Create data module
     data_module = NeuralDataModule(
         images=images,
@@ -269,7 +312,24 @@ def train_with_config(config: Dict[str, Any]):
         labels=labels,
         batch_size=config.get("batch_size", 32),
         dataset_metadata=metadata,
+        use_memory_mapping=config.get("use_memory_mapping", False),
+        chunk_size=config.get("chunk_size", 10000),
+        prefetch_factor=config.get("prefetch_factor", 2),
+        num_workers=config.get("num_workers", 0),
+        pin_memory=config.get("pin_memory", True),
     )
+
+    # Create optimizer and scheduler configurations
+    optimizer_config = {
+        "type": config.get("optimizer", "adam"),
+        "weight_decay": config.get("weight_decay", 0.0),
+    }
+
+    scheduler_config = {
+        "type": config.get("scheduler", "none"),
+        "step_size": config.get("scheduler_step_size", 30),
+        "gamma": config.get("scheduler_gamma", 0.1),
+    }
 
     # Create model
     model = get_model(config)
@@ -281,6 +341,9 @@ def train_with_config(config: Dict[str, Any]):
         model_name=f"{config.get('model_type', 'simple')}_encoder",
         learning_rate=config.get("learning_rate", 1e-3),
         epochs=config.get("epochs", 30),
+        optimizer_config=optimizer_config,
+        loss_fn=config.get("loss_function", "mse"),
+        scheduler_config=scheduler_config,
         enable_mlflow=config.get("enable_mlflow", True),
         mlflow_experiment_name=config.get(
             "mlflow_experiment_name", "neural_encoder"
@@ -296,6 +359,8 @@ def main():
     parser = argparse.ArgumentParser(
         description="Train neural encoder with MLflow tracking"
     )
+
+    # Model configuration
     parser.add_argument(
         "--model-type",
         choices=["simple", "skip", "resnet"],
@@ -305,9 +370,30 @@ def main():
     parser.add_argument(
         "--out-neurons",
         type=int,
-        default=1000,
-        help="Number of output neurons",
+        default=None,
+        help=(
+            "Number of output neurons (inferred from dataset if not specified)"
+        ),
     )
+    parser.add_argument(
+        "--resnet-type",
+        choices=["resnet18", "resnet34", "resnet50"],
+        default="resnet18",
+        help="ResNet type (only for resnet model)",
+    )
+    parser.add_argument(
+        "--freeze-backbone",
+        action="store_true",
+        default=True,
+        help="Freeze ResNet backbone (only for resnet model)",
+    )
+    parser.add_argument(
+        "--unfreeze-backbone",
+        action="store_true",
+        help="Unfreeze ResNet backbone (overrides --freeze-backbone)",
+    )
+
+    # Training configuration
     parser.add_argument(
         "--learning-rate",
         type=float,
@@ -327,27 +413,103 @@ def main():
         help="Batch size",
     )
     parser.add_argument(
+        "--optimizer",
+        choices=["adam", "sgd", "adamw"],
+        default="adam",
+        help="Optimizer type",
+    )
+    parser.add_argument(
+        "--weight-decay",
+        type=float,
+        default=0.0,
+        help="Weight decay (L2 regularization)",
+    )
+    parser.add_argument(
+        "--loss-function",
+        choices=["mse", "l1", "smooth_l1", "huber"],
+        default="mse",
+        help="Loss function",
+    )
+    parser.add_argument(
+        "--scheduler",
+        choices=["none", "step", "cosine", "plateau"],
+        default="none",
+        help="Learning rate scheduler",
+    )
+    parser.add_argument(
+        "--scheduler-step-size",
+        type=int,
+        default=30,
+        help="Step size for step scheduler",
+    )
+    parser.add_argument(
+        "--scheduler-gamma",
+        type=float,
+        default=0.1,
+        help="Gamma for step scheduler",
+    )
+
+    # Data configuration
+    parser.add_argument(
         "--dataset-type",
         default="cifar10",
         help="Dataset type (cifar10, mnist, etc.)",
     )
     parser.add_argument(
         "--sta-type",
-        default="perlin_noise_patterns,11,11",
+        default="periodic_patterns,70,70",
         help="STA pattern type",
     )
     parser.add_argument(
         "--n-neurons",
         type=int,
-        default=1000,
+        default=100,
         help="Number of neurons in synthetic data",
     )
     parser.add_argument(
         "--n-images",
         type=int,
-        default=1000,
+        default=100000,
         help="Number of images in synthetic data",
     )
+
+    # Data loading configuration
+    parser.add_argument(
+        "--use-memory-mapping",
+        action="store_true",
+        help="Use memory mapping for large datasets",
+    )
+    parser.add_argument(
+        "--chunk-size",
+        type=int,
+        default=10000,
+        help="Chunk size for data loading",
+    )
+    parser.add_argument(
+        "--prefetch-factor",
+        type=int,
+        default=2,
+        help="DataLoader prefetch factor",
+    )
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=0,
+        help="Number of workers for data loading",
+    )
+    parser.add_argument(
+        "--pin-memory",
+        action="store_true",
+        default=True,
+        help="Pin memory for faster GPU transfer",
+    )
+    parser.add_argument(
+        "--no-pin-memory",
+        action="store_true",
+        help="Disable pin memory (overrides --pin-memory)",
+    )
+
+    # MLflow configuration
     parser.add_argument(
         "--experiment-name",
         default="neural_encoder",
@@ -362,12 +524,18 @@ def main():
 
     args = parser.parse_args()
 
+    # Handle freeze_backbone logic
+    freeze_backbone = args.freeze_backbone and not args.unfreeze_backbone
+
+    # Handle pin_memory logic
+    pin_memory = args.pin_memory and not args.no_pin_memory
+
     # Check if this is a hyperparameter sweep
     if args.array_task_id is not None:
         # Hyperparameter sweep mode for SLURM job arrays
-        # Define hyperparameter combinations
-        learning_rates = [0.00001, 0.0001, 0.001, 0.01]
-        batch_sizes = [8, 16, 32, 64]
+        # Use centralized hyperparameter sweep defaults
+        learning_rates = HYPERPARAMETER_SWEEP_DEFAULTS["learning_rates"]
+        batch_sizes = HYPERPARAMETER_SWEEP_DEFAULTS["batch_sizes"]
 
         # Calculate which combination this array task should run
         lr_idx = args.array_task_id // len(batch_sizes)
@@ -387,19 +555,23 @@ def main():
             f"batch_size={batch_size}"
         )
 
+        # Create config with sweep defaults
         config = {
-            "model_type": "resnet",
-            "out_neurons": 1000,
+            "model_type": HYPERPARAMETER_SWEEP_DEFAULTS["sweep_model_type"],
+            "out_neurons": None,  # Will be inferred from dataset
             "learning_rate": lr,
-            "epochs": 10000,
+            "epochs": HYPERPARAMETER_SWEEP_DEFAULTS["sweep_epochs"],
             "batch_size": batch_size,
-            "dataset_type": "mnist",
-            "sta_type": "perlin_noise_patterns,11,11",
-            "n_neurons": 1000,
-            "n_images": 1000,
+            "dataset_type": HYPERPARAMETER_SWEEP_DEFAULTS[
+                "sweep_dataset_type"
+            ],
             "mlflow_experiment_name": "resnet_hyperparameter_sweep_mnist",
             "mlflow_run_name": run_name,
         }
+
+        # Merge with defaults and validate
+        config = merge_config_with_defaults(config)
+        validate_config(config)
 
         trainer, model, _ = train_with_config(config)
 
@@ -413,17 +585,34 @@ def main():
         # Single experiment with command line arguments
         config = {
             "model_type": args.model_type,
-            "out_neurons": args.out_neurons,
+            "out_neurons": args.out_neurons,  # None means infer from dataset
+            "resnet_type": args.resnet_type,
+            "freeze_backbone": freeze_backbone,
             "learning_rate": args.learning_rate,
             "epochs": args.epochs,
             "batch_size": args.batch_size,
+            "optimizer": args.optimizer,
+            "weight_decay": args.weight_decay,
+            "loss_function": args.loss_function,
+            "scheduler": args.scheduler,
+            "scheduler_step_size": args.scheduler_step_size,
+            "scheduler_gamma": args.scheduler_gamma,
             "dataset_type": args.dataset_type,
             "sta_type": args.sta_type,
             "n_neurons": args.n_neurons,
             "n_images": args.n_images,
+            "use_memory_mapping": args.use_memory_mapping,
+            "chunk_size": args.chunk_size,
+            "prefetch_factor": args.prefetch_factor,
+            "num_workers": args.num_workers,
+            "pin_memory": pin_memory,
             "mlflow_experiment_name": args.experiment_name,
             "mlflow_run_name": args.run_name,
         }
+
+        # Merge with defaults and validate
+        config = merge_config_with_defaults(config)
+        validate_config(config)
 
         trainer, model, _ = train_with_config(config)
 

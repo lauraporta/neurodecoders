@@ -24,14 +24,19 @@ echo "Starting encoder training..."
 # MODIFY THESE PARAMETERS AS NEEDED:
 # ==========================================
 
-MODEL_TYPE="resnet"           # Options: simple, resnet, skip_connection
+MODEL_TYPE="resnet"           # Options: simple, resnet, skip
 EPOCHS=10000                     # Number of training epochs
-OUT_NEURONS=1000             # Number of output neurons
 DATASET_TYPE="mnist"        # Dataset type
 STA_TYPE="perlin_noise_patterns,11,11"  # STA type
 N_NEURONS=1000               # Number of neurons
 N_IMAGES=1000                # Number of images
 EXPERIMENT_NAME="resnet_hyperparameter_sweep"  # MLflow experiment name
+
+# Training parameters
+OPTIMIZER="adam"             # Options: adam, adamw, sgd
+LOSS_FUNCTION="mse"          # Options: mse, l1, smooth_l1, huber
+WEIGHT_DECAY=0.0             # Weight decay (L2 regularization)
+SCHEDULER="none"             # Options: none, step, cosine, plateau
 
 # Define arrays for hyperparameter sweep
 LEARNING_RATES=(0.0001 0.001 0.01)
@@ -55,9 +60,7 @@ for lr in "${LEARNING_RATES[@]}"; do
         echo "=========================================="
 
         python neurodecoders/encoder/mlflow_training.py \
-            --mode single \
             --model-type $MODEL_TYPE \
-            --out-neurons $OUT_NEURONS \
             --epochs $EPOCHS \
             --dataset-type $DATASET_TYPE \
             --sta-type $STA_TYPE \
@@ -66,7 +69,11 @@ for lr in "${LEARNING_RATES[@]}"; do
             --experiment-name $EXPERIMENT_NAME \
             --run-name $RUN_NAME \
             --batch-size $batch_size \
-            --learning-rate $lr
+            --learning-rate $lr \
+            --optimizer $OPTIMIZER \
+            --loss-function $LOSS_FUNCTION \
+            --weight-decay $WEIGHT_DECAY \
+            --scheduler $SCHEDULER
 
         echo "Completed training for $RUN_NAME"
         echo "=========================================="

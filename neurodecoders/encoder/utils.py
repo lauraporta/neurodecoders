@@ -42,6 +42,10 @@ class NeuralDataModule(pl.LightningDataModule):
         batch_size=32,
         num_workers=0,
         dataset_metadata=None,
+        use_memory_mapping=False,
+        chunk_size=10000,
+        prefetch_factor=2,
+        pin_memory=True,
     ):
         super().__init__()
         self.images = images
@@ -51,6 +55,12 @@ class NeuralDataModule(pl.LightningDataModule):
         self.val_split = val_split
         self.batch_size = batch_size
         self.num_workers = num_workers
+
+        # Data loading configuration
+        self.use_memory_mapping = use_memory_mapping
+        self.chunk_size = chunk_size
+        self.prefetch_factor = prefetch_factor
+        self.pin_memory = pin_memory
 
         # Dataset generation metadata
         self.dataset_metadata = dataset_metadata or {}
@@ -151,6 +161,11 @@ class NeuralDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            prefetch_factor=self.prefetch_factor
+            if self.num_workers > 0
+            else None,
+            persistent_workers=self.num_workers > 0,
         )
 
     def val_dataloader(self):
@@ -160,6 +175,11 @@ class NeuralDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            prefetch_factor=self.prefetch_factor
+            if self.num_workers > 0
+            else None,
+            persistent_workers=self.num_workers > 0,
         )
 
     def test_dataloader(self):
@@ -169,6 +189,11 @@ class NeuralDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            pin_memory=self.pin_memory,
+            prefetch_factor=self.prefetch_factor
+            if self.num_workers > 0
+            else None,
+            persistent_workers=self.num_workers > 0,
         )
 
 
