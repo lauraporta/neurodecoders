@@ -6,7 +6,7 @@ import datetime
 import os
 import subprocess
 import traceback
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import mlflow
 import numpy as np
@@ -236,7 +236,6 @@ def train_encoder(
     mlflow_run_name: Optional[str] = None,
     mlflow_tracking_uri: Optional[str] = None,
     n_folds: int = 1,  # Default to 1 (no CV)
-    dataset_metadata: Optional[Dict[str, Any]] = None,
 ):
     """
     Generic training function that works with any model architecture.
@@ -286,7 +285,6 @@ def train_encoder(
             mlflow_experiment_name=mlflow_experiment_name,
             mlflow_run_name=mlflow_run_name,
             mlflow_tracking_uri=mlflow_tracking_uri,
-            dataset_metadata=dataset_metadata,
         )
 
     # Otherwise, do k-fold cross-validation
@@ -308,7 +306,6 @@ def train_encoder(
         mlflow_experiment_name=mlflow_experiment_name,
         mlflow_run_name=mlflow_run_name,
         mlflow_tracking_uri=mlflow_tracking_uri,
-        dataset_metadata=dataset_metadata,
     )
 
 
@@ -329,7 +326,6 @@ def _train_single_fold(
     mlflow_experiment_name: str = "neural_encoder",
     mlflow_run_name: Optional[str] = None,
     mlflow_tracking_uri: Optional[str] = None,
-    dataset_metadata: Optional[Dict[str, Any]] = None,
 ):
     """Train a single model (no cross-validation)."""
 
@@ -393,52 +389,47 @@ def _train_single_fold(
         # Start MLflow run - DON'T END IT HERE
         mlflow.start_run(run_name=mlflow_run_name)
 
-        # Log dataset metadata (keep existing code)
+        # Log dataset metadata using enhanced dataset object
         try:
-            # Get git commit information
-            git_commit = "unknown"
-            git_branch = "unknown"
-            try:
-                # Get current git commit hash
-                git_commit = (
-                    subprocess.check_output(
-                        ["git", "rev-parse", "HEAD"],
-                        cwd=os.getcwd(),
-                        stderr=subprocess.DEVNULL,
+            # Update dataset object with git and timestamp information
+            if (
+                hasattr(data_module, "git_commit")
+                and data_module.git_commit is None
+            ):
+                try:
+                    # Get current git commit hash
+                    git_commit = (
+                        subprocess.check_output(
+                            ["git", "rev-parse", "HEAD"],
+                            cwd=os.getcwd(),
+                            stderr=subprocess.DEVNULL,
+                        )
+                        .decode("utf-8")
+                        .strip()[:8]
+                    )  # First 8 characters
+                    data_module.git_commit = git_commit
+
+                    # Get current git branch
+                    git_branch = (
+                        subprocess.check_output(
+                            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                            cwd=os.getcwd(),
+                            stderr=subprocess.DEVNULL,
+                        )
+                        .decode("utf-8")
+                        .strip()
                     )
-                    .decode("utf-8")
-                    .strip()[:8]
-                )  # First 8 characters
+                    data_module.git_branch = git_branch
+                except Exception as e:
+                    print(f"Warning: Could not get git information: {e}")
 
-                # Get current git branch
-                git_branch = (
-                    subprocess.check_output(
-                        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                        cwd=os.getcwd(),
-                        stderr=subprocess.DEVNULL,
-                    )
-                    .decode("utf-8")
-                    .strip()
-                )
-            except Exception as e:
-                print(f"Warning: Could not get git information: {e}")
+            # Update timestamp if not set
+            if data_module.timestamp is None:
+                data_module.timestamp = datetime.datetime.now().isoformat()
 
-            # Get current timestamp
-            timestamp = datetime.datetime.now().isoformat()
+            # Create metadata summary for the dataset with generation metadata
+            dataset_metadata_dict = data_module.get_metadata_summary()
 
-            # Create dataset identifier
-            dataset_id = (
-                (
-                    f"{dataset_metadata.get('dataset_type', 'unknown')}_"
-                    f"{dataset_metadata.get('sta_pattern', 'unknown')}_"
-                    f"{dataset_metadata.get('n_neurons', 'unknown')}n_"
-                    f"{dataset_metadata.get('n_images', 'unknown')}i"
-                )
-                if dataset_metadata
-                else "synthetic_dataset"
-            )
-
-            # Create metadata summary for the dataset
             metadata_summary = pd.DataFrame(
                 {
                     "component": ["images", "firing_rates", "labels"],
@@ -466,41 +457,59 @@ def _train_single_fold(
                 }
             )
 
+            # Add generation metadata as additional rows
+            metadata_rows = []
+            for key, value in dataset_metadata_dict.items():
+                if value is not None:
+                    metadata_rows.append(
+                        {
+                            "component": f"metadata_{key}",
+                            "shape": str(value),
+                            "dtype": type(value).__name__,
+                            "size_mb": 0.0,
+                        }
+                    )
+
+            # Combine the data summary with metadata
+            if metadata_rows:
+                metadata_df = pd.DataFrame(metadata_rows)
+                metadata_summary = pd.concat(
+                    [metadata_summary, metadata_df], ignore_index=True
+                )
+
             # Create source information
             source_info = (
                 f"workspace/datasets/synthetic/"
-                f"{dataset_metadata.get('dataset_filename', 'unknown')}"
-                if dataset_metadata and "dataset_filename" in dataset_metadata
-                else "synthetic_data_generation"
+                f"{data_module.dataset_filename or 'unknown'}"
             )
 
-            # Log the metadata dataset
+            # Log the metadata dataset with dataset-level metadata
+            dataset_id = data_module.get_dataset_id()
+
+            # Create dataset with metadata in the name and source
+            dataset_metadata_dict = data_module.get_metadata_summary()
+
+            # Create a more descriptive name with metadata
+            metadata_name = f"neural_data_{dataset_id}"
+
+            # Create dataset
             summary_dataset = mlflow.data.from_pandas(
                 metadata_summary,
                 source=source_info,
-                name=f"neural_data_{dataset_id}",
+                name=metadata_name,
             )
+
             mlflow.log_input(summary_dataset, context="training_data")
 
-            # Log git and timestamp information as parameters
-            mlflow.log_params(
-                {
-                    "git_commit": git_commit,
-                    "git_branch": git_branch,
-                    "training_timestamp": timestamp,
-                    "dataset_timestamp": dataset_metadata.get(
-                        "dataset_timestamp", "unknown"
-                    )
-                    if dataset_metadata
-                    else "unknown",
-                }
-            )
+            # Also log as parameters for backward compatibility
+            dataset_params = data_module.get_mlflow_parameters()
+            mlflow.log_params(dataset_params)
 
             print("Logged neural dataset metadata to MLflow:")
             print(f"  Dataset ID: {dataset_id}")
-            print(f"  Git Commit: {git_commit}")
-            print(f"  Git Branch: {git_branch}")
-            print(f"  Training Timestamp: {timestamp}")
+            print(f"  Git Commit: {data_module.git_commit}")
+            print(f"  Git Branch: {data_module.git_branch}")
+            print(f"  Training Timestamp: {data_module.timestamp}")
             print(f"  Images: {data_module.images.shape}")
             print(f"  Firing Rates: {data_module.firing_rates.shape}")
             labels_shape = (
@@ -509,7 +518,7 @@ def _train_single_fold(
                 else "None"
             )
             print(f"  Labels: {labels_shape}")
-            print(f"  Total Size: {sum(metadata_summary['size_mb']):.2f} MB")
+            print(f"  Total Size: {data_module.total_size_mb:.2f} MB")
 
         except Exception as e:
             print(f"Warning: Could not log dataset metadata to MLflow: {e}")
@@ -605,13 +614,8 @@ def _train_single_fold(
             "output_neurons": data_module.firing_rates.shape[1],
         }
 
-        # Add dataset metadata if available
-        if dataset_metadata:
-            for key, value in dataset_metadata.items():
-                if key not in ["dataset_timestamp", "dataset_filename"]:
-                    hyperparams[f"dataset_{key}"] = value
-                else:
-                    dataset_info[key] = value
+        # Dataset metadata is now part of the data_module object
+        # No need to add it here since it's already logged earlier
 
         # Log everything to the CURRENT run (don't create a new one)
         try:

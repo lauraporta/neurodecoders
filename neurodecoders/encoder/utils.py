@@ -49,6 +49,7 @@ class NeuralDataModule(pl.LightningDataModule):
         val_split=0.15,
         batch_size=32,
         num_workers=0,
+        dataset_metadata=None,
     ):
         super().__init__()
         self.images = images
@@ -59,9 +60,84 @@ class NeuralDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
         self.num_workers = num_workers
 
+        # Dataset generation metadata
+        self.dataset_metadata = dataset_metadata or {}
+
+        # Core dataset attributes
+        self.synthetic = True  # Always synthetic for this codebase
+        self.timestamp = self.dataset_metadata.get("dataset_timestamp")
+        self.git_commit = self.dataset_metadata.get("git_commit")
+        self.git_branch = self.dataset_metadata.get("git_branch")
+
+        # STA pattern information
+        self.sta_pattern = self.dataset_metadata.get("sta_pattern")
+        self.sta_patch_width = self.dataset_metadata.get("sta_patch_width")
+        self.sta_patch_height = self.dataset_metadata.get("sta_patch_height")
+        self.sta_type = self.dataset_metadata.get("sta_type")
+
+        # Dataset configuration
+        self.dataset_type = self.dataset_metadata.get("dataset_type")
+        self.n_neurons = self.dataset_metadata.get("n_neurons")
+        self.n_images = self.dataset_metadata.get("n_images")
+        self.dataset_filename = self.dataset_metadata.get("dataset_filename")
+
+        # Data statistics
+        self.input_shape = images.shape if images is not None else None
+        self.output_neurons = (
+            firing_rates.shape[1] if firing_rates is not None else None
+        )
+        self.total_size_mb = self._calculate_total_size_mb()
+
         # Create full dataset
         self.full_dataset = NeuralDataset(images, firing_rates, labels)
         self.setup_splits()
+
+    def _calculate_total_size_mb(self):
+        """Calculate total dataset size in MB."""
+        total_bytes = 0
+        if self.images is not None:
+            total_bytes += self.images.nbytes
+        if self.firing_rates is not None:
+            total_bytes += self.firing_rates.nbytes
+        if self.labels is not None:
+            total_bytes += self.labels.nbytes
+        return total_bytes / (1024 * 1024)
+
+    def get_metadata_summary(self):
+        """Get a summary of dataset metadata as a dictionary."""
+        return {
+            "synthetic": self.synthetic,
+            "timestamp": self.timestamp,
+            "git_commit": self.git_commit,
+            "git_branch": self.git_branch,
+            "sta_pattern": self.sta_pattern,
+            "sta_patch_width": self.sta_patch_width,
+            "sta_patch_height": self.sta_patch_height,
+            "sta_type": self.sta_type,
+            "dataset_type": self.dataset_type,
+            "n_neurons": self.n_neurons,
+            "n_images": self.n_images,
+            "dataset_filename": self.dataset_filename,
+            "input_shape": str(self.input_shape) if self.input_shape else None,
+            "output_neurons": self.output_neurons,
+            "total_size_mb": self.total_size_mb,
+        }
+
+    def get_mlflow_parameters(self):
+        """Get dataset metadata formatted for MLflow parameter logging."""
+        metadata = self.get_metadata_summary()
+        return {
+            f"dataset_{k}": v for k, v in metadata.items() if v is not None
+        }
+
+    def get_dataset_id(self):
+        """Generate a unique dataset identifier."""
+        return (
+            f"{self.dataset_type or 'unknown'}_"
+            f"{self.sta_pattern or 'unknown'}_"
+            f"{self.n_neurons or 'unknown'}n_"
+            f"{self.n_images or 'unknown'}i"
+        )
 
     def setup_splits(self):
         """Setup train/val/test splits"""

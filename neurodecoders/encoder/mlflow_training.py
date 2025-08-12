@@ -330,7 +330,7 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
     # Preprocess data
     images, firing_rates = preprocess_data(images, firing_rates)
 
-    # Create data module
+    # Create data module with metadata
     training_config = get_training_config(config)
     data_module = NeuralDataModule(
         images=images,
@@ -339,14 +339,14 @@ def train_with_config(config: Dict[str, Any]) -> tuple:
         train_split=training_config["train_split"],
         val_split=training_config["val_split"],
         batch_size=training_config["batch_size"],
+        dataset_metadata=dataset_metadata,
     )
 
     # Train based on model type
     model_type = config.get("model_type", "simple")
     mlflow_config = get_mlflow_config(config)
 
-    # Add dataset metadata to MLflow config for logging
-    mlflow_config["dataset_metadata"] = dataset_metadata
+    # Dataset metadata is now part of the data_module object
 
     if model_type == "simple":
         # Include weight_decay in optimizer_config
