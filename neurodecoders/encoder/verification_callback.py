@@ -260,7 +260,7 @@ class EncoderVerificationCallback(Callback):
             verifier.predict_firing_rates()
 
             # Run analyses
-            results = {}
+            results: Dict[str, Any] = {}
 
             # Firing rate analysis
             print("Running firing rate analysis...")

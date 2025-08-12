@@ -24,12 +24,8 @@ from neurodecoders.encoder.models import (
     SimpleEncoder,
     SimpleEncoderWithSkipConnection,
 )
-from neurodecoders.encoder.training import (
-    train_resnet_encoder,
-    train_simple_encoder,
-    train_skip_connection_encoder,
-)
-from neurodecoders.encoder.utils import NeuralDataModule, preprocess_data
+from neurodecoders.encoder.training import train_encoder
+from neurodecoders.encoder.utils import NeuralDataModule
 
 
 def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
@@ -240,195 +236,105 @@ def get_model(config: Dict[str, Any]) -> torch.nn.Module:
         raise ValueError(f"Unknown model_type: {model_type}")
 
 
-def get_training_config(config: Dict[str, Any]) -> Dict[str, Any]:
+def train_with_config(config: Dict[str, Any]):
     """
-    Extract training configuration from config.
+    Train encoder with given configuration.
 
     Args:
-        config: Full configuration dictionary
-
-    Returns:
-        training_config: Training-specific configuration
-    """
-    return {
-        "learning_rate": config.get("learning_rate", 1e-3),
-        "weight_decay": config.get("weight_decay", 1e-5),
-        "epochs": config.get("epochs", 30),
-        "batch_size": config.get("batch_size", 32),
-        "train_split": config.get("train_split", 0.7),
-        "val_split": config.get("val_split", 0.15),
-        "unfreeze_epoch": config.get("unfreeze_epoch"),
-        "optimizer_config": config.get("optimizer_config"),
-    }
-
-
-def get_mlflow_config(config: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Extract MLflow configuration from config.
-
-    Args:
-        config: Full configuration dictionary
-
-    Returns:
-        mlflow_config: MLflow-specific configuration
-    """
-    return {
-        "enable_mlflow": config.get("enable_mlflow", True),
-        "mlflow_experiment_name": config.get(
-            "mlflow_experiment_name", "neural_encoder"
-        ),
-        "mlflow_run_name": config.get("mlflow_run_name"),
-        "mlflow_tracking_uri": config.get("mlflow_tracking_uri"),
-    }
-
-
-def train_with_config(config: Dict[str, Any]) -> tuple:
-    """
-    Train model with given configuration.
-
-    Args:
-        config: Complete configuration dictionary
+        config: Configuration dictionary
 
     Returns:
         trainer, model, data_module: Training results
     """
-    print("Training with configuration:")
-    print(f"  Model: {config.get('model_type', 'simple')}")
-    print(
-        f"  Dataset: {config.get('dataset_type', 'cifar10')} + "
-        f"{config.get('sta_type', 'perlin_noise_patterns,11,11')}"
-    )
-    print(f"  Neurons: {config.get('out_neurons', 100)}")
-    print(f"  Epochs: {config.get('epochs', 30)}")
-    print(f"  Learning Rate: {config.get('learning_rate', 1e-3)}")
+    print("=== ENCODER TRAINING WITH CONFIG ===")
+    print(f"Model type: {config.get('model_type', 'simple')}")
+    print(f"Output neurons: {config.get('out_neurons', 100)}")
+    print(f"Learning rate: {config.get('learning_rate', 1e-3)}")
+    print(f"Epochs: {config.get('epochs', 30)}")
+    print(f"Batch size: {config.get('batch_size', 32)}")
+    print(f"Dataset: {config.get('dataset_type', 'cifar10')}")
+    print(f"STA type: {config.get('sta_type', 'perlin_noise_patterns,11,11')}")
+    print(f"Neurons: {config.get('n_neurons', 1000)}")
+    print(f"Images: {config.get('n_images', 1000)}")
 
-    # Always load synthetic data from workspace
-    images, firing_rates, labels, dataset_metadata = (
+    # Load data
+    images, firing_rates, labels, metadata = (
         load_synthetic_data_from_workspace(config)
     )
 
-    # Ensure data matches model configuration
-    out_neurons = config.get("out_neurons", 100)
-    if firing_rates.shape[1] != out_neurons:
-        if firing_rates.shape[1] > out_neurons:
-            # Truncate to match model - warn about waste
-            print(
-                f"WARNING: Truncating firing rates from "
-                f"{firing_rates.shape[1]} to {out_neurons} neurons. "
-                f"This wastes {firing_rates.shape[1] - out_neurons} neurons."
-            )
-            firing_rates = firing_rates[:, :out_neurons]
-        else:
-            # Raise error for insufficient neurons
-            raise ValueError(
-                f"Model expects {out_neurons} neurons but dataset only has "
-                f"{firing_rates.shape[1]} neurons. Please either: "
-                f"1) Reduce model out_neurons to {firing_rates.shape[1]}, or "
-                f"2) Generate synthetic data with more neurons."
-            )
-
-    # Preprocess data
-    images, firing_rates = preprocess_data(images, firing_rates)
-
-    # Create data module with metadata
-    training_config = get_training_config(config)
+    # Create data module
     data_module = NeuralDataModule(
         images=images,
         firing_rates=firing_rates,
         labels=labels,
-        train_split=training_config["train_split"],
-        val_split=training_config["val_split"],
-        batch_size=training_config["batch_size"],
-        dataset_metadata=dataset_metadata,
+        batch_size=config.get("batch_size", 32),
+        dataset_metadata=metadata,
     )
 
-    # Train based on model type
-    model_type = config.get("model_type", "simple")
-    mlflow_config = get_mlflow_config(config)
+    # Create model
+    model = get_model(config)
 
-    # Dataset metadata is now part of the data_module object
+    # Train the model using the main training function
+    trainer, lightning_model, _ = train_encoder(
+        model=model,
+        data_module=data_module,
+        model_name=f"{config.get('model_type', 'simple')}_encoder",
+        learning_rate=config.get("learning_rate", 1e-3),
+        epochs=config.get("epochs", 30),
+        enable_mlflow=config.get("enable_mlflow", True),
+        mlflow_experiment_name=config.get(
+            "mlflow_experiment_name", "neural_encoder"
+        ),
+        mlflow_run_name=config.get("mlflow_run_name"),
+    )
 
-    if model_type == "simple":
-        # Include weight_decay in optimizer_config
-        optimizer_config = training_config["optimizer_config"] or {}
-        optimizer_config["weight_decay"] = training_config["weight_decay"]
-
-        trainer, model, _ = train_simple_encoder(
-            data_module=data_module,
-            out_neurons=config.get("out_neurons", 100),
-            learning_rate=training_config["learning_rate"],
-            epochs=training_config["epochs"],
-            unfreeze_epoch=training_config["unfreeze_epoch"],
-            optimizer_config=optimizer_config,
-            **mlflow_config,
-        )
-    elif model_type == "skip":
-        # Include weight_decay in optimizer_config
-        optimizer_config = training_config["optimizer_config"] or {}
-        optimizer_config["weight_decay"] = training_config["weight_decay"]
-
-        trainer, model, _ = train_skip_connection_encoder(
-            data_module=data_module,
-            out_neurons=config.get("out_neurons", 100),
-            learning_rate=training_config["learning_rate"],
-            epochs=training_config["epochs"],
-            unfreeze_epoch=training_config["unfreeze_epoch"],
-            optimizer_config=optimizer_config,
-            **mlflow_config,
-        )
-    elif model_type == "resnet":
-        # Include weight_decay in optimizer_config
-        optimizer_config = training_config["optimizer_config"] or {}
-        optimizer_config["weight_decay"] = training_config["weight_decay"]
-
-        trainer, model, _ = train_resnet_encoder(
-            data_module=data_module,
-            out_neurons=config.get("out_neurons", 100),
-            resnet_type=config.get("resnet_type", "resnet18"),
-            freeze_backbone=config.get("freeze_backbone", True),
-            unfreeze_epoch=training_config["unfreeze_epoch"],
-            learning_rate=training_config["learning_rate"],
-            epochs=training_config["epochs"],
-            optimizer_config=optimizer_config,
-            **mlflow_config,
-        )
-
-    return trainer, model, data_module
+    return trainer, lightning_model, data_module
 
 
 def main():
-    """Main function with command line interface."""
+    """Main function for command-line training."""
     parser = argparse.ArgumentParser(
-        description="Generic MLflow Encoder Training"
+        description="Train neural encoder with MLflow tracking"
     )
-
-    # Model parameters
     parser.add_argument(
         "--model-type",
+        choices=["simple", "skip", "resnet"],
         default="simple",
-        help="Model type (simple, skip, resnet)",
+        help="Type of encoder model",
     )
     parser.add_argument(
-        "--out-neurons", type=int, default=100, help="Number of output neurons"
+        "--out-neurons",
+        type=int,
+        default=1000,
+        help="Number of output neurons",
     )
     parser.add_argument(
-        "--learning-rate", type=float, default=1e-3, help="Learning rate"
+        "--learning-rate",
+        type=float,
+        default=0.001,
+        help="Learning rate",
     )
     parser.add_argument(
-        "--epochs", type=int, default=30, help="Number of epochs"
+        "--epochs",
+        type=int,
+        default=30,
+        help="Number of training epochs",
     )
     parser.add_argument(
-        "--batch-size", type=int, default=32, help="Batch size"
+        "--batch-size",
+        type=int,
+        default=32,
+        help="Batch size",
     )
     parser.add_argument(
         "--dataset-type",
         default="cifar10",
-        help="Dataset type (cifar10, mnist)",
+        help="Dataset type (cifar10, mnist, etc.)",
     )
     parser.add_argument(
         "--sta-type",
         default="perlin_noise_patterns,11,11",
-        help="STA type for synthetic data",
+        help="STA pattern type",
     )
     parser.add_argument(
         "--n-neurons",

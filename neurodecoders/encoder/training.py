@@ -18,11 +18,6 @@ from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import Logger
 from sklearn.model_selection import KFold
 
-from .models import (
-    ResNetEncoder,
-    SimpleEncoder,
-    SimpleEncoderWithSkipConnection,
-)
 from .verification_callback import EncoderVerificationCallback
 
 
@@ -770,57 +765,11 @@ def _train_with_cv(
     return fold_results
 
 
-def train_simple_encoder(data_module, out_neurons: int, **kwargs):
-    """
-    Convenience function to train a SimpleEncoder.
-    """
-    model = SimpleEncoder(out_neurons=out_neurons)
-    return train_encoder(
-        model=model,
-        data_module=data_module,
-        model_name="simple_encoder",
-        **kwargs,
-    )
-
-
-def train_skip_connection_encoder(data_module, out_neurons: int, **kwargs):
-    """
-    Convenience function to train a SimpleEncoderWithSkipConnection.
-    """
-    model = SimpleEncoderWithSkipConnection(out_neurons=out_neurons)
-    return train_encoder(
-        model=model,
-        data_module=data_module,
-        model_name="skip_connection_encoder",
-        **kwargs,
-    )
-
-
-def train_resnet_encoder(
-    data_module,
-    out_neurons: int,
-    resnet_type: str = "resnet18",
-    freeze_backbone: bool = True,
-    unfreeze_epoch: int = 15,
-    **kwargs,
-):
-    """
-    Convenience function to train a ResNetEncoder.
-    """
-    model = ResNetEncoder(
-        out_neurons=out_neurons,
-        resnet_type=resnet_type,
-        freeze_backbone=freeze_backbone,
-    )
-
-    # Use differential learning rates for ResNet if not specified in kwargs
-    if "optimizer_config" not in kwargs:
-        kwargs["optimizer_config"] = {"type": "resnet_differential"}
-
-    return train_encoder(
-        model=model,
-        data_module=data_module,
-        model_name=f"resnet_{resnet_type}",
-        unfreeze_epoch=unfreeze_epoch,
-        **kwargs,
-    )
+# Note: The following convenience functions have been removed as they were
+# unused:
+# - train_simple_encoder
+# - train_skip_connection_encoder
+# - train_resnet_encoder
+#
+# Use the main train_encoder function directly with the appropriate model
+# type.

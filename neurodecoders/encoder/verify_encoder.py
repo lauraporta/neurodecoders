@@ -1,13 +1,14 @@
-import argparse
-import datetime
-import glob
-import os
-import re
-import sys
-import warnings
-from pathlib import Path
+"""
+Core encoder verification functionality for MLflow integration.
 
-import matplotlib.pyplot as plt
+This module provides the EncoderVerifier class with essential analysis methods
+used by the verification callback. All plotting functionality has been removed
+as it's no longer needed for MLflow-based verification.
+"""
+
+import warnings
+from typing import Any, Dict, Optional
+
 import numpy as np
 import torch
 from sklearn.decomposition import PCA
@@ -18,20 +19,16 @@ from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.svm import SVC
 
-# Add parent directories to path for imports
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
-# Import encoder models
-from neurodecoders.encoder.models import ResNetEncoder, SimpleEncoder
-
 warnings.filterwarnings("ignore")
 
 
 class EncoderVerifier:
     """
-    Comprehensive encoder verification and analysis tool.
-    Diagnoses encoder issues and evaluates its quality for image
-    classification.
+    Core encoder verification and analysis tool for MLflow integration.
+
+    This class provides essential analysis methods used by the verification
+    callback. All plotting functionality has been removed as results are
+    logged directly to MLflow.
     """
 
     def __init__(self, device="cuda" if torch.cuda.is_available() else "cpu"):
@@ -43,323 +40,38 @@ class EncoderVerifier:
         self.image_labels = None
         self.plots_dir = None
 
-    def setup_plots_directory(self, model_path):
-        """Create a dedicated directory for saving verification plots"""
-        # Extract model name and timestamp for folder naming
-        model_name = Path(model_path).stem
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        # Create plots directory in organized structure
-        plots_base = "workspace/plots/verification"
-        os.makedirs(plots_base, exist_ok=True)
-        self.plots_dir = f"{plots_base}/{model_name}_{timestamp}"
-        os.makedirs(self.plots_dir, exist_ok=True)
-
-        print(f"Plots will be saved to: {self.plots_dir}")
-        return self.plots_dir
-
-    def save_plot(self, filename, dpi=300, bbox_inches="tight"):
-        """Save plot to the plots directory"""
-        if self.plots_dir is None:
-            plots_base = "workspace/plots/verification"
-            os.makedirs(plots_base, exist_ok=True)
-            self.plots_dir = f"{plots_base}/default"
-            os.makedirs(self.plots_dir, exist_ok=True)
-
-        full_path = os.path.join(self.plots_dir, filename)
-        plt.savefig(full_path, dpi=dpi, bbox_inches=bbox_inches)
-        plt.close()  # Close the figure to free memory
-        print(f"Saved plot: {full_path}")
-
-    def load_encoder_and_data(self, model_path, data_path=None):
-        """Load encoder model and corresponding data"""
-        print(f"Loading encoder from: {model_path}")
-
-        # Setup plots directory
-        self.setup_plots_directory(model_path)
-
-        # Load encoder
-        try:
-            state_dict = torch.load(model_path, map_location=self.device)
-        except Exception as e:
-            print(f"Error loading model: {e}")
-            return
-
-        # Determine encoder type from model path
-        model_name = os.path.basename(model_path)
-        if "resnet" in model_name.lower():
-            encoder_type = "resnet"
-            print("Detected ResNet encoder")
-        else:
-            encoder_type = "simple"
-            print("Detected Simple encoder")
-
-        # Determine output neurons based on encoder type
-        if encoder_type == "resnet":
-            # For ResNet, look for firing_head layers
-            if "firing_head.6.weight" in state_dict:
-                out_neurons = state_dict["firing_head.6.weight"].shape[0]
-            elif "model.firing_head.6.weight" in state_dict:
-                out_neurons = state_dict["model.firing_head.6.weight"].shape[0]
-            else:
-                # Find the last firing_head layer
-                firing_head_keys = [
-                    k
-                    for k in state_dict.keys()
-                    if "firing_head" in k and "weight" in k
-                ]
-                if not firing_head_keys:
-                    print("No firing_head layers found in ResNet model")
-                    return
-                last_firing_head_key = sorted(firing_head_keys)[-1]
-                out_neurons = state_dict[last_firing_head_key].shape[0]
-
-            # Create ResNet encoder
-            self.encoder = ResNetEncoder(out_neurons, resnet_type="resnet18")
-
-        else:  # Simple encoder
-            # Determine output neurons for simple encoder
-            if "model.fc.6.weight" in state_dict:
-                out_neurons = state_dict["model.fc.6.weight"].shape[0]
-            elif "fc.6.weight" in state_dict:
-                out_neurons = state_dict["fc.6.weight"].shape[0]
-            else:
-                # Find the last fc layer
-                fc_keys = [
-                    k for k in state_dict.keys() if "fc" in k and "weight" in k
-                ]
-                if not fc_keys:
-                    print("No fc layers found in model")
-                    return
-                last_fc_key = sorted(fc_keys)[-1]
-                out_neurons = state_dict[last_fc_key].shape[0]
-
-            # Simple approach: just create a basic encoder with right output
-            # size
-            self.encoder = SimpleEncoder(out_neurons)
-
-        # Handle nested model structure for both encoder types
-        if any(k.startswith("model.") for k in state_dict.keys()):
-            new_state_dict = {}
-            for key, value in state_dict.items():
-                if key.startswith("model."):
-                    new_key = key[6:]
-                    new_state_dict[new_key] = value
-                else:
-                    new_state_dict[key] = value
-            state_dict = new_state_dict
-
-        try:
-            self.encoder.load_state_dict(state_dict, strict=False)
-            self.encoder.to(self.device)
-            self.encoder.eval()
-            print(
-                "✓ Model loaded successfully (some parameters may be "
-                "mismatched)"
-            )
-        except Exception as e:
-            print(f"Error loading state dict: {e}")
-            print("Trying partial loading...")
-
-            # Try to load only compatible parameters
-            model_dict = self.encoder.state_dict()
-            pretrained_dict = {
-                k: v
-                for k, v in state_dict.items()
-                if k in model_dict and model_dict[k].shape == v.shape
-            }
-            model_dict.update(pretrained_dict)
-            self.encoder.load_state_dict(model_dict)
-            self.encoder.to(self.device)
-            self.encoder.eval()
-            print(
-                f"✓ Partial model loaded: {len(pretrained_dict)}/"
-                f"{len(state_dict)} parameters loaded"
-            )
-
-        print(f"Encoder loaded with {out_neurons} output neurons")
-
-        # Load data
-        if data_path is None:
-            # Simple approach: extract dataset type from model name and find
-            # matching data file
-            model_name = os.path.basename(model_path)
-            print(f"Looking for data file matching model: {model_name}")
-
-            # Extract dataset type (cifar10, mnist, etc.) from model filename
-            dataset_type = None
-            if "cifar10" in model_name.lower():
-                dataset_type = "cifar10"
-            elif "mnist" in model_name.lower():
-                dataset_type = "mnist"
-            elif "cifar100" in model_name.lower():
-                dataset_type = "cifar100"
-
-            if dataset_type:
-                print(f"Detected dataset type: {dataset_type}")
-
-                # Find any dataset file that matches this type
-                search_patterns = [
-                    f"workspace/datasets/synthetic/synthdata_dataset-\
-                        {dataset_type}*.npz",
-                    f"data/synthdata_dataset-{dataset_type}*.npz",
-                ]
-
-                data_files = []
-                for pattern in search_patterns:
-                    data_files.extend(glob.glob(pattern))
-
-                if data_files:
-                    # Pick the most recent file
-                    data_path = max(data_files, key=os.path.getctime)
-                    print(
-                        f"Found matching {dataset_type} data file: {data_path}"
-                    )
-                else:
-                    print(f"No {dataset_type} data files found!")
-            else:
-                print("Could not detect dataset type from model filename")
-
-            if data_path is None:
-                # Final fallback: just pick any recent data file
-                print("Using fallback: picking most recent data file")
-                patterns = [
-                    "workspace/datasets/synthetic/synthdata_dataset-*.npz",
-                    "data/synthdata_dataset-*.npz",
-                ]
-
-                all_files = []
-                for pattern in patterns:
-                    all_files.extend(glob.glob(pattern))
-
-                if all_files:
-                    data_path = max(all_files, key=os.path.getctime)
-                    print(f"Fallback data file: {data_path}")
-                else:
-                    print("No data files found at all!")
-                    return
-
-        print(f"Loading data from: {data_path}")
-        try:
-            data = np.load(data_path)
-            print(f"Data keys: {list(data.keys())}")
-
-            # Validate required keys
-            required_keys = ["images", "responses"]
-            missing_keys = [key for key in required_keys if key not in data]
-            if missing_keys:
-                print(f"❌ Missing required keys in data file: {missing_keys}")
-                print(f"   Available keys: {list(data.keys())}")
-                return
-
-            # Load images
-            self.images = data["images"]
-            print(f"✓ Images loaded: shape {self.images.shape}")
-
-            # Validate image shape
-            if len(self.images.shape) not in [3, 4]:
-                print(f"⚠️  Unexpected image shape: {self.images.shape}")
-                print("   Expected 3D (N, H, W) or 4D (N, C, H, W)")
-
-            # Load responses
-            self.true_firing_rates = data["responses"]
-            print(
-                f"✓ Neural responses loaded: shape \
-                    {self.true_firing_rates.shape}"
-            )
-
-            # Validate shapes match
-            if len(self.images) != len(self.true_firing_rates):
-                print(
-                    f"❌ Shape mismatch: {len(self.images)} images vs "
-                    f"{len(self.true_firing_rates)} response vectors"
-                )
-                return
-
-            # Extract image labels if available
-            if "labels" in data:
-                self.image_labels = data["labels"]
-                print(f"Labels loaded: {len(self.image_labels)} labels")
-
-                # Detect dataset type from labels
-                unique_labels = np.unique(self.image_labels)
-                n_classes = len(unique_labels)
-                print(f"Detected {n_classes} classes: {unique_labels}")
-                print(f"Label distribution: {np.bincount(self.image_labels)}")
-
-                # Infer dataset type
-                filename = os.path.basename(data_path).lower()
-                if "mnist" in filename and n_classes == 10:
-                    print("Dataset type: MNIST (10 digit classes)")
-                elif "cifar10" in filename and n_classes == 10:
-                    print("Dataset type: CIFAR-10 (10 object classes)")
-                elif "cifar100" in filename and n_classes == 100:
-                    print("Dataset type: CIFAR-100 (100 object classes)")
-                else:
-                    print(f"Dataset type: Unknown ({n_classes} classes)")
-
-            else:
-                # Try to infer from filename but warn about missing labels
-                filename = os.path.basename(data_path).lower()
-                dataset_type = "Unknown"
-                if "mnist" in filename:
-                    dataset_type = "MNIST"
-                elif "cifar10" in filename:
-                    dataset_type = "CIFAR-10"
-                elif "cifar100" in filename:
-                    dataset_type = "CIFAR-100"
-
-                self.image_labels = None
-                print(
-                    f"⚠️  No labels found in data file (inferred type: \
-                        {dataset_type})"
-                )
-                print("   Classification analysis will be skipped.")
-                print(
-                    "   Consider regenerating the dataset to include labels."
-                )
-
-            print(
-                f"Data loaded: {len(self.images)} images, "
-                f"{self.true_firing_rates.shape[1]} neurons"
-            )
-            print(f"Image shape: {self.images.shape}")
-            print(f"Firing rates shape: {self.true_firing_rates.shape}")
-
-        except Exception as e:
-            print(f"Error loading data: {e}")
-            return
-
     def predict_firing_rates(self):
-        """Get encoder predictions"""
-        print("Generating encoder predictions...")
+        """Generate predictions using the encoder model."""
+        if self.encoder is None or self.images is None:
+            raise ValueError(
+                "Encoder and images must be set before prediction"
+            )
 
         self.encoder.eval()
         predicted_rates = []
 
         with torch.no_grad():
-            for i in range(0, len(self.images), 32):  # Process in batches
-                batch_images = self.images[i : i + 32]
-                # Fix: only add channel if needed
-                if batch_images.ndim == 3:
-                    batch_tensor = torch.tensor(
-                        batch_images[:, None, :, :], dtype=torch.float32
-                    ).to(self.device)
-                elif batch_images.ndim == 4:
+            # Process in batches to avoid memory issues
+            batch_size = 8
+            for i in range(0, len(self.images), batch_size):
+                batch_images = self.images[i : i + batch_size]
+
+                if len(batch_images.shape) == 4:
                     batch_tensor = torch.tensor(
                         batch_images, dtype=torch.float32
                     ).to(self.device)
                 else:
                     print(f"Unexpected image shape: {batch_images.shape}")
                     continue
+
                 batch_predictions = self.encoder(batch_tensor)
                 predicted_rates.append(batch_predictions.cpu().numpy())
 
         self.predicted_firing_rates = np.vstack(predicted_rates)
         print(f"Predictions shape: {self.predicted_firing_rates.shape}")
 
-    def analyze_firing_rate_distributions(self):
-        """Analyze firing rate distributions to detect issues"""
+    def analyze_firing_rate_distributions(self) -> Dict[str, Any]:
+        """Analyze firing rate distributions to detect issues."""
         print("\n=== FIRING RATE DISTRIBUTION ANALYSIS ===")
 
         # Basic statistics
@@ -369,20 +81,18 @@ class EncoderVerifier:
         pred_std = np.std(self.predicted_firing_rates, axis=0)
 
         print(
-            f"True firing rates - Mean: \
-                {np.mean(true_mean):.2f} ± {np.mean(true_std):.2f}"
+            f"True firing rates - Mean: {np.mean(true_mean):.2f} ± "
+            f"{np.mean(true_std):.2f}"
         )
         print(
-            f"Predicted firing rates - Mean: \
-                {np.mean(pred_mean):.2f} ± {np.mean(pred_std):.2f}"
+            f"Predicted firing rates - Mean: {np.mean(pred_mean):.2f} ± "
+            f"{np.mean(pred_std):.2f}"
         )
 
         # Check for constant predictions
         constant_neurons = []
         for i in range(self.predicted_firing_rates.shape[1]):
-            if (
-                np.std(self.predicted_firing_rates[:, i]) < 0.1
-            ):  # Very low variance
+            if np.std(self.predicted_firing_rates[:, i]) < 0.1:
                 constant_neurons.append(i)
 
         print(
@@ -390,19 +100,15 @@ class EncoderVerifier:
             f"{len(constant_neurons)}/{self.predicted_firing_rates.shape[1]}"
         )
         if constant_neurons:
-            print(
-                f"Constant neuron indices: {constant_neurons[:10]}..."
-            )  # Show first 10
+            print(f"Constant neuron indices: {constant_neurons[:10]}...")
 
         # Correlation analysis
-        correlations = []
+        correlations = np.zeros(self.predicted_firing_rates.shape[1])
         for i in range(self.predicted_firing_rates.shape[1]):
             corr = np.corrcoef(
                 self.true_firing_rates[:, i], self.predicted_firing_rates[:, i]
             )[0, 1]
-            correlations.append(corr)
-
-        correlations = np.array(correlations)
+            correlations[i] = corr
         print(
             f"Mean correlation between true and predicted: "
             f"{np.mean(correlations):.3f}"
@@ -413,59 +119,6 @@ class EncoderVerifier:
             f"{np.sum(correlations > 0.5)}/{len(correlations)}"
         )
 
-        # Plot distributions
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-
-        # True vs Predicted scatter
-        axes[0, 0].scatter(true_mean, pred_mean, alpha=0.6)
-        axes[0, 0].plot(
-            [0, max(true_mean)], [0, max(true_mean)], "r--", alpha=0.8
-        )
-        axes[0, 0].set_xlabel("True Mean Firing Rate")
-        axes[0, 0].set_ylabel("Predicted Mean Firing Rate")
-        axes[0, 0].set_title("Mean Firing Rates: True vs Predicted")
-        axes[0, 0].grid(True, alpha=0.3)
-
-        # Correlation histogram
-        axes[0, 1].hist(correlations, bins=30, alpha=0.7, edgecolor="black")
-        axes[0, 1].axvline(
-            np.mean(correlations),
-            color="red",
-            linestyle="--",
-            label=f"Mean: {np.mean(correlations):.3f}",
-        )
-        axes[0, 1].set_xlabel("Correlation Coefficient")
-        axes[0, 1].set_ylabel("Number of Neurons")
-        axes[0, 1].set_title("Distribution of True-Predicted Correlations")
-        axes[0, 1].legend()
-        axes[0, 1].grid(True, alpha=0.3)
-
-        # Firing rate distributions
-        axes[1, 0].hist(
-            true_mean, bins=30, alpha=0.7, label="True", edgecolor="black"
-        )
-        axes[1, 0].hist(
-            pred_mean, bins=30, alpha=0.7, label="Predicted", edgecolor="black"
-        )
-        axes[1, 0].set_xlabel("Mean Firing Rate")
-        axes[1, 0].set_ylabel("Number of Neurons")
-        axes[1, 0].set_title("Distribution of Mean Firing Rates")
-        axes[1, 0].legend()
-        axes[1, 0].grid(True, alpha=0.3)
-
-        # Standard deviation comparison
-        axes[1, 1].scatter(true_std, pred_std, alpha=0.6)
-        axes[1, 1].plot(
-            [0, max(true_std)], [0, max(true_std)], "r--", alpha=0.8
-        )
-        axes[1, 1].set_xlabel("True Std Firing Rate")
-        axes[1, 1].set_ylabel("Predicted Std Firing Rate")
-        axes[1, 1].set_title("Std Firing Rates: True vs Predicted")
-        axes[1, 1].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        self.save_plot("firing_rate_analysis.png")
-
         return {
             "true_mean": true_mean,
             "pred_mean": pred_mean,
@@ -475,8 +128,8 @@ class EncoderVerifier:
             "constant_neurons": constant_neurons,
         }
 
-    def analyze_neuron_responsiveness(self):
-        """Analyze how responsive neurons are to different images"""
+    def analyze_neuron_responsiveness(self) -> Dict[str, Any]:
+        """Analyze how responsive neurons are to different images."""
         print("\n=== NEURON RESPONSIVENESS ANALYSIS ===")
 
         # Calculate responsiveness (how much firing rate varies across images)
@@ -499,66 +152,17 @@ class EncoderVerifier:
             f"responsiveness: {len(high_true_low_pred)}"
         )
 
-        # Plot responsiveness comparison
-        fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-
-        axes[0].scatter(true_responsiveness, pred_responsiveness, alpha=0.6)
-        axes[0].plot(
-            [0, max(true_responsiveness)],
-            [0, max(true_responsiveness)],
-            "r--",
-            alpha=0.8,
-        )
-        axes[0].set_xlabel("True Responsiveness (Std)")
-        axes[0].set_ylabel("Predicted Responsiveness (Std)")
-        axes[0].set_title("Neuron Responsiveness: True vs Predicted")
-        axes[0].grid(True, alpha=0.3)
-
-        # Highlight problematic neurons
-        if high_true_low_pred:
-            axes[0].scatter(
-                true_responsiveness[high_true_low_pred],
-                pred_responsiveness[high_true_low_pred],
-                color="red",
-                s=50,
-                alpha=0.8,
-                label="High True, Low Pred",
-            )
-            axes[0].legend()
-
-        # Responsiveness distribution
-        axes[1].hist(
-            true_responsiveness,
-            bins=30,
-            alpha=0.7,
-            label="True",
-            edgecolor="black",
-        )
-        axes[1].hist(
-            pred_responsiveness,
-            bins=30,
-            alpha=0.7,
-            label="Predicted",
-            edgecolor="black",
-        )
-        axes[1].set_xlabel("Responsiveness (Std)")
-        axes[1].set_ylabel("Number of Neurons")
-        axes[1].set_title("Distribution of Neuron Responsiveness")
-        axes[1].legend()
-        axes[1].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        self.save_plot("responsiveness_analysis.png")
-
         return {
             "true_responsiveness": true_responsiveness,
             "pred_responsiveness": pred_responsiveness,
             "high_true_low_pred": high_true_low_pred,
         }
 
-    def test_image_classification_from_firing_rates(self):
+    def test_image_classification_from_firing_rates(
+        self,
+    ) -> Optional[Dict[str, Any]]:
         """Test if predicted firing rates contain enough information for
-        image classification"""
+        image classification."""
         print("\n=== IMAGE CLASSIFICATION FROM FIRING RATES ===")
 
         if self.image_labels is None:
@@ -575,7 +179,6 @@ class EncoderVerifier:
         )
 
         # Test multiple classifiers
-
         classifiers = {
             "Random Forest": RandomForestClassifier(
                 n_estimators=100, random_state=42, n_jobs=-1
@@ -679,140 +282,32 @@ class EncoderVerifier:
             ) * 100
             print(f"Performance degradation: {degradation:.1f}%")
 
-        # Plot comparison
-        fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+        return {"results": results}
 
-        # Predicted vs True comparison
-        classifier_names = [
-            name.replace("_pred", "").replace("_true", "")
-            for name in pred_accuracies.keys()
-        ]
-        pred_scores = list(pred_accuracies.values())
-        true_scores = list(true_accuracies.values())
-
-        x = np.arange(len(classifier_names))
-        width = 0.35
-
-        axes[0].bar(
-            x - width / 2, pred_scores, width, label="Predicted", alpha=0.8
-        )
-        axes[0].bar(x + width / 2, true_scores, width, label="True", alpha=0.8)
-        axes[0].set_xlabel("Classifier")
-        axes[0].set_ylabel("Accuracy")
-        axes[0].set_title(
-            "Classification Accuracy: Predicted vs True Firing Rates"
-        )
-        axes[0].set_xticks(x)
-        axes[0].set_xticklabels(classifier_names, rotation=45, ha="right")
-        axes[0].legend()
-        axes[0].grid(True, alpha=0.3)
-        axes[0].set_ylim(0, 1)
-
-        # Add accuracy values on bars
-        for i, (pred, true) in enumerate(zip(pred_scores, true_scores)):
-            axes[0].text(
-                i - width / 2,
-                pred + 0.01,
-                f"{pred:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=8,
-            )
-            axes[0].text(
-                i + width / 2,
-                true + 0.01,
-                f"{true:.3f}",
-                ha="center",
-                va="bottom",
-                fontsize=8,
-            )
-
-        # Performance degradation
-        degradations = [
-            (true - pred) / true * 100 if true > 0 else 0
-            for pred, true in zip(pred_scores, true_scores)
-        ]
-        axes[1].bar(classifier_names, degradations, alpha=0.8, color="orange")
-        axes[1].set_xlabel("Classifier")
-        axes[1].set_ylabel("Performance Degradation (%)")
-        axes[1].set_title("Performance Degradation: (True - Predicted) / True")
-        axes[1].set_xticklabels(classifier_names, rotation=45, ha="right")
-        axes[1].grid(True, alpha=0.3)
-        axes[1].axhline(y=0, color="black", linestyle="-", alpha=0.3)
-
-        # Add degradation values on bars
-        for i, deg in enumerate(degradations):
-            axes[1].text(
-                i, deg + 1, f"{deg:.1f}%", ha="center", va="bottom", fontsize=8
-            )
-
-        plt.tight_layout()
-        self.save_plot("classifier_comparison.png")
-
-        # Feature importance analysis for best classifier
-        print(
-            f"\nFeature importance analysis for best classifier "
-            f"({best_pred_classifier[0].replace('_pred', '')}):"
-        )
-
-        # Retrain best classifier to get feature importance
-        best_clf_name = best_pred_classifier[0].replace("_pred", "")
-        best_clf = classifiers[best_clf_name]
-
-        if hasattr(best_clf, "feature_importances_"):
-            # For Random Forest
-            if name.startswith("SVM") or name.startswith("MLP"):
-                scaler = StandardScaler()
-                X_train_scaled = scaler.fit_transform(X_train)
-                best_clf.fit(X_train_scaled, y_train)
-            else:
-                best_clf.fit(X_train, y_train)
-
-            feature_importance = best_clf.feature_importances_
-            top_neurons = np.argsort(feature_importance)[
-                -10:
-            ]  # Top 10 neurons
-
-            print("\nTop 10 most important neurons for classification:")
-            for i, neuron_idx in enumerate(reversed(top_neurons)):
-                print(
-                    f"  {i + 1}. Neuron {neuron_idx}: importance = "
-                    f"{feature_importance[neuron_idx]:.4f}"
-                )
-
-        return {
-            "results": results,
-            "best_pred_classifier": best_pred_classifier,
-            "best_true_classifier": best_true_classifier,
-        }
-
-    def analyze_encoder_representations(self):
-        """Analyze the learned representations using dimensionality
-        reduction"""
+    def analyze_encoder_representations(self) -> Dict[str, Any]:
+        """Analyze the learned representations using PCA."""
         print("\n=== ENCODER REPRESENTATION ANALYSIS ===")
 
-        # Check data variance first
-        data_variance = np.var(self.predicted_firing_rates, axis=0)
+        # Use predicted firing rates for analysis
+        X = self.predicted_firing_rates
+
+        # Calculate variance statistics
+        variances = np.var(X, axis=0)
+        mean_variance = np.mean(variances)
+        std_variance = np.std(variances)
+        min_variance = np.min(variances)
+        max_variance = np.max(variances)
+
         print("Data variance statistics:")
-        print(f"  Mean variance across neurons: {np.mean(data_variance):.6f}")
-        print(f"  Std variance across neurons: {np.std(data_variance):.6f}")
-        print(f"  Min variance: {np.min(data_variance):.6f}")
-        print(f"  Max variance: {np.max(data_variance):.6f}")
+        print(f"  Mean variance across neurons: {mean_variance:.6f}")
+        print(f"  Std variance across neurons: {std_variance:.6f}")
+        print(f"  Min variance: {min_variance:.6f}")
+        print(f"  Max variance: {max_variance:.6f}")
 
-        # Use PCA with more components to get better analysis
-        # Limit components by both features and samples
-        max_components = min(
-            100,
-            self.predicted_firing_rates.shape[1],
-            self.predicted_firing_rates.shape[0],
-        )
-        n_components = max_components
-        pca = PCA(n_components=n_components)
-        representations_pca = pca.fit_transform(self.predicted_firing_rates)
-
-        # Analyze explained variance
+        # PCA analysis
+        pca = PCA()
+        pca.fit(X)
         explained_variance_ratio = pca.explained_variance_ratio_
-        cumulative_variance = np.cumsum(explained_variance_ratio)
 
         print("PCA explained variance:")
         print(
@@ -828,205 +323,86 @@ class EncoderVerifier:
         )
 
         # Find components needed for different variance thresholds
-        for threshold in [0.5, 0.8, 0.9, 0.95]:
-            n_comp = np.argmax(cumulative_variance >= threshold) + 1
+        cumulative_variance = np.cumsum(explained_variance_ratio)
+        thresholds = [0.5, 0.8, 0.9, 0.95]
+        components_needed = {}
+
+        for threshold in thresholds:
+            components_needed[threshold] = (
+                np.argmax(cumulative_variance >= threshold) + 1
+            )
             print(
-                f"  Components needed for {threshold * 100}% variance: "
-                f"{n_comp}"
+                f"  Components needed for {threshold * 100:.0f}% variance: "
+                f"{components_needed[threshold]}"
             )
 
-        # Plot explained variance
-        plt.figure(figsize=(10, 6))
-        plt.plot(
-            range(1, len(explained_variance_ratio) + 1),
-            explained_variance_ratio,
-            "b-",
-            linewidth=1,
-            alpha=0.7,
-        )
-        plt.xlabel("Component Number")
-        plt.ylabel("Explained Variance Ratio")
-        plt.title("PCA: Individual Component Variance")
-        plt.yscale("log")
-        plt.grid(True, alpha=0.3)
-        self.save_plot("pca_analysis.png")
-
-        # Additional analysis: check if the first few components are meaningful
-        if len(explained_variance_ratio) > 0:
-            print("\nFirst 10 components explained variance:")
-            for i, var in enumerate(explained_variance_ratio[:10]):
-                print(f"  Component {i + 1}: {var:.6f}")
+        print("\nFirst 10 components explained variance:")
+        for i in range(min(10, len(explained_variance_ratio))):
+            print(f"  Component {i + 1}: {explained_variance_ratio[i]:.6f}")
 
         return {
-            "pca_components": representations_pca,
             "explained_variance_ratio": explained_variance_ratio,
-            "data_variance": data_variance,
+            "components_needed": components_needed,
+            "mean_variance": mean_variance,
+            "std_variance": std_variance,
         }
 
-    def suggest_improvements(self, analysis_results):
-        """Suggest improvements based on analysis results"""
-        print("\n=== SUGGESTED IMPROVEMENTS ===")
-
-        suggestions = []
-
-        # Check for constant predictions
-        if analysis_results.get("constant_neurons"):
-            suggestions.append(
-                {
-                    "issue": "Many neurons have constant predictions",
-                    "suggestions": [
-                        "Increase model capacity (more layers/neurons)",
-                        "Add regularization to prevent overfitting to average "
-                        "rates",
-                        "Use different activation functions (e.g., ReLU "
-                        "instead of ELU)",
-                        (
-                            "Add batch normalization to prevent internal "
-                            "covariate shift"
-                        ),
-                        "Consider using a different loss function (e.g., "
-                        "cosine similarity)",
-                    ],
-                }
-            )
-
-        # Check correlation
-        correlations = analysis_results.get("correlations", [])
-        if correlations and np.mean(correlations) < 0.3:
-            suggestions.append(
-                {
-                    "issue": (
-                        "Low correlation between true and predicted firing "
-                        "rates"
-                    ),
-                    "suggestions": [
-                        "Increase training epochs",
-                        "Adjust learning rate schedule",
-                        "Add data augmentation",
-                        "Use curriculum learning (start with simpler "
-                        "patterns)",
-                        "Consider ensemble methods",
-                    ],
-                }
-            )
-
-        # Check responsiveness
-        responsiveness_results = analysis_results.get("responsiveness", {})
-        if responsiveness_results.get("high_true_low_pred"):
-            suggestions.append(
-                {
-                    "issue": (
-                        "Neurons with high true responsiveness have low "
-                        "predicted responsiveness"
-                    ),
-                    "suggestions": [
-                        "Add skip connections to preserve fine-grained "
-                        "information",
-                        "Use attention mechanisms",
-                        "Implement progressive training (start with "
-                        "low-resolution, increase gradually)",
-                        "Add auxiliary losses to encourage responsiveness",
-                    ],
-                }
-            )
-
-        # Check classification performance
-        classification_results = analysis_results.get("classification", {})
-        if classification_results:
-            accuracy_pred = classification_results.get("accuracy_pred", 0)
-            if accuracy_pred < 0.5:
-                suggestions.append(
-                    {
-                        "issue": (
-                            "Poor image classification from predicted firing "
-                            "rates"
-                        ),
-                        "suggestions": [
-                            "The encoder is not learning meaningful "
-                            "representations",
-                            "Consider using contrastive learning",
-                            "Add reconstruction loss as auxiliary task",
-                            "Use pre-trained vision encoders and fine-tune",
-                            "Implement multi-task learning with image "
-                            "classification",
-                        ],
-                    }
-                )
-
-        # Print suggestions
-        for i, suggestion in enumerate(suggestions, 1):
-            print(f"\n{i}. {suggestion['issue']}")
-            for j, sub_suggestion in enumerate(suggestion["suggestions"], 1):
-                print(f"   {j}. {sub_suggestion}")
-
-        return suggestions
-
-    def analyze_feature_scaling_and_separability(self):
-        """Analyze feature scaling effects and investigate why linear SVM
-        works well"""
+    def analyze_feature_scaling_and_separability(self) -> Dict[str, Any]:
+        """Analyze feature scaling and linear separability."""
         print("\n=== FEATURE SCALING AND LINEAR SEPARABILITY ANALYSIS ===")
 
         if self.image_labels is None:
             print("No image labels available. Skipping analysis.")
-            return None
+            return {}
 
-        # Prepare data
-        X_pred = self.predicted_firing_rates
-        X_true = self.true_firing_rates
+        # Use predicted firing rates for analysis
+        X = self.predicted_firing_rates
         y = self.image_labels
 
-        X_train_pred, X_test_pred, y_train, y_test = train_test_split(
-            X_pred, y, test_size=0.3, random_state=42, stratify=y
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.3, random_state=42, stratify=y
         )
 
+        print("Testing different scaling methods with Linear SVM:")
+        print("-" * 50)
+
         # Test different scaling methods
-        scalers = {
+        scaling_methods = {
             "No Scaling": None,
             "StandardScaler": StandardScaler(),
             "MinMaxScaler": MinMaxScaler(),
         }
 
-        print("Testing different scaling methods with Linear SVM:")
-        print("-" * 60)
-
         scaling_results = {}
-
-        for scaler_name, scaler in scalers.items():
+        for name, scaler in scaling_methods.items():
             if scaler is None:
-                X_train_scaled = X_train_pred
-                X_test_scaled = X_test_pred
+                X_train_scaled = X_train
+                X_test_scaled = X_test
             else:
-                X_train_scaled = scaler.fit_transform(X_train_pred)
-                X_test_scaled = scaler.transform(X_test_pred)
+                X_train_scaled = scaler.fit_transform(X_train)
+                X_test_scaled = scaler.transform(X_test)
 
-            # Train linear SVM
             svm = SVC(kernel="linear", random_state=42)
             svm.fit(X_train_scaled, y_train)
             y_pred = svm.predict(X_test_scaled)
             accuracy = accuracy_score(y_test, y_pred)
+            scaling_results[name] = accuracy
+            print(f"{name}: {accuracy:.3f}")
 
-            scaling_results[scaler_name] = accuracy
-            print(f"{scaler_name}: {accuracy:.3f}")
-
-        # Analyze feature distributions
+        # Feature distribution analysis
         print("\nFeature distribution analysis:")
-        print("-" * 60)
+        print("-" * 50)
 
-        # Original feature statistics
-        pred_mean = np.mean(X_pred, axis=0)
-        pred_std = np.std(X_pred, axis=0)
-        pred_min = np.min(X_pred, axis=0)
-        pred_max = np.max(X_pred, axis=0)
-
-        true_mean = np.mean(X_true, axis=0)
-        true_std = np.std(X_true, axis=0)
-        true_min = np.min(X_true, axis=0)
-        true_max = np.max(X_true, axis=0)
+        pred_mean = np.mean(X, axis=0)
+        pred_std = np.std(X, axis=0)
+        true_mean = np.mean(self.true_firing_rates, axis=0)
+        true_std = np.std(self.true_firing_rates, axis=0)
 
         print("Predicted firing rates:")
         print(f"  Mean: {np.mean(pred_mean):.2f} ± {np.std(pred_mean):.2f}")
         print(f"  Std: {np.mean(pred_std):.2f} ± {np.std(pred_std):.2f}")
-        print(f"  Range: [{np.mean(pred_min):.2f}, {np.mean(pred_max):.2f}]")
+        print(f"  Range: [{np.min(pred_mean):.2f}, {np.max(pred_mean):.2f}]")
         print(
             f"  Coefficient of variation: {np.mean(pred_std / pred_mean):.3f}"
         )
@@ -1034,379 +410,182 @@ class EncoderVerifier:
         print("\nTrue firing rates:")
         print(f"  Mean: {np.mean(true_mean):.2f} ± {np.std(true_mean):.2f}")
         print(f"  Std: {np.mean(true_std):.2f} ± {np.std(true_std):.2f}")
-        print(f"  Range: [{np.mean(true_min):.2f}, {np.mean(true_max):.2f}]")
+        print(f"  Range: [{np.min(true_mean):.2f}, {np.max(true_mean):.2f}]")
         print(
             f"  Coefficient of variation: {np.mean(true_std / true_mean):.3f}"
         )
 
-        # Analyze linear separability
+        # Linear separability analysis using Fisher's discriminant
         print("\nLinear separability analysis:")
-        print("-" * 60)
+        print("-" * 50)
 
-        # Use PCA to visualize separability in 2D
-        # Standardize for PCA
-        scaler = StandardScaler()
-        X_pred_scaled = scaler.fit_transform(X_pred)
-        X_true_scaled = scaler.fit_transform(X_true)
-
-        # PCA to 2D
-        pca = PCA(n_components=2)
-        X_pred_2d = pca.fit_transform(X_pred_scaled)
-        X_true_2d = pca.fit_transform(X_true_scaled)
-
-        # Calculate class separability metrics
-        def calculate_separability(X, y):
-            # Calculate Fisher's discriminant ratio
-            classes = np.unique(y)
-            if len(classes) < 2:
-                return 0
+        # Calculate Fisher's discriminant ratio for predicted vs true
+        def fisher_discriminant_ratio(X, y):
+            unique_labels = np.unique(y)
+            if len(unique_labels) < 2:
+                return 0.0
 
             # Calculate between-class and within-class scatter
             overall_mean = np.mean(X, axis=0)
             between_class_scatter = 0
             within_class_scatter = 0
 
-            for c in classes:
-                class_mask = y == c
-                class_data = X[class_mask]
-                class_mean = np.mean(class_data, axis=0)
-                class_size = np.sum(class_mask)
+            for label in unique_labels:
+                class_samples = X[y == label]
+                class_mean = np.mean(class_samples, axis=0)
+                class_size = len(class_samples)
 
                 # Between-class scatter
                 diff = class_mean - overall_mean
                 between_class_scatter += class_size * np.outer(diff, diff)
 
                 # Within-class scatter
-                for sample in class_data:
+                for sample in class_samples:
                     diff = sample - class_mean
                     within_class_scatter += np.outer(diff, diff)
 
-            # Fisher's discriminant ratio
+            # Calculate Fisher's discriminant ratio
             if np.linalg.det(within_class_scatter) > 1e-10:
                 fisher_ratio = np.trace(
                     np.linalg.inv(within_class_scatter) @ between_class_scatter
                 )
                 return fisher_ratio
             else:
-                return 0
+                return 0.0
 
-        separability_pred = calculate_separability(X_pred_scaled, y)
-        separability_true = calculate_separability(X_true_scaled, y)
+        pred_fisher = fisher_discriminant_ratio(X, y)
+        true_fisher = fisher_discriminant_ratio(self.true_firing_rates, y)
 
         print("Fisher's discriminant ratio (higher = better separability):")
-        print(f"  Predicted firing rates: {separability_pred:.3f}")
-        print(f"  True firing rates: {separability_true:.3f}")
-        if separability_true > 1e-10:
-            ratio = separability_pred / separability_true
-            print(f"  Ratio (pred/true): {ratio:.3f}")
+        print(f"  Predicted firing rates: {pred_fisher:.3f}")
+        print(f"  True firing rates: {true_fisher:.3f}")
+        if true_fisher > 0:
+            print(f"  Ratio (pred/true): {pred_fisher / true_fisher:.3f}")
         else:
-            print("  Ratio (pred/true): N/A (true separability is zero)")
+            print("  Ratio (pred/true): 0.000")
 
-        # Analyze support vectors
+        # Support vector analysis
         print("\nSupport vector analysis:")
-        print("-" * 60)
-
-        # Train linear SVM on scaled data
-        scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train_pred)
-        X_test_scaled = scaler.transform(X_test_pred)
+        print("-" * 50)
 
         svm = SVC(kernel="linear", random_state=42)
-        svm.fit(X_train_scaled, y_train)
+        svm.fit(X_train, y_train)
 
         n_support_vectors = len(svm.support_vectors_)
-        n_samples = len(X_train_scaled)
-        support_ratio = n_support_vectors / n_samples
+        total_samples = len(X_train)
+        support_vector_ratio = n_support_vectors / total_samples
+        margin_size = (
+            1.0 / np.sqrt(np.sum(svm.coef_**2)) if len(svm.coef_) > 0 else 0
+        )
 
         print(f"Number of support vectors: {n_support_vectors}")
-        print(f"Total training samples: {n_samples}")
-        print(f"Support vector ratio: {support_ratio:.3f}")
-        print(f"Margin size: {1 / np.linalg.norm(svm.coef_[0]):.6f}")
+        print(f"Total training samples: {total_samples}")
+        print(f"Support vector ratio: {support_vector_ratio:.3f}")
+        print(f"Margin size: {margin_size:.6f}")
 
-        # Feature importance from SVM weights
-        feature_importance = np.abs(svm.coef_[0])
-        top_features = np.argsort(feature_importance)[-10:]
+        # Feature importance analysis
+        if len(svm.coef_) > 0:
+            feature_importance = np.abs(svm.coef_[0])
+            top_features = np.argsort(feature_importance)[::-1][:10]
 
-        print("\nTop 10 most important features (neurons) for linear SVM:")
-        for i, feat_idx in enumerate(reversed(top_features)):
-            print(
-                f"  {i + 1}. Neuron {feat_idx}: weight = "
-                f"{svm.coef_[0][feat_idx]:.4f}"
-            )
-
-        # Plotting
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-
-        # 1. Scaling comparison
-        scaler_names = list(scaling_results.keys())
-        scaler_accuracies = list(scaling_results.values())
-        axes[0, 0].bar(scaler_names, scaler_accuracies, alpha=0.8)
-        axes[0, 0].set_ylabel("Accuracy")
-        axes[0, 0].set_title("Linear SVM Performance with Different Scaling")
-        axes[0, 0].set_ylim(0, 1)
-        for i, acc in enumerate(scaler_accuracies):
-            axes[0, 0].text(
-                i, acc + 0.01, f"{acc:.3f}", ha="center", va="bottom"
-            )
-
-        # 2. Feature distribution comparison
-        axes[0, 1].hist(
-            pred_std, bins=30, alpha=0.7, label="Predicted", edgecolor="black"
-        )
-        axes[0, 1].hist(
-            true_std, bins=30, alpha=0.7, label="True", edgecolor="black"
-        )
-        axes[0, 1].set_xlabel("Feature Standard Deviation")
-        axes[0, 1].set_ylabel("Number of Features")
-        axes[0, 1].set_title("Feature Variance Distribution")
-        axes[0, 1].legend()
-        axes[0, 1].grid(True, alpha=0.3)
-
-        # 3. Feature importance distribution
-        axes[0, 2].hist(
-            feature_importance, bins=30, alpha=0.7, edgecolor="black"
-        )
-        axes[0, 2].set_xlabel("SVM Feature Weight (Absolute)")
-        axes[0, 2].set_ylabel("Number of Features")
-        axes[0, 2].set_title("SVM Feature Importance Distribution")
-        axes[0, 2].grid(True, alpha=0.3)
-
-        # 4. PCA visualization - Predicted
-        axes[1, 0].scatter(
-            X_pred_2d[:, 0], X_pred_2d[:, 1], c=y, cmap="tab10", alpha=0.6
-        )
-        axes[1, 0].set_xlabel("PC1")
-        axes[1, 0].set_ylabel("PC2")
-        axes[1, 0].set_title(
-            f"Predicted Firing Rates (PCA)\nSeparability: \
-                {separability_pred:.3f}"
-        )
-        axes[1, 0].grid(True, alpha=0.3)
-
-        # 5. PCA visualization - True
-        axes[1, 1].scatter(
-            X_true_2d[:, 0], X_true_2d[:, 1], c=y, cmap="tab10", alpha=0.6
-        )
-        axes[1, 1].set_xlabel("PC1")
-        axes[1, 1].set_ylabel("PC2")
-        axes[1, 1].set_title(
-            f"True Firing Rates (PCA)\nSeparability: {separability_true:.3f}"
-        )
-        axes[1, 1].grid(True, alpha=0.3)
-
-        # 6. Feature correlation with labels
-        feature_correlations = []
-        for i in range(X_pred.shape[1]):
-            corr = np.corrcoef(X_pred[:, i], y)[0, 1]
-            feature_correlations.append(abs(corr))
-
-        axes[1, 2].hist(
-            feature_correlations, bins=30, alpha=0.7, edgecolor="black"
-        )
-        axes[1, 2].set_xlabel("|Correlation with Labels|")
-        axes[1, 2].set_ylabel("Number of Features")
-        axes[1, 2].set_title("Feature-Label Correlation Distribution")
-        axes[1, 2].grid(True, alpha=0.3)
-
-        plt.tight_layout()
-        self.save_plot("feature_analysis.png")
+            print("\nTop 10 most important features (neurons) for linear SVM:")
+            for i, feature_idx in enumerate(top_features):
+                weight = svm.coef_[0][feature_idx]
+                print(
+                    f"  {i + 1}. Neuron {feature_idx}: weight = {weight:.4f}"
+                )
 
         return {
             "scaling_results": scaling_results,
-            "separability_pred": separability_pred,
-            "separability_true": separability_true,
-            "support_ratio": support_ratio,
-            "feature_importance": feature_importance,
-            "feature_correlations": feature_correlations,
+            "pred_fisher_ratio": pred_fisher,
+            "true_fisher_ratio": true_fisher,
+            "support_vector_ratio": support_vector_ratio,
+            "margin_size": margin_size,
         }
 
-    def run_full_analysis(self, model_path, data_path=None):
-        """Run complete encoder analysis"""
-        print("=== ENCODER VERIFICATION AND ANALYSIS ===")
+    def suggest_improvements(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate improvement suggestions based on analysis results."""
+        print("\n=== SUGGESTED IMPROVEMENTS ===")
 
-        # Load data
-        self.load_encoder_and_data(model_path, data_path)
+        suggestions = []
 
-        # Check if data was loaded successfully
-        if self.images is None:
-            print("Failed to load data. Exiting.")
-            return None
+        # Check firing rate analysis
+        if "firing_rates" in results:
+            firing_results = results["firing_rates"]
+            if "correlations" in firing_results:
+                mean_corr = np.mean(firing_results["correlations"])
+                if mean_corr < 0.3:
+                    suggestions.append(
+                        "Low correlation between true and predicted "
+                        "firing rates"
+                    )
+                    suggestions.append("Consider increasing model capacity")
+                    suggestions.append("Try different loss functions")
+                    suggestions.append("Check data preprocessing")
 
-        # Generate predictions
-        self.predict_firing_rates()
+                if len(firing_results.get("constant_neurons", [])) > 0:
+                    suggestions.append(
+                        f"Found {len(firing_results['constant_neurons'])} "
+                        "neurons with constant predictions"
+                    )
+                    suggestions.append("Check for vanishing gradients")
+                    suggestions.append("Try different initialization")
 
-        # Run analyses
-        results = {}
+        # Check classification results
+        if "classification" in results:
+            class_results = results["classification"]
+            if "results" in class_results:
+                results_dict = class_results["results"]
+                pred_accuracies = {
+                    k: v
+                    for k, v in results_dict.items()
+                    if k.endswith("_pred")
+                }
+                if pred_accuracies:
+                    best_pred_acc = max(pred_accuracies.values())
+                    if best_pred_acc < 0.5:
+                        suggestions.append(
+                            "Poor image classification from predicted "
+                            "firing rates"
+                        )
+                        suggestions.append(
+                            "The encoder is not learning meaningful "
+                            "representations"
+                        )
+                        suggestions.append(
+                            "Consider using contrastive learning"
+                        )
+                        suggestions.append(
+                            "Add reconstruction loss as auxiliary task"
+                        )
+                        suggestions.append(
+                            "Use pre-trained vision encoders and fine-tune"
+                        )
+                        suggestions.append(
+                            "Implement multi-task learning with image "
+                            "classification"
+                        )
 
-        # Firing rate analysis
-        results["firing_rates"] = self.analyze_firing_rate_distributions()
+        # Check representation analysis
+        if "representations" in results:
+            rep_results = results["representations"]
+            if "components_needed" in rep_results:
+                comp_needed = rep_results["components_needed"]
+                if comp_needed.get(0.8, 0) > 5:
+                    suggestions.append(
+                        "High-dimensional representations detected"
+                    )
+                    suggestions.append("Consider dimensionality reduction")
+                    suggestions.append("Try regularization techniques")
 
-        # Responsiveness analysis
-        results["responsiveness"] = self.analyze_neuron_responsiveness()
-
-        # Classification test
-        classification_results = (
-            self.test_image_classification_from_firing_rates()
-        )
-        if classification_results:
-            results["classification"] = classification_results
-
-        # Representation analysis (PCA only, no t-SNE)
-        results["representations"] = self.analyze_encoder_representations()
-
-        # Feature scaling and separability analysis
-        results["feature_analysis"] = (
-            self.analyze_feature_scaling_and_separability()
-        )
-
-        # Suggest improvements
-        suggestions = self.suggest_improvements(results)
-        results["suggestions"] = suggestions
-
-        print("\n=== ANALYSIS COMPLETE ===")
-        print(f"All plots saved to: {self.plots_dir}")
-
-        return results
-
-
-def main():
-    """Main function to run encoder verification"""
-
-    # Use argparse for proper argument handling
-    parser = argparse.ArgumentParser(
-        description="Verify encoder model performance"
-    )
-    parser.add_argument(
-        "--model", type=str, help="Path to the encoder model (.pth file)"
-    )
-    parser.add_argument(
-        "--data", type=str, help="Path to the data file (.npz file)"
-    )
-
-    # Filter out Jupyter-specific arguments
-    filtered_args = []
-    for arg in sys.argv[1:]:
-        if not arg.startswith("--f=") and not arg.startswith("-f"):
-            filtered_args.append(arg)
-
-    # If we have positional arguments (old style), handle them
-    if filtered_args and not any(
-        arg.startswith("--") for arg in filtered_args
-    ):
-        # Old-style positional arguments
-        model_path = filtered_args[0] if len(filtered_args) > 0 else None
-        data_path = filtered_args[1] if len(filtered_args) > 1 else None
-    else:
-        # Use argparse
-        try:
-            args = parser.parse_args(filtered_args)
-            model_path = args.model
-            data_path = args.data
-        except SystemExit:
-            # argparse failed, fall back to automatic detection
-            model_path = None
-            data_path = None
-
-    # If model path is provided and looks valid, use it
-    if (
-        model_path
-        and os.path.exists(model_path)
-        and model_path.endswith(".pth")
-    ):
-        print(f"Using specified encoder model: {model_path}")
-
-        # Try to infer the dataset file from the model filename
-        match = re.search(
-            r"(synthdata_dataset-[^_]+_sta-[^_]+_n_neurons-\d+_n_images-\d+_datetime-\d+_\d+)",
-            model_path,
-        )
-        if match and not data_path:
-            dataset_stem = match.group(1)
-            # Find the matching .npz file
-            data_candidates = glob.glob(f"data/{dataset_stem}.npz")
-            if data_candidates:
-                data_path = data_candidates[0]
-                print(f"Inferred data file: {data_path}")
-            else:
-                print(
-                    f"Could not find data file for dataset stem: \
-                        {dataset_stem}"
-                )
-                data_path = None
-        elif not match and not data_path:
+        # Print suggestions
+        if suggestions:
+            for i, suggestion in enumerate(suggestions, 1):
+                print(f"{i}. {suggestion}")
+        else:
             print(
-                "Could not parse dataset stem from model filename. Please "
-                "provide data file as second argument if needed."
+                "No specific issues detected. Model appears to be "
+                "performing well."
             )
-    else:
-        # Fall back to automatic detection: use latest model from organized
-        # structure
-        model_dirs = [
-            "workspace/models/encoders",
-            "data",
-        ]  # Check organized structure first, then legacy
-        model_files = []
 
-        for model_dir in model_dirs:
-            model_files.extend(glob.glob(f"{model_dir}/encoder_*.pth"))
-            model_files.extend(glob.glob(f"{model_dir}/resnet_encoder_*.pth"))
-            model_files.extend(
-                glob.glob(f"{model_dir}/lightning_encoder_*.pth")
-            )
-            if model_files:
-                break
-
-        if not model_files:
-            print("No encoder models found!")
-            print("Checked directories:")
-            for model_dir in model_dirs:
-                print(f"  {model_dir}")
-                if os.path.exists(model_dir):
-                    for f in glob.glob(f"{model_dir}/*"):
-                        if f.endswith(".pth"):
-                            print(f"    {f}")
-            return
-        model_path = max(model_files, key=os.path.getctime)
-        print(f"Using latest encoder model: {model_path}")
-
-    # Create verifier and run analysis
-    verifier = EncoderVerifier()
-    results = verifier.run_full_analysis(model_path, data_path)
-
-    return results
-
-
-def verify_latest_encoder(data_dir="workspace/models/encoders"):
-    """
-    Convenience function to verify the latest encoder model.
-    This bypasses command line argument parsing and is more reliable in
-    Jupyter environments.
-    """
-    print("=== ENCODER VERIFICATION AND ANALYSIS (Auto-detection) ===")
-
-    # Find latest encoder model
-    model_files = (
-        glob.glob(f"{data_dir}/encoder_*.pth")
-        + glob.glob(f"{data_dir}/resnet_encoder_*.pth")
-        + glob.glob(f"{data_dir}/lightning_encoder_*.pth")
-    )
-
-    if not model_files:
-        print(f"No encoder models found in {data_dir}/ directory")
-        print(f"Available files in {data_dir}/:")
-        for f in glob.glob(f"{data_dir}/*"):
-            print(f"  {f}")
-        return None
-
-    model_path = max(model_files, key=os.path.getctime)
-    print(f"Found latest encoder model: {model_path}")
-
-    # Create verifier and run analysis
-    verifier = EncoderVerifier()
-    results = verifier.run_full_analysis(model_path, data_path=None)
-
-    return results
-
-
-if __name__ == "__main__":
-    main()
+        return {"suggestions": suggestions}
