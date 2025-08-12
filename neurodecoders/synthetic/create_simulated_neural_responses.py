@@ -491,6 +491,12 @@ def main():
         default="periodic_patterns,70,70",
         help="STA type and parameters (default: periodic_patterns,70,70)",
     )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=100,
+        help="Batch size for memory-efficient processing (default: 100)",
+    )
 
     args = parser.parse_args()
 
@@ -499,6 +505,7 @@ def main():
     print(f"  STA type: {args.sta_type}")
     print(f"  Number of images: {args.n_images}")
     print(f"  Number of neurons: {args.n_neurons}")
+    print(f"  Batch size: {args.batch_size}")
     print()
 
     print("Loading data and model...")
@@ -509,8 +516,20 @@ def main():
 
     print("Generating responses...")
     simulator = SimulateResponse(device, images, stas, args.n_neurons)
+
+    # Show memory estimates
+    memory_info = simulator.estimate_memory_usage(args.batch_size)
+    print(f"Memory estimates for batch size {args.batch_size}:")
+    print(f"  Patch memory: {memory_info['patch_memory_gb']:.2f} GB")
+    print(f"  Other tensors: {memory_info['other_tensors_gb']:.2f} GB")
+    print(f"  Total memory: {memory_info['total_memory_gb']:.2f} GB")
+    print(f"  Suggested batch size: {memory_info['suggested_batch_size']}")
+    print()
+
     firing_rates, dot_products, adaptation_states = (
-        simulator.simulate_neural_responses_vectorized()
+        simulator.simulate_neural_responses_vectorized(
+            batch_size=args.batch_size
+        )
     )
 
     print("Plotting example results...")
