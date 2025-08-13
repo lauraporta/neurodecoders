@@ -88,6 +88,11 @@ def get_synthetic_data_path() -> str:
     return get_path("workspace/datasets/synthetic")
 
 
+def get_raw_datasets_path() -> str:
+    """Return path where raw (downloaded) datasets are stored."""
+    return get_path("workspace/datasets/raw")
+
+
 def get_encoder_models_path() -> str:
     """
     Get the encoder models directory path.

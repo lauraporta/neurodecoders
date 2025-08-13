@@ -19,7 +19,7 @@ from pytorch_lightning.callbacks import (
 )
 from sklearn.model_selection import KFold
 
-from neurodecoders.paths import get_path
+from neurodecoders.paths import get_path, get_mlflow_path
 
 from .verification_callback import EncoderVerificationCallback
 
@@ -399,49 +399,27 @@ def _train_single_fold(
 
     # Add MLflow logger if enabled
     if enable_mlflow:
-        # Set MLflow tracking URI if provided or from environment
-        if mlflow_tracking_uri:
-            mlflow.set_tracking_uri(mlflow_tracking_uri)
-            print(
-                "Using MLflow tracking URI from parameter: "
-                f"{mlflow_tracking_uri}"
-            )
-        elif os.environ.get("MLFLOW_TRACKING_URI"):
-            mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI"))
-            print(
-                f"Using MLflow tracking URI from environment: "
-                f"{os.environ.get('MLFLOW_TRACKING_URI')}"
-            )
-        else:
-            print("No MLflow tracking URI provided, using default")
+        # Force MLflow tracking to the configured base path (config.yaml base_path + mlruns)
+        configured_mlflow_dir = get_mlflow_path()  # e.g. /<base_path>/mlruns
+        try:
+            os.makedirs(configured_mlflow_dir, exist_ok=True)
+        except OSError as e:
+            print(f"Warning: Could not create MLflow directory {configured_mlflow_dir}: {e}")
+        tracking_uri = f"file:{configured_mlflow_dir}"
+        mlflow.set_tracking_uri(tracking_uri)
+        print(f"Using MLflow tracking URI from config: {tracking_uri}")
 
-        # Set experiment
+        # Set experiment (will create if missing)
         print(f"Setting MLflow experiment: {mlflow_experiment_name}")
 
-        # Check if tracking directory exists and is writable
-        tracking_uri = mlflow.get_tracking_uri()
-        if tracking_uri.startswith("file:"):
-            tracking_path = tracking_uri[5:]  # Remove "file:" prefix
-            print(f"MLflow tracking path: {tracking_path}")
-            if os.path.exists(tracking_path):
-                print(f"Tracking directory exists: {tracking_path}")
-                if os.access(tracking_path, os.W_OK):
-                    print(f"Tracking directory is writable: {tracking_path}")
-                else:
-                    print(
-                        f"Warning: Tracking directory is not writable: "
-                        f"{tracking_path}"
-                    )
+        # Inform user about directory status
+        if os.path.exists(configured_mlflow_dir):
+            if os.access(configured_mlflow_dir, os.W_OK):
+                print(f"MLflow tracking directory is ready: {configured_mlflow_dir}")
             else:
-                print(
-                    f"Warning: Tracking directory does not exist: "
-                    f"{tracking_path}"
-                )
-                try:
-                    os.makedirs(tracking_path, exist_ok=True)
-                    print(f"Created tracking directory: {tracking_path}")
-                except Exception as e:
-                    print(f"Error creating tracking directory: {e}")
+                print(f"Warning: MLflow tracking directory not writable: {configured_mlflow_dir}")
+        else:
+            print(f"Warning: MLflow tracking directory still does not exist: {configured_mlflow_dir}")
 
         mlflow.set_experiment(mlflow_experiment_name)
 
@@ -486,13 +464,11 @@ def _train_single_fold(
             # Log the metadata dataset with dataset-level metadata
             dataset_id = data_module.get_dataset_id()
 
-            # Create dataset with metadata in the name and source
+            # Create dataset summary (side-effect method)
             data_module.get_metadata_summary()
 
-            # Create a more descriptive name with metadata
             metadata_name = f"neural_data_{dataset_id}"
 
-            # Create dataset
             summary_dataset = mlflow.data.from_pandas(
                 metadata_summary,
                 source=source_info,
