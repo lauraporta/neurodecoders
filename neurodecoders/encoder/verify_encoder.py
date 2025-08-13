@@ -172,11 +172,31 @@ class EncoderVerifier:
             print("No image labels available. Skipping classification test.")
             return None
 
-        # Use predicted firing rates as features
         X = self.predicted_firing_rates
         y = self.image_labels
 
-        # Split data
+        # Safety checks for tiny / imbalanced datasets
+        unique_labels, counts = np.unique(y, return_counts=True)
+        if len(unique_labels) < 2:
+            print(
+                "Not enough classes (need at least 2). Skipping classification test."
+            )
+            return {"skipped": True, "reason": "<2 classes"}
+        if np.min(counts) < 2:
+            print(
+                "At least one class has fewer than 2 samples. Skipping classification test to avoid stratified split errors."
+            )
+            print(
+                f"Class distribution: {{label: int(cnt) for label, cnt in zip(unique_labels, counts)}}"
+            )
+            return {"skipped": True, "reason": "class with <2 samples"}
+        if len(y) < 20:
+            print(
+                f"Dataset very small (n={len(y)}). Skipping classification test for reliability."
+            )
+            return {"skipped": True, "reason": "dataset too small"}
+
+        # Split data with stratification (safe now)
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.3, random_state=42, stratify=y
         )
@@ -358,11 +378,17 @@ class EncoderVerifier:
             print("No image labels available. Skipping analysis.")
             return {}
 
-        # Use predicted firing rates for analysis
         X = self.predicted_firing_rates
         y = self.image_labels
 
-        # Split data
+        unique_labels, counts = np.unique(y, return_counts=True)
+        if len(unique_labels) < 2 or np.min(counts) < 2 or len(y) < 20:
+            print(
+                "Skipping feature scaling / separability analysis due to insufficient class representation or tiny dataset."
+            )
+            return {"skipped": True, "reason": "insufficient data"}
+
+        # Safe stratified split
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.3, random_state=42, stratify=y
         )
