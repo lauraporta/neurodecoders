@@ -2,6 +2,8 @@ import torch
 import torchvision
 import torchvision.transforms as transforms
 
+from neurodecoders.paths import ensure_dir, get_raw_datasets_path
+
 
 class ImageDataset:
     # check that it is not RGB
@@ -24,8 +26,10 @@ class ImageDataset:
                 ),  # Normalize to [-1, 1] with mean=0.5
             ]
         )
+        root = get_raw_datasets_path()
+        ensure_dir(root)
         dataset = dataset_class(
-            root="./data", train=True, download=True, transform=transform
+            root=root, train=True, download=True, transform=transform
         )
         loader = torch.utils.data.DataLoader(
             dataset, batch_size=n_images, shuffle=True
