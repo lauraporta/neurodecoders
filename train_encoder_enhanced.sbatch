@@ -29,58 +29,46 @@
 #SBATCH -n 1
 #SBATCH -t 00-06:00 # time (D-HH:MM)
 #SBATCH --array=0-89%6 # 90 combinations (3 model types x 6 learning rates x 5 batch sizes), max 6 running simultaneously
-#SBATCH -o slurm/enhanced_%A_%a.out.txt # STDOUT
-#SBATCH -e slurm/enhanced_%A_%a.err.txt # STDERR
+#SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
+#SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
-echo "=== Enhanced Encoder Training ==="
-echo "Initialization completed."
-echo "Activating the environment and setting up the package"
+echo "[INFO] Single encoder test run"
+echo "[INFO] SLURM_JOB_ID=$SLURM_JOB_ID"
+echo "[INFO] Host: $(hostname)"
+echo "[INFO] Start time: $(date)"
 
 # Load modules and activate conda environment
 source /etc/profile.d/modules.sh
 module load miniconda
 conda activate /nfs/nhome/live/lporta/.conda/envs/decoders
+which python
 
-echo "Setting up environment variables"
+export MLFLOW_TRACKING_URI=/ceph/margrie/laura/neurodecoders/mlruns
+# export MLFLOW_EXPERIMENT_NAME=encoder_test_experiment
+mkdir -p "$MLFLOW_TRACKING_URI"
+
 export CUDA_VISIBLE_DEVICES=0
-
-# Get the current working directory
-CURRENT_DIR=$(pwd)
-echo "Current working directory: $CURRENT_DIR"
-
-# Set MLflow tracking URI to use relative path
-export MLFLOW_TRACKING_URI="file:${CURRENT_DIR}/mlruns"
-echo "MLflow tracking URI: $MLFLOW_TRACKING_URI"
-
-# Ensure mlruns directory exists
-mkdir -p "${CURRENT_DIR}/mlruns"
-echo "Ensured mlruns directory exists: ${CURRENT_DIR}/mlruns"
-
-echo "Starting enhanced array..."
-echo "Array task id: $SLURM_ARRAY_TASK_ID"
-echo "Node name: $SLURMD_NODENAME"
 
 # ==========================================
 # MODIFY THESE PARAMETERS AS NEEDED:
 # ==========================================
-EPOCHS=2  # Start with 2 epochs for testing, then increase to 10000 for full training
-# For full training, change to: EPOCHS=10000
-
-# Enhanced hyperparameter sweep with better defaults
-# 3 model types x 6 learning rates x 5 batch sizes = 90 combinations
-# Model types: [resnet, simple, skip]
-# Learning rates: [1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3]
-# Batch sizes: [8, 16, 32, 64, 128]
+EPOCHS=10000
+LEARNING_RATE=1e-4
+BATCH_SIZE=32
 
 # Pass the array task ID to the Python script
-python neurodecoders/encoder/mlflow_training.py \
+/nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
     --array-task-id $SLURM_ARRAY_TASK_ID \
     --epochs $EPOCHS \
     --mixed-precision \
     --early-stopping \
     --early-stopping-patience 100 \
     --checkpointing \
-    --gradient-clip-val 1.0
+    --gradient-clip-val 1.0 \
+    --n-neurons 100 \
+    --n-images 10000 \
+    --experiment-name "second_run" \
+    --run-name "lr${LEARNING_RATE}_bs${BATCH_SIZE}_epochs${EPOCHS}_task${SLURM_ARRAY_TASK_ID}"
 
 echo "Enhanced training completed for task $SLURM_ARRAY_TASK_ID"
 echo "MLflow experiments should be available in: ${CURRENT_DIR}/mlruns"
