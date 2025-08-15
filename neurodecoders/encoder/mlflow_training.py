@@ -632,7 +632,7 @@ def main():
             "dataset_type": HYPERPARAMETER_SWEEP_DEFAULTS[
                 "sweep_dataset_type"
             ],
-            "mlflow_experiment_name": f"{model_type}_encoder_comparison",
+            "mlflow_experiment_name": f"{args.experiment_name}/{model_type}_encoder_comparison",
             "mlflow_run_name": run_name,
             # Enhanced training options
             "enable_mixed_precision": enable_mixed_precision,
