@@ -658,12 +658,3 @@ def _train_with_cv(
 
     return results
 
-
-# Note: The following convenience functions have been removed as they were
-# unused:
-# - train_simple_encoder
-# - train_skip_connection_encoder
-# - train_resnet_encoder
-#
-# Use the main train_encoder function directly with the appropriate model
-# type.
