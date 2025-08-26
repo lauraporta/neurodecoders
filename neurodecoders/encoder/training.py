@@ -13,15 +13,80 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from pytorch_lightning.callbacks import (
+    Callback,
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
 )
 from sklearn.model_selection import KFold
 
-from neurodecoders.paths import get_path, get_mlflow_path
+from neurodecoders.encoder.verification_callback import (
+    EncoderVerificationCallback,
+)
+from neurodecoders.paths import get_mlflow_path, get_path
 
-from .verification_callback import EncoderVerificationCallback
+
+class MLflowHistoryCallback(Callback):
+    """
+    Callback to log training and validation history to MLflow for every epoch.
+
+    This callback captures epoch-level metrics and logs them to MLflow with
+    the epoch number as the step, enabling proper history tracking.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.current_epoch = 0
+
+    def on_train_epoch_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ):
+        """Log training metrics to MLflow at the end of each training epoch."""
+        self.current_epoch = trainer.current_epoch
+
+        # Get training loss from logged metrics
+        if trainer.logged_metrics:
+            train_loss = trainer.logged_metrics.get("train_loss")
+            if train_loss is not None:
+                # Convert tensor to float if needed
+                if isinstance(train_loss, torch.Tensor):
+                    train_loss = train_loss.item()
+
+                # Log to MLflow with epoch as step
+                mlflow.log_metric(
+                    "train_loss", train_loss, step=self.current_epoch
+                )
+
+                # Also store in the module's history list
+                if not hasattr(pl_module, "train_losses"):
+                    pl_module.train_losses = []
+                pl_module.train_losses.append(train_loss)
+
+    def on_validation_epoch_end(
+        self, trainer: pl.Trainer, pl_module: pl.LightningModule
+    ):
+        """
+        Log validation metrics to MLflow at the end of each validation epoch.
+        """
+        self.current_epoch = trainer.current_epoch
+
+        # Get validation loss from logged metrics
+        if trainer.logged_metrics:
+            val_loss = trainer.logged_metrics.get("val_loss")
+            if val_loss is not None:
+                # Convert tensor to float if needed
+                if isinstance(val_loss, torch.Tensor):
+                    val_loss = val_loss.item()
+
+                # Log to MLflow with epoch as step
+                mlflow.log_metric(
+                    "val_loss", val_loss, step=self.current_epoch
+                )
+
+                # Also store in the module's history list
+                if not hasattr(pl_module, "val_losses"):
+                    pl_module.val_losses = []
+                pl_module.val_losses.append(val_loss)
 
 
 class EncoderLightningModule(pl.LightningModule):
@@ -176,20 +241,6 @@ class EncoderLightningModule(pl.LightningModule):
                 "monitor": "val_loss" if scheduler_type == "plateau" else None,
             },
         }
-
-    def on_train_epoch_end(self):
-        """Store training loss for plotting."""
-        if self.trainer.logged_metrics:
-            train_loss = self.trainer.logged_metrics.get("train_loss")
-            if train_loss is not None:
-                self.train_losses.append(train_loss)
-
-    def on_validation_epoch_end(self):
-        """Store validation loss for plotting."""
-        if self.trainer.logged_metrics:
-            val_loss = self.trainer.logged_metrics.get("val_loss")
-            if val_loss is not None:
-                self.val_losses.append(val_loss)
 
 
 class UnfreezeCallback(pl.Callback):
@@ -383,8 +434,11 @@ def _train_single_fold(
     if unfreeze_epoch is not None:
         callbacks.append(UnfreezeCallback(unfreeze_epoch=unfreeze_epoch))
 
-    # Add verification callback if MLflow is enabled
+    # Add MLflow history callback if MLflow is enabled
     if enable_mlflow:
+        callbacks.append(MLflowHistoryCallback())
+
+        # Add verification callback
         verification_callback = EncoderVerificationCallback(
             data_module=data_module,
             save_model=True,
@@ -399,12 +453,16 @@ def _train_single_fold(
 
     # Add MLflow logger if enabled
     if enable_mlflow:
-        # Force MLflow tracking to the configured base path (config.yaml base_path + mlruns)
+        # Force MLflow tracking to the configured base path
+        # (config.yaml base_path + mlruns)
         configured_mlflow_dir = get_mlflow_path()  # e.g. /<base_path>/mlruns
         try:
             os.makedirs(configured_mlflow_dir, exist_ok=True)
         except OSError as e:
-            print(f"Warning: Could not create MLflow directory {configured_mlflow_dir}: {e}")
+            print(
+                f"Warning: Could not create MLflow directory "
+                f"{configured_mlflow_dir}: {e}"
+            )
         tracking_uri = f"file:{configured_mlflow_dir}"
         mlflow.set_tracking_uri(tracking_uri)
         print(f"Using MLflow tracking URI from config: {tracking_uri}")
@@ -415,11 +473,20 @@ def _train_single_fold(
         # Inform user about directory status
         if os.path.exists(configured_mlflow_dir):
             if os.access(configured_mlflow_dir, os.W_OK):
-                print(f"MLflow tracking directory is ready: {configured_mlflow_dir}")
+                print(
+                    f"MLflow tracking directory is ready: "
+                    f"{configured_mlflow_dir}"
+                )
             else:
-                print(f"Warning: MLflow tracking directory not writable: {configured_mlflow_dir}")
+                print(
+                    f"Warning: MLflow tracking directory not writable: "
+                    f"{configured_mlflow_dir}"
+                )
         else:
-            print(f"Warning: MLflow tracking directory still does not exist: {configured_mlflow_dir}")
+            print(
+                f"Warning: MLflow tracking directory still does not exist: "
+                f"{configured_mlflow_dir}"
+            )
 
         mlflow.set_experiment(mlflow_experiment_name)
 
@@ -657,4 +724,3 @@ def _train_with_cv(
         results.append((trainer, lightning_model, fold_data_module))
 
     return results
-
