@@ -40,13 +40,13 @@ EOF
 echo "[INFO] Launching training with user-specified command"
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
     --model-type resnet \
-    --epochs 1 \
+    --epochs 3 \
     --dataset-type cifar10 \
     --sta-type periodic_patterns,70,70 \
     --n-neurons 10 \
     --n-images 10 \
-    --experiment-name run_from_comand_line \
-    --run-name test3
+    --experiment-name with_history \
+    --run-name test1
 
 status=$?
 if [ $status -ne 0 ]; then
