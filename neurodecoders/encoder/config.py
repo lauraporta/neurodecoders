@@ -62,8 +62,8 @@ HYPERPARAMETER_SWEEP_DEFAULTS = {
     "sweep_epochs": 2,  # Set to 2 epochs for testing
     "sweep_model_type": ["resnet", "simple", "skip"],  # Model comparison
     "sweep_dataset_type": "cifar10",
-    "optimizers": ["adam", "adamw", "sgd"],  # Optimizer comparison
-    "schedulers": ["none", "cosine", "plateau"],  # Learning rate scheduling
+    "optimizers": ["adam"],  # Optimizer comparison
+    "schedulers": ["none"],  # Learning rate scheduling
     "loss_functions": ["mse", "smooth_l1"],  # Loss function comparison
 }
 

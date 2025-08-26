@@ -615,7 +615,8 @@ def main():
         lr = learning_rates[lr_idx]
         batch_size = batch_sizes[bs_idx]
         epochs = args.epochs  # Use command line epochs instead of default
-        run_name = f"lr{lr}_bs{batch_size}_epochs{epochs}"
+        run_name = f"lr{lr}_bs{batch_size}_epochs{epochs}_task{args.array_task_id}"
+        experiment_name = f"{args.experiment_name}/{model_type}_encoder_comparison"
 
         print(
             f"Array Task {args.array_task_id}: model={model_type}, "
@@ -632,7 +633,7 @@ def main():
             "dataset_type": HYPERPARAMETER_SWEEP_DEFAULTS[
                 "sweep_dataset_type"
             ],
-            "mlflow_experiment_name": f"{args.experiment_name}/{model_type}_encoder_comparison",
+            "mlflow_experiment_name": experiment_name,
             "mlflow_run_name": run_name,
             # Enhanced training options
             "enable_mixed_precision": enable_mixed_precision,
@@ -692,7 +693,7 @@ def main():
         config = merge_config_with_defaults(config)
         validate_config(config)
 
-        trainer, model, _ = train_with_config(config)
+        _, model, _ = train_with_config(config)
 
         print("\nTraining completed!")
         if model.train_losses:
