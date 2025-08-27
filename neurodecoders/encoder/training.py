@@ -574,7 +574,6 @@ def _train_single_model(
                 "final_val_loss": lightning_model.val_losses[-1]
                 if lightning_model.val_losses
                 else None,
-                "model_parameters": sum(p.numel() for p in model.parameters()),
             }
 
             # Log metrics (only numeric values)
