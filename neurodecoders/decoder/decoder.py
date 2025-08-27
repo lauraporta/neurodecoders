@@ -115,12 +115,6 @@ class DecoderLightningModule(pl.LightningModule):
         self.train_losses = []
         self.val_losses = []
 
-        # Store predictions and targets for metrics calculation
-        self.train_predictions = []
-        self.train_targets = []
-        self.val_predictions = []
-        self.val_targets = []
-
     def forward(self, x):
         return self.model(x)
 
@@ -128,10 +122,6 @@ class DecoderLightningModule(pl.LightningModule):
         x, y = batch
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
-
-        # Store predictions and targets for metrics calculation
-        self.train_predictions.append(pred.detach().cpu())
-        self.train_targets.append(y.detach().cpu())
 
         # Log training loss
         self.log(
@@ -143,10 +133,6 @@ class DecoderLightningModule(pl.LightningModule):
         x, y = batch
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
-
-        # Store predictions and targets for metrics calculation
-        self.val_predictions.append(pred.detach().cpu())
-        self.val_targets.append(y.detach().cpu())
 
         # Log validation loss
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
@@ -190,63 +176,6 @@ class DecoderLightningModule(pl.LightningModule):
 
         self.train_losses.append(train_loss)
         self.val_losses.append(val_loss)
-
-    def calculate_metrics_from_stored_data(
-        self, predictions_list, targets_list
-    ):
-        """Calculate PSNR and correlation from stored predictions and
-        targets"""
-        if not predictions_list or not targets_list:
-            return 0.0, 0.0
-
-        # Concatenate all predictions and targets
-        predictions = torch.cat(predictions_list, dim=0).numpy()
-        targets = torch.cat(targets_list, dim=0).numpy()
-
-        # Ensure proper shapes
-        if predictions.ndim == 4:
-            predictions = predictions.squeeze(1)  # Remove channel dimension
-        if targets.ndim == 4:
-            targets = targets.squeeze(1)  # Remove channel dimension
-
-        # Calculate metrics per image
-        n_images = predictions.shape[0]
-        psnr_values = []
-        correlation_values = []
-
-        for i in range(n_images):
-            pred_img = predictions[i]
-            target_img = targets[i]
-
-            # Calculate MSE for this image
-            mse = np.mean((target_img - pred_img) ** 2)
-
-            # Calculate PSNR for this image
-            max_val = np.max(target_img)
-            if mse > 0:
-                psnr = 20 * np.log10(max_val / np.sqrt(mse))
-            else:
-                psnr = float("inf")  # Perfect reconstruction
-            psnr_values.append(psnr)
-
-            # Calculate correlation for this image
-            correlation = np.corrcoef(
-                target_img.flatten(), pred_img.flatten()
-            )[0, 1]
-            correlation_values.append(correlation)
-
-        # Average the metrics across all images
-        mean_psnr = np.mean(psnr_values)
-        mean_correlation = np.mean(correlation_values)
-
-        return mean_psnr, mean_correlation
-
-    def clear_stored_data(self):
-        """Clear stored predictions and targets to free memory"""
-        self.train_predictions.clear()
-        self.train_targets.clear()
-        self.val_predictions.clear()
-        self.val_targets.clear()
 
 
 # ---- Data Module ----
@@ -449,11 +378,6 @@ def train_model_lightning(
     enable_progress_bar=True,
     log_every_n_steps=50,
     callbacks=None,
-    progress_callback=None,
-    metrics_callback=None,
-    plot_callback=None,
-    psnr_callback=None,
-    correlation_callback=None,
 ):
     """
     Train decoder using PyTorch Lightning
@@ -675,6 +599,123 @@ def save_predictions(
     return output_path
 
 
+def save_test_set_decoded_images(
+    model,
+    data_module,
+    output_dir=get_path("workspace/predictions/decoder"),
+    num_samples=5,
+    dataset_to_load=None,
+):
+    """Save decoded images from the test set"""
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Get test set data
+    test_dataloader = data_module.test_dataloader()
+
+    # Get a few samples from test set
+    model.eval()
+    test_images = []
+    test_firing_rates = []
+    test_predictions = []
+
+    with torch.no_grad():
+        for i, (firing_rates, images) in enumerate(test_dataloader):
+            if i >= num_samples:
+                break
+
+            # Generate predictions
+            predictions = model(firing_rates)
+
+            # Store data
+            test_firing_rates.append(firing_rates.cpu().numpy())
+            test_images.append(images.cpu().numpy())
+            test_predictions.append(predictions.cpu().numpy())
+
+    # Concatenate all samples
+    test_firing_rates = np.concatenate(test_firing_rates, axis=0)
+    test_images = np.concatenate(test_images, axis=0)
+    test_predictions = np.concatenate(test_predictions, axis=0)
+
+    # Ensure proper shapes for visualization
+    if test_images.ndim == 4:
+        test_images_vis = test_images.squeeze(1)  # Remove channel dimension
+    else:
+        test_images_vis = test_images
+
+    if test_predictions.ndim == 4:
+        test_predictions_vis = test_predictions.squeeze(
+            1
+        )  # Remove channel dimension
+    else:
+        test_predictions_vis = test_predictions
+
+    # Handle dataset_to_load parameter
+    if dataset_to_load is not None:
+        if isinstance(dataset_to_load, str):
+            dataset_to_load = Path(dataset_to_load)
+        dataset_name = dataset_to_load.stem
+    else:
+        dataset_name = "test_set"
+
+    # Save test set predictions
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_filename = f"test_set_decoded_{dataset_name}_{timestamp}.npz"
+    output_path = os.path.join(output_dir, output_filename)
+
+    np.savez(
+        output_path,
+        original_images=test_images_vis,
+        decoded_images=test_predictions_vis,
+        neural_responses=test_firing_rates,
+        dataset_name=dataset_name,
+        timestamp=timestamp,
+    )
+
+    print(f"Test set decoded images saved to: {output_path}")
+    print(f"Number of test samples: {len(test_images_vis)}")
+    print(
+        f"Mean reconstruction error: "
+        f"{np.mean((test_predictions_vis - test_images_vis) ** 2):.4f}"
+    )
+
+    # Visualize test set reconstructions
+    n_samples = min(num_samples, len(test_images_vis))
+    fig, axes = plt.subplots(3, n_samples, figsize=(2 * n_samples, 6))
+
+    for i in range(n_samples):
+        # Original image
+        axes[0, i].imshow(test_images_vis[i], cmap="gray")
+        axes[0, i].set_title(f"Original {i + 1}")
+        axes[0, i].axis("off")
+
+        # Decoded image
+        axes[1, i].imshow(test_predictions_vis[i], cmap="gray")
+        axes[1, i].set_title(f"Decoded {i + 1}")
+        axes[1, i].axis("off")
+
+        # Difference image
+        diff = np.abs(test_predictions_vis[i] - test_images_vis[i])
+        axes[2, i].imshow(diff, cmap="hot")
+        axes[2, i].set_title(f"Difference {i + 1}")
+        axes[2, i].axis("off")
+
+    plt.tight_layout()
+
+    # Save test set reconstruction plot
+    plots_dir = get_path("workspace/plots/decoder")
+    os.makedirs(plots_dir, exist_ok=True)
+    test_plot_path = os.path.join(
+        plots_dir, f"test_set_decoded_{dataset_name}_{timestamp}.png"
+    )
+    plt.savefig(test_plot_path, dpi=150, bbox_inches="tight")
+    print(f"Test set reconstruction plot saved to: {test_plot_path}")
+
+    plt.show()
+
+    return output_path
+
+
 def main(dataset_to_load, epochs=100):
     """Main function to run the decoder training"""
     print("=== Neural Decoder Training with PyTorch Lightning ===")
@@ -703,7 +744,7 @@ def main(dataset_to_load, epochs=100):
     visualize_data(firing_rates, images, save_path=data_viz_path)
 
     # Train with Lightning
-    _, model, _ = train_model_lightning(
+    _, model, data_module = train_model_lightning(
         firing_rates=firing_rates,
         images=images,
         epochs=epochs,
@@ -725,6 +766,15 @@ def main(dataset_to_load, epochs=100):
         images,
         data_file,
         output_dir=get_path("workspace/predictions/decoder"),
+        dataset_to_load=dataset_to_load,
+    )
+
+    # Save test set decoded images
+    save_test_set_decoded_images(
+        model,
+        data_module,
+        output_dir=get_path("workspace/predictions/decoder"),
+        num_samples=5,
         dataset_to_load=dataset_to_load,
     )
 
