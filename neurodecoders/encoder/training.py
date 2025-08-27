@@ -278,7 +278,6 @@ def _train_single_model(
     enable_early_stopping: bool = True,
     early_stopping_patience: int = 100,
     enable_checkpointing: bool = True,
-    gradient_clip_val: Optional[float] = 1.0,
 ):
     """Train a single model instance."""
 
@@ -467,7 +466,6 @@ def _train_single_model(
         deterministic=False,
         enable_checkpointing=enable_checkpointing,
         precision="16-mixed" if enable_mixed_precision else "32",
-        gradient_clip_val=gradient_clip_val,
         strategy="auto",
         sync_batchnorm=True,
     )
@@ -533,7 +531,6 @@ def train_encoder(
     enable_early_stopping: bool = True,
     early_stopping_patience: int = 100,  # Updated default
     enable_checkpointing: bool = True,
-    gradient_clip_val: Optional[float] = 1.0,
 ):
     """
     Generic training function that works with any model architecture.
@@ -562,7 +559,6 @@ def train_encoder(
         enable_early_stopping: Whether to enable early stopping
         early_stopping_patience: Patience for early stopping
         enable_checkpointing: Whether to enable model checkpointing
-        gradient_clip_val: Gradient clipping value
 
     Returns:
         If n_folds=1: (trainer, lightning_model, data_module)
@@ -635,7 +631,6 @@ def train_encoder(
             enable_early_stopping=enable_early_stopping,
             early_stopping_patience=early_stopping_patience,
             enable_checkpointing=enable_checkpointing,
-            gradient_clip_val=gradient_clip_val,
         )
 
         results.append((trainer, lightning_model, fold_data_module))

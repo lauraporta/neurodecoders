@@ -341,7 +341,6 @@ def train_with_config(config: Dict[str, Any]):
         enable_early_stopping=config["enable_early_stopping"],
         early_stopping_patience=config["early_stopping_patience"],
         enable_checkpointing=config["enable_checkpointing"],
-        gradient_clip_val=config["gradient_clip_val"],
     )
 
     return trainer, lightning_model, data_module
@@ -544,12 +543,6 @@ def main():
         action="store_true",
         help="Disable model checkpointing",
     )
-    parser.add_argument(
-        "--gradient-clip-val",
-        type=float,
-        default=1.0,
-        help="Gradient clipping value",
-    )
 
     args = parser.parse_args()
 
@@ -597,7 +590,6 @@ def main():
         "enable_early_stopping": enable_early_stopping,
         "early_stopping_patience": args.early_stopping_patience,
         "enable_checkpointing": enable_checkpointing,
-        "gradient_clip_val": args.gradient_clip_val,
         # MLflow toggle
         "enable_mlflow": True,
     }

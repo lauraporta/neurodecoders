@@ -68,7 +68,7 @@ echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, bat
     --mixed-precision \
     --no-early-stopping \
     --checkpointing \
-    --gradient-clip-val 1.0 \
+
     --n-neurons 100 \
     --n-images 10000 \
     --cv-folds 1 \
