@@ -21,7 +21,6 @@ import torch
 
 from neurodecoders.encoder.config import (
     HYPERPARAMETER_SWEEP_DEFAULTS,
-    merge_config_with_defaults,
     validate_config,
 )
 from neurodecoders.encoder.models import (
@@ -122,8 +121,8 @@ def load_synthetic_data_from_workspace(
         )
 
     # Required exact matches from config
-    n_neurons = str(int(config.get("n_neurons", 100)))
-    n_images = str(int(config.get("n_images", 10000)))
+    n_neurons = str(int(config["n_neurons"]))
+    n_images = str(int(config["n_images"]))
 
     # Filter files that exactly match both counts
     matching = []
@@ -163,7 +162,7 @@ def load_synthetic_data_from_workspace(
 
     try:
         # Check if memory mapping should be used
-        use_memory_mapping = config.get("use_memory_mapping", False)
+        use_memory_mapping = config["use_memory_mapping"]
 
         if use_memory_mapping:
             print(f"Loading data with memory mapping: {file_path}")
@@ -230,7 +229,7 @@ def get_model(config: Dict[str, Any]) -> torch.nn.Module:
     Returns:
         model: PyTorch model
     """
-    model_type = config.get("model_type", "simple")
+    model_type = config["model_type"]
     out_neurons = config.get("out_neurons")
 
     if out_neurons is None:
@@ -244,8 +243,8 @@ def get_model(config: Dict[str, Any]) -> torch.nn.Module:
     elif model_type == "skip":
         return SimpleEncoderWithSkipConnection(out_neurons=out_neurons)
     elif model_type == "resnet":
-        resnet_type = config.get("resnet_type", "resnet18")
-        freeze_backbone = config.get("freeze_backbone", True)
+        resnet_type = config["resnet_type"]
+        freeze_backbone = config["freeze_backbone"]
         return ResNetEncoder(
             out_neurons=out_neurons,
             resnet_type=resnet_type,
@@ -266,20 +265,20 @@ def train_with_config(config: Dict[str, Any]):
         trainer, model, data_module: Training results
     """
     print("=== ENCODER TRAINING WITH CONFIG ===")
-    print(f"Model type: {config.get('model_type', 'simple')}")
-    print(f"Learning rate: {config.get('learning_rate', 1e-3)}")
-    print(f"Epochs: {config.get('epochs', 30)}")
-    print(f"Batch size: {config.get('batch_size', 32)}")
-    print(f"Optimizer: {config.get('optimizer', 'adam')}")
-    print(f"Loss function: {config.get('loss_function', 'mse')}")
-    print(f"Scheduler: {config.get('scheduler', 'none')}")
-    print(f"Dataset: {config.get('dataset_type', 'cifar10')}")
-    print(f"STA type: {config.get('sta_type', 'perlin_noise_patterns,11,11')}")
-    print(f"Neurons: {config.get('n_neurons', 100)}")
-    print(f"Images: {config.get('n_images', 10000)}")
-    print(f"Mixed precision: {config.get('enable_mixed_precision', True)}")
-    print(f"Early stopping: {config.get('enable_early_stopping', True)}")
-    print(f"Checkpointing: {config.get('enable_checkpointing', True)}")
+    print(f"Model type: {config['model_type']}")
+    print(f"Learning rate: {config['learning_rate']}")
+    print(f"Epochs: {config['epochs']}")
+    print(f"Batch size: {config['batch_size']}")
+    print(f"Optimizer: {config['optimizer']}")
+    print(f"Loss function: {config['loss_function']}")
+    print(f"Scheduler: {config['scheduler']}")
+    print(f"Dataset: {config['dataset_type']}")
+    print(f"STA type: {config['sta_type']}")
+    print(f"Neurons: {config['n_neurons']}")
+    print(f"Images: {config['n_images']}")
+    print(f"Mixed precision: {config['enable_mixed_precision']}")
+    print(f"Early stopping: {config['enable_early_stopping']}")
+    print(f"Checkpointing: {config['enable_checkpointing']}")
 
     # Load data
     images, firing_rates, labels, metadata = (
@@ -291,31 +290,31 @@ def train_with_config(config: Dict[str, Any]):
         config["out_neurons"] = firing_rates.shape[1]
         print(f"Inferred output neurons from dataset: {config['out_neurons']}")
     else:
-        print(f"Output neurons: {config.get('out_neurons')}")
+        print(f"Output neurons: {config['out_neurons']}")
 
     # Create data module
     data_module = NeuralDataModule(
         images=images,
         firing_rates=firing_rates,
         labels=labels,
-        batch_size=config.get("batch_size", 32),
+        batch_size=config["batch_size"],
         dataset_metadata=metadata,
-        use_memory_mapping=config.get("use_memory_mapping", False),
-        chunk_size=config.get("chunk_size", 10000),
-        prefetch_factor=config.get("prefetch_factor", 2),
-        num_workers=config.get("num_workers", 0),
-        pin_memory=config.get("pin_memory", True),
+        use_memory_mapping=config["use_memory_mapping"],
+        chunk_size=config["chunk_size"],
+        prefetch_factor=config["prefetch_factor"],
+        num_workers=config["num_workers"],
+        pin_memory=config["pin_memory"],
     )
 
     # Create optimizer and scheduler configurations
     optimizer_config = {
-        "type": config.get("optimizer", "adam"),
+        "type": config["optimizer"],
     }
 
     scheduler_config = {
-        "type": config.get("scheduler", "none"),
-        "step_size": config.get("scheduler_step_size", 30),
-        "gamma": config.get("scheduler_gamma", 0.1),
+        "type": config["scheduler"],
+        "step_size": config["scheduler_step_size"],
+        "gamma": config["scheduler_gamma"],
     }
 
     # Create model
@@ -325,25 +324,21 @@ def train_with_config(config: Dict[str, Any]):
     trainer, lightning_model, _ = train_encoder(
         model=model,
         data_module=data_module,
-        model_name=f"{config.get('model_type', 'simple')}_encoder",
-        learning_rate=config.get("learning_rate", 1e-3),
-        epochs=config.get("epochs", 30),
+        model_name=f"{config['model_type']}_encoder",
+        learning_rate=config["learning_rate"],
+        epochs=config["epochs"],
         optimizer_config=optimizer_config,
-        loss_fn=config.get("loss_function", "mse"),
+        loss_fn=config["loss_function"],
         scheduler_config=scheduler_config,
-        enable_mlflow=config.get("enable_mlflow", True),
-        mlflow_experiment_name=config.get(
-            "mlflow_experiment_name", "neural_encoder"
-        ),
-        mlflow_run_name=config.get("mlflow_run_name"),
+        enable_mlflow=config["enable_mlflow"],
+        mlflow_experiment_name=config["mlflow_experiment_name"],
+        mlflow_run_name=config["mlflow_run_name"],
         # Enhanced training options
-        enable_mixed_precision=config.get("enable_mixed_precision", True),
-        enable_early_stopping=config.get("enable_early_stopping", True),
-        early_stopping_patience=config.get(
-            "early_stopping_patience", 100
-        ),  # Updated default
-        enable_checkpointing=config.get("enable_checkpointing", True),
-        gradient_clip_val=config.get("gradient_clip_val", 1.0),
+        enable_mixed_precision=config["enable_mixed_precision"],
+        enable_early_stopping=config["enable_early_stopping"],
+        early_stopping_patience=config["early_stopping_patience"],
+        enable_checkpointing=config["enable_checkpointing"],
+        gradient_clip_val=config["gradient_clip_val"],
     )
 
     return trainer, lightning_model, data_module
@@ -612,16 +607,31 @@ def main():
             f"lr={lr}, batch_size={batch_size}, epochs={epochs}"
         )
 
-        # Create config with sweep defaults
+        # Create config with sweep settings and argparse defaults
         config = {
             "model_type": model_type,
             "out_neurons": None,  # Will be inferred from dataset
+            "resnet_type": args.resnet_type,
+            "freeze_backbone": freeze_backbone,
             "learning_rate": lr,
             "epochs": epochs,  # Use command line epochs
             "batch_size": batch_size,
+            "optimizer": args.optimizer,
+            "loss_function": args.loss_function,
+            "scheduler": args.scheduler,
+            "scheduler_step_size": args.scheduler_step_size,
+            "scheduler_gamma": args.scheduler_gamma,
             "dataset_type": HYPERPARAMETER_SWEEP_DEFAULTS[
                 "sweep_dataset_type"
             ],
+            "sta_type": args.sta_type,
+            "n_neurons": args.n_neurons,
+            "n_images": args.n_images,
+            "use_memory_mapping": args.use_memory_mapping,
+            "chunk_size": args.chunk_size,
+            "prefetch_factor": args.prefetch_factor,
+            "num_workers": args.num_workers,
+            "pin_memory": pin_memory,
             "mlflow_experiment_name": experiment_name,
             "mlflow_run_name": run_name,
             # Enhanced training options
@@ -630,10 +640,11 @@ def main():
             "early_stopping_patience": args.early_stopping_patience,
             "enable_checkpointing": enable_checkpointing,
             "gradient_clip_val": args.gradient_clip_val,
+            # MLflow toggle
+            "enable_mlflow": True,
         }
 
-        # Merge with defaults and validate
-        config = merge_config_with_defaults(config)
+        # Validate only; no default merging
         validate_config(config)
 
         trainer, model, _ = train_with_config(config)
@@ -676,10 +687,11 @@ def main():
             "early_stopping_patience": args.early_stopping_patience,
             "enable_checkpointing": enable_checkpointing,
             "gradient_clip_val": args.gradient_clip_val,
+            # MLflow toggle
+            "enable_mlflow": True,
         }
 
-        # Merge with defaults and validate
-        config = merge_config_with_defaults(config)
+        # Validate only; no default merging
         validate_config(config)
 
         _, model, _ = train_with_config(config)
