@@ -32,4 +32,4 @@ echo "💡 To stop MLflow UI, press Ctrl+C"
 echo ""
 
 # Launch MLflow UI
-mlflow ui --host 0.0.0.0 --port 5001 --backend-store-uri file:${BASE_PATH}/mlruns
+mlflow ui --host 0.0.0.0 --port 5001 --backend-store-uri file:${BASE_PATH}/mlruns  --gunicorn-opts "--timeout "3600"
