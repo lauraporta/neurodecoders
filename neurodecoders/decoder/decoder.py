@@ -675,9 +675,10 @@ def save_predictions(
     return output_path
 
 
-def main(dataset_to_load):
+def main(dataset_to_load, epochs=100):
     """Main function to run the decoder training"""
     print("=== Neural Decoder Training with PyTorch Lightning ===")
+    print(f"Training for {epochs} epochs")
 
     # Print device information
     print_device_info()
@@ -705,7 +706,7 @@ def main(dataset_to_load):
     _, model, _ = train_model_lightning(
         firing_rates=firing_rates,
         images=images,
-        epochs=100,
+        epochs=epochs,
         learning_rate=1e-4,
     )
 
@@ -749,10 +750,16 @@ if __name__ == "__main__":
         required=True,
         help="Filename of the dataset to load",
     )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=100,
+        help="Number of training epochs (default: 100)",
+    )
 
     args = parser.parse_args()
 
     # Use the provided dataset filename directly
     dataset_to_load = args.dataset
 
-    main(dataset_to_load)
+    main(dataset_to_load, args.epochs)
