@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 
 
@@ -85,6 +86,27 @@ class SimulateResponse:
         """
         print("Preparing data for batch computation...")
 
+        # Generate neuron-specific parameters with physiological constraints
+        # Baseline rates: mostly very low (0.1-2 Hz), some higher
+        baselines = (
+            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.01)
+            * 0.01
+        )
+
+        # Thresholds: log-normal distribution for more realistic,
+        # skewed thresholds
+        thresholds = (
+            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3)
+            * 0.3
+        )
+
+        # Maximum firing rates: respecting physiological limits
+        # Most neurons max out at 100-200 Hz, with some exceptions
+        max_rates = (
+            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3)
+            * 100
+        )
+
         # Pre-allocate output tensors on CPU (will be moved to GPU in batches)
         firing_rates = np.zeros((self.n_images, self.n_neurons))
         dot_products = np.zeros((self.n_images, self.n_neurons))
@@ -146,8 +168,9 @@ class SimulateResponse:
                 dot = torch.mean(patches_flat[i] * stas_flat, dim=1)
                 dot_products[start_idx + i] = dot.cpu().numpy()
 
-                # Simple response: just the dot product
-                response = dot
+                # Use a steeper non-linearity for more sparsity
+                response = F.elu(dot - thresholds) + 1
+                response = max_rates * response
 
                 # Add noise if specified
                 if noise_level > 0:
@@ -156,8 +179,16 @@ class SimulateResponse:
                     )
                     response = response * noise_factor
 
-                # Final firing rate (just the response)
-                firing_rate = response
+                # Add baseline firing rate
+                response = response + baselines
+
+                # Final firing rate with physiological limits
+                firing_rate = torch.clamp(
+                    response, min=0.0
+                )  # First clamp to 0
+                firing_rate = torch.minimum(
+                    firing_rate, max_rates
+                )  # Then clamp to max_rates
 
                 firing_rates[start_idx + i] = firing_rate.cpu().numpy()
 
