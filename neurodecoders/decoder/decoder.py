@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import glob
 import os
@@ -395,7 +396,7 @@ def preprocess_data(images, firing_rates):
     return images, firing_rates, H, W
 
 
-def visualize_data(firing_rates, images):
+def visualize_data(firing_rates, images, save_path=None):
     """Visualize the neural response data and sample images"""
     print("\nFiring rate statistics:")
     print(f"Mean firing rate: {firing_rates.mean():.3f}")
@@ -425,6 +426,11 @@ def visualize_data(firing_rates, images):
     plt.axis("off")
 
     plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Data visualization saved to: {save_path}")
+
     plt.show()
 
 
@@ -535,7 +541,7 @@ def train_model_lightning(
     return trainer, model, data_module
 
 
-def plot_training_results(train_losses, val_losses):
+def plot_training_results(train_losses, val_losses, save_path=None):
     """Plot training results"""
     plt.figure(figsize=(8, 5))
     plt.plot(train_losses, label="Train Loss")
@@ -546,6 +552,11 @@ def plot_training_results(train_losses, val_losses):
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches="tight")
+        print(f"Training curves saved to: {save_path}")
+
     plt.show()
 
 
@@ -645,11 +656,16 @@ def save_predictions(
         axes[1, i].axis("off")
 
     plt.tight_layout()
-    plt.savefig(
-        os.path.join(output_dir, f"decoder_reconstructions_{timestamp}.png"),
-        dpi=150,
-        bbox_inches="tight",
+
+    # Save reconstruction plot to plots directory
+    plots_dir = get_path("workspace/plots/decoder")
+    os.makedirs(plots_dir, exist_ok=True)
+    reconstruction_plot_path = os.path.join(
+        plots_dir, f"decoder_reconstructions_{timestamp}.png"
     )
+    plt.savefig(reconstruction_plot_path, dpi=150, bbox_inches="tight")
+    print(f"Reconstruction plot saved to: {reconstruction_plot_path}")
+
     plt.show()
 
     return output_path
@@ -669,11 +685,20 @@ def main(dataset_to_load):
     # Preprocess data
     images, firing_rates, H, W = preprocess_data(images, firing_rates)
 
+    # Create plots directory
+    plots_dir = get_path("workspace/plots/decoder")
+    os.makedirs(plots_dir, exist_ok=True)
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
     # Visualize data
-    visualize_data(firing_rates, images)
+    data_viz_path = os.path.join(
+        plots_dir, f"data_visualization_{timestamp}.png"
+    )
+    visualize_data(firing_rates, images, save_path=data_viz_path)
 
     # Train with Lightning
-    trainer, model, data_module = train_model_lightning(
+    _, model, _ = train_model_lightning(
         firing_rates=firing_rates,
         images=images,
         epochs=100,
@@ -681,7 +706,12 @@ def main(dataset_to_load):
     )
 
     # Plot training results
-    plot_training_results(model.train_losses, model.val_losses)
+    training_curves_path = os.path.join(
+        plots_dir, f"training_curves_{timestamp}.png"
+    )
+    plot_training_results(
+        model.train_losses, model.val_losses, save_path=training_curves_path
+    )
 
     # Save predictions
     save_predictions(
@@ -689,7 +719,7 @@ def main(dataset_to_load):
         firing_rates,
         images,
         data_file,
-        output_dir="data",
+        output_dir=get_path("workspace/predictions/decoder"),
         dataset_to_load=dataset_to_load,
     )
 
@@ -706,9 +736,25 @@ def main(dataset_to_load):
 
 
 if __name__ == "__main__":
-    dataset_to_load = Path(
-        get_path(
-            "workspace/datasets/synthetic/synthdata_dataset-cifar10_sta-perlin_noise_patterns,11,11_n_neurons-1000_n_images-1000_datetime-20250725_140202.npz"
-        )
+    parser = argparse.ArgumentParser(
+        description="Train neural decoder using PyTorch Lightning"
     )
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="workspace/datasets/synthetic/*.npz",
+        help="Path to dataset file or glob pattern "
+        "(default: latest .npz file in synthetic data directory)",
+    )
+
+    args = parser.parse_args()
+
+    # If dataset is a glob pattern, find the latest file
+    if "*" in args.dataset:
+        dataset_path = get_path(args.dataset)
+        dataset_to_load = Path(dataset_path)
+    else:
+        # Use the provided path directly
+        dataset_to_load = Path(args.dataset)
+
     main(dataset_to_load)
