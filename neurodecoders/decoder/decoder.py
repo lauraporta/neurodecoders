@@ -1,6 +1,5 @@
 import argparse
 import datetime
-import glob
 import os
 import re
 from pathlib import Path
@@ -317,14 +316,19 @@ def load_latest_data(dataset_to_load):
     if hasattr(dataset_to_load, "__str__"):
         dataset_to_load = str(dataset_to_load)
 
-    files = glob.glob(dataset_to_load)
-    if not files:
-        raise FileNotFoundError(
-            f"No neural data files found in "
-            f"{get_path('workspace/datasets/synthetic')}/ directory"
-        )
+    # Handle specific filename - check if it's a full path or just filename
+    if os.path.isabs(dataset_to_load):
+        # Full path provided
+        latest_file = dataset_to_load
+    else:
+        # Just filename provided - construct full path
+        synthetic_dir = get_path("workspace/datasets/synthetic")
+        latest_file = os.path.join(synthetic_dir, dataset_to_load)
 
-    latest_file = max(files, key=os.path.getctime)
+    # Verify file exists
+    if not os.path.exists(latest_file):
+        raise FileNotFoundError(f"Data file not found: {latest_file}")
+
     data = np.load(latest_file)
     images = data["images"]  # Expecting shape: (N, 1, H, W) or (N, H, W)
     firing_rates = data["responses"]  # Shape: (N, C) - neural responses
@@ -742,19 +746,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default="workspace/datasets/synthetic/*.npz",
-        help="Path to dataset file or glob pattern "
-        "(default: latest .npz file in synthetic data directory)",
+        required=True,
+        help="Filename of the dataset to load",
     )
 
     args = parser.parse_args()
 
-    # If dataset is a glob pattern, find the latest file
-    if "*" in args.dataset:
-        dataset_path = get_path(args.dataset)
-        dataset_to_load = Path(dataset_path)
-    else:
-        # Use the provided path directly
-        dataset_to_load = Path(args.dataset)
+    # Use the provided dataset filename directly
+    dataset_to_load = args.dataset
 
     main(dataset_to_load)
