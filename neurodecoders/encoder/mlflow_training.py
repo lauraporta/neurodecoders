@@ -278,6 +278,7 @@ def train_with_config(config: Dict[str, Any]):
     print(f"STA type: {config['sta_type']}")
     print(f"Neurons: {config['n_neurons']}")
     print(f"Images: {config['n_images']}")
+    print(f"Cross-validation folds: {config['cv_folds']}")
     print(f"Mixed precision: {config['enable_mixed_precision']}")
     print(f"Early stopping: {config['enable_early_stopping']}")
     print(f"Checkpointing: {config['enable_checkpointing']}")
@@ -487,6 +488,14 @@ def main():
         help="Disable pin memory (overrides --pin-memory)",
     )
 
+    # Cross-validation configuration
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=1,
+        help="Number of cross-validation folds (1=no CV)",
+    )
+
     # MLflow configuration
     parser.add_argument(
         "--experiment-name",
@@ -580,6 +589,7 @@ def main():
         "prefetch_factor": args.prefetch_factor,
         "num_workers": args.num_workers,
         "pin_memory": pin_memory,
+        "cv_folds": args.cv_folds,
         "mlflow_experiment_name": args.experiment_name,
         "mlflow_run_name": args.run_name,
         # Enhanced training options

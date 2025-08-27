@@ -34,6 +34,7 @@ echo "[INFO] Launching training with user-specified command"
   --sta-type periodic_patterns,70,70 \
   --n-neurons 10 \
   --n-images 10 \
+  --cv-folds 1 \
   --experiment-name with_history \
   --run-name test1
 
