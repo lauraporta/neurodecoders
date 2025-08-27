@@ -336,7 +336,7 @@ def train_with_config(config: Dict[str, Any]):
         enable_mlflow=config["enable_mlflow"],
         mlflow_experiment_name=config["mlflow_experiment_name"],
         mlflow_run_name=config["mlflow_run_name"],
-        # Enhanced training options
+        n_folds=config["cv_folds"],
         enable_mixed_precision=config["enable_mixed_precision"],
         enable_early_stopping=config["enable_early_stopping"],
         early_stopping_patience=config["early_stopping_patience"],
