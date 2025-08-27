@@ -195,15 +195,3 @@ class NeuralDataModule(pl.LightningDataModule):
             else None,
             persistent_workers=self.num_workers > 0,
         )
-
-
-# Note: The following functions have been removed as they were unused:
-# - preprocess_data
-# - load_latest_data
-# - visualize_data
-# - plot_training_results
-# - save_predictions
-# - matplotlib imports
-#
-# All plotting functionality has been removed as it's no longer needed
-# for MLflow-based verification.
