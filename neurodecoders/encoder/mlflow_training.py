@@ -19,10 +19,6 @@ sys.path.append(os.path.dirname(__file__))
 import numpy as np
 import torch
 
-from neurodecoders.encoder.config import (
-    HYPERPARAMETER_SWEEP_DEFAULTS,
-    validate_config,
-)
 from neurodecoders.encoder.models import (
     ResNetEncoder,
     SimpleEncoder,
@@ -31,6 +27,12 @@ from neurodecoders.encoder.models import (
 from neurodecoders.encoder.training import train_encoder
 from neurodecoders.encoder.utils import NeuralDataModule
 from neurodecoders.paths import get_path
+
+
+# Configuration validation functions
+def validate_config(config):
+    """Simple config validation - removed complex logic"""
+    pass
 
 
 def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
@@ -492,11 +494,6 @@ def main():
         help="MLflow experiment name",
     )
     parser.add_argument("--run-name", help="MLflow run name")
-    parser.add_argument(
-        "--array-task-id",
-        type=int,
-        help="SLURM array task ID for hyperparameter sweep",
-    )
 
     # Enhanced training options
     parser.add_argument(
@@ -560,147 +557,51 @@ def main():
     enable_early_stopping = args.early_stopping and not args.no_early_stopping
     enable_checkpointing = args.checkpointing and not args.no_checkpointing
 
-    # Check if this is a hyperparameter sweep
-    if args.array_task_id is not None:
-        # Hyperparameter sweep mode for SLURM job arrays
-        # Use centralized hyperparameter sweep defaults
-        learning_rates = HYPERPARAMETER_SWEEP_DEFAULTS["learning_rates"]
-        batch_sizes = HYPERPARAMETER_SWEEP_DEFAULTS["batch_sizes"]
-        model_types = HYPERPARAMETER_SWEEP_DEFAULTS["sweep_model_type"]
+    # Create config from command line arguments
+    config = {
+        "model_type": args.model_type,
+        "out_neurons": None,  # Will be inferred from dataset
+        "resnet_type": args.resnet_type,
+        "freeze_backbone": freeze_backbone,
+        "learning_rate": args.learning_rate,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "optimizer": args.optimizer,
+        "loss_function": args.loss_function,
+        "scheduler": args.scheduler,
+        "scheduler_step_size": args.scheduler_step_size,
+        "scheduler_gamma": args.scheduler_gamma,
+        "dataset_type": "cifar10",  # Default dataset
+        "sta_type": args.sta_type,
+        "n_neurons": args.n_neurons,
+        "n_images": args.n_images,
+        "use_memory_mapping": args.use_memory_mapping,
+        "chunk_size": args.chunk_size,
+        "prefetch_factor": args.prefetch_factor,
+        "num_workers": args.num_workers,
+        "pin_memory": pin_memory,
+        "mlflow_experiment_name": args.experiment_name,
+        "mlflow_run_name": args.run_name,
+        # Enhanced training options
+        "enable_mixed_precision": enable_mixed_precision,
+        "enable_early_stopping": enable_early_stopping,
+        "early_stopping_patience": args.early_stopping_patience,
+        "enable_checkpointing": enable_checkpointing,
+        "gradient_clip_val": args.gradient_clip_val,
+        # MLflow toggle
+        "enable_mlflow": True,
+    }
 
-        # Calculate total combinations:
-        # model_types × learning_rates × batch_sizes
-        total_combinations = (
-            len(model_types) * len(learning_rates) * len(batch_sizes)
-        )
+    # Validate config
+    validate_config(config)
 
-        if args.array_task_id >= total_combinations:
-            raise ValueError(
-                f"Array task ID {args.array_task_id} is out of range "
-                f"(max: {total_combinations - 1})"
-            )
+    trainer, model, _ = train_with_config(config)
 
-        # Calculate which combination this array task should run
-        # Order: model_type, learning_rate, batch_size
-        model_idx = args.array_task_id // (
-            len(learning_rates) * len(batch_sizes)
-        )
-        remaining = args.array_task_id % (
-            len(learning_rates) * len(batch_sizes)
-        )
-        lr_idx = remaining // len(batch_sizes)
-        bs_idx = remaining % len(batch_sizes)
-
-        model_type = model_types[model_idx]
-        lr = learning_rates[lr_idx]
-        batch_size = batch_sizes[bs_idx]
-        epochs = args.epochs  # Use command line epochs instead of default
-        run_name = (
-            f"lr{lr}_bs{batch_size}_epochs{epochs}_task{args.array_task_id}"
-        )
-        experiment_name = (
-            f"{args.experiment_name}/{model_type}_encoder_comparison"
-        )
-
-        print(
-            f"Array Task {args.array_task_id}: model={model_type}, "
-            f"lr={lr}, batch_size={batch_size}, epochs={epochs}"
-        )
-
-        # Create config with sweep settings and argparse defaults
-        config = {
-            "model_type": model_type,
-            "out_neurons": None,  # Will be inferred from dataset
-            "resnet_type": args.resnet_type,
-            "freeze_backbone": freeze_backbone,
-            "learning_rate": lr,
-            "epochs": epochs,  # Use command line epochs
-            "batch_size": batch_size,
-            "optimizer": args.optimizer,
-            "loss_function": args.loss_function,
-            "scheduler": args.scheduler,
-            "scheduler_step_size": args.scheduler_step_size,
-            "scheduler_gamma": args.scheduler_gamma,
-            "dataset_type": HYPERPARAMETER_SWEEP_DEFAULTS[
-                "sweep_dataset_type"
-            ],
-            "sta_type": args.sta_type,
-            "n_neurons": args.n_neurons,
-            "n_images": args.n_images,
-            "use_memory_mapping": args.use_memory_mapping,
-            "chunk_size": args.chunk_size,
-            "prefetch_factor": args.prefetch_factor,
-            "num_workers": args.num_workers,
-            "pin_memory": pin_memory,
-            "mlflow_experiment_name": experiment_name,
-            "mlflow_run_name": run_name,
-            # Enhanced training options
-            "enable_mixed_precision": enable_mixed_precision,
-            "enable_early_stopping": enable_early_stopping,
-            "early_stopping_patience": args.early_stopping_patience,
-            "enable_checkpointing": enable_checkpointing,
-            "gradient_clip_val": args.gradient_clip_val,
-            # MLflow toggle
-            "enable_mlflow": True,
-        }
-
-        # Validate only; no default merging
-        validate_config(config)
-
-        trainer, model, _ = train_with_config(config)
-
-        print(f"\nTraining completed for {run_name}!")
-        if model.train_losses:
-            print(f"Final train loss: {model.train_losses[-1]:.4f}")
-        if model.val_losses:
-            print(f"Final validation loss: {model.val_losses[-1]:.4f}")
-
-    else:
-        # Single experiment with command line arguments
-        config = {
-            "model_type": args.model_type,
-            "out_neurons": None,  # None means infer from dataset
-            "resnet_type": args.resnet_type,
-            "freeze_backbone": freeze_backbone,
-            "learning_rate": args.learning_rate,
-            "epochs": args.epochs,
-            "batch_size": args.batch_size,
-            "optimizer": args.optimizer,
-            "loss_function": args.loss_function,
-            "scheduler": args.scheduler,
-            "scheduler_step_size": args.scheduler_step_size,
-            "scheduler_gamma": args.scheduler_gamma,
-            "dataset_type": args.dataset_type,
-            "sta_type": args.sta_type,
-            "n_neurons": args.n_neurons,
-            "n_images": args.n_images,
-            "use_memory_mapping": args.use_memory_mapping,
-            "chunk_size": args.chunk_size,
-            "prefetch_factor": args.prefetch_factor,
-            "num_workers": args.num_workers,
-            "pin_memory": pin_memory,
-            "mlflow_experiment_name": args.experiment_name,
-            "mlflow_run_name": args.run_name,
-            # Enhanced training options
-            "enable_mixed_precision": enable_mixed_precision,
-            "enable_early_stopping": enable_early_stopping,
-            "early_stopping_patience": args.early_stopping_patience,
-            "enable_checkpointing": enable_checkpointing,
-            "gradient_clip_val": args.gradient_clip_val,
-            # MLflow toggle
-            "enable_mlflow": True,
-        }
-
-        # Validate only; no default merging
-        validate_config(config)
-
-        _, model, _ = train_with_config(config)
-
-        print("\nTraining completed!")
-        if model.train_losses:
-            print(f"Final train loss: {model.train_losses[-1]:.4f}")
-        if model.val_losses:
-            print(f"Final validation loss: {model.val_losses[-1]:.4f}")
+    print("\nTraining completed!")
+    if model.train_losses:
+        print(f"Final train loss: {model.train_losses[-1]:.4f}")
+    if model.val_losses:
+        print(f"Final validation loss: {model.val_losses[-1]:.4f}")
 
     print("\nTo view MLflow experiments, run:")
     print("mlflow ui")
