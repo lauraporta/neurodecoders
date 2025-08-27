@@ -5,16 +5,13 @@ This module provides MLflow integration for tracking experiments,
 hyperparameters, metrics, and model artifacts during encoder training.
 """
 
-import datetime
 import json
 import os
 from typing import Any, Dict, Optional
 
-import matplotlib.pyplot as plt
 import mlflow
 import mlflow.pytorch
 import pandas as pd
-import torch
 from pytorch_lightning import LightningModule
 
 
@@ -85,7 +82,9 @@ class MLflowExperimentTracker:
         except Exception as e:
             print(f"Warning: Could not check/end active run: {e}")
 
-        return mlflow.start_run(run_name=run_name, tags=tags)
+        return mlflow.start_run(
+            run_name=run_name, tags=tags, log_system_metrics=True
+        )
 
     def log_hyperparameters(self, hyperparams: Dict[str, Any]):
         """
@@ -205,8 +204,6 @@ def create_mlflow_logger(
         "Use native MLflow API instead."
     )
     return None
-
-
 
 
 def get_experiment_comparison(experiment_name: str = "neural_encoder"):

@@ -462,11 +462,11 @@ def _train_single_model(
 
         mlflow.set_experiment(mlflow_experiment_name)
 
-        # Start MLflow run
+        # Start MLflow run with GPU monitoring
         if mlflow_run_name:
-            mlflow.start_run(run_name=mlflow_run_name)
+            mlflow.start_run(run_name=mlflow_run_name, log_system_metrics=True)
         else:
-            mlflow.start_run()
+            mlflow.start_run(log_system_metrics=True)
 
         # Log dataset metadata
         try:
