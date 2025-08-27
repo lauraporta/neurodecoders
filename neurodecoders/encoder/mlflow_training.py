@@ -121,49 +121,34 @@ def load_synthetic_data_from_workspace(
             "Please run the synthetic data generation first."
         )
 
-    # Parse configuration to find matching file
-    dataset_type = config.get("dataset_type", "cifar10")
-    sta_type = config.get("sta_type", "perlin_noise_patterns,11,11")
-    n_neurons = config.get("n_neurons", 1000)
-    n_images = config.get("n_images", 1000)
+    # Required exact matches from config
+    n_neurons = str(int(config.get("n_neurons", 100)))
+    n_images = str(int(config.get("n_images", 10000)))
 
-    # Look for exact match first
-    target_filename = (
-        f"synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-"
-        f"{n_neurons}_n_images-{n_images}"
-    )
+    # Filter files that exactly match both counts
+    matching = []
+    for fname in available_files:
+        meta = parse_dataset_metadata(fname)
+        if (
+            meta.get("n_neurons") == n_neurons
+            and meta.get("n_images") == n_images
+        ):
+            fpath = os.path.join(synthetic_dir, fname)
+            try:
+                mtime = os.path.getmtime(fpath)
+            except OSError:
+                mtime = 0.0
+            matching.append((mtime, fname))
 
-    matching_files = [f for f in available_files if target_filename in f]
+    if not matching:
+        raise ValueError(
+            "No synthetic dataset matches the requested counts. "
+            f"Requested n_neurons={n_neurons}, n_images={n_images}."
+        )
 
-    if not matching_files:
-        # If no exact match, find the closest match
-        print(f"Warning: No exact match found for {target_filename}")
-        print("Available files:")
-        for f in available_files:
-            print(f"  {f}")
-
-        # Try to find any file with the same dataset_type and sta_type
-        partial_matches = [
-            f
-            for f in available_files
-            if f"dataset-{dataset_type}" in f and f"sta-{sta_type}" in f
-        ]
-
-        if partial_matches:
-            # Use the most recent file
-            partial_matches.sort(reverse=True)
-            selected_file = partial_matches[0]
-            print(f"Using closest match: {selected_file}")
-        else:
-            # Use the most recent file overall
-            available_files.sort(reverse=True)
-            selected_file = available_files[0]
-            print(f"Using most recent file: {selected_file}")
-    else:
-        # Use the most recent exact match
-        matching_files.sort(reverse=True)
-        selected_file = matching_files[0]
-        print(f"Using exact match: {selected_file}")
+    # Select the latest by modification time
+    matching.sort(key=lambda x: x[0], reverse=True)
+    selected_file = matching[0][1]
 
     # Parse metadata from filename
     metadata = parse_dataset_metadata(selected_file)
@@ -290,8 +275,8 @@ def train_with_config(config: Dict[str, Any]):
     print(f"Scheduler: {config.get('scheduler', 'none')}")
     print(f"Dataset: {config.get('dataset_type', 'cifar10')}")
     print(f"STA type: {config.get('sta_type', 'perlin_noise_patterns,11,11')}")
-    print(f"Neurons: {config.get('n_neurons', 1000)}")
-    print(f"Images: {config.get('n_images', 1000)}")
+    print(f"Neurons: {config.get('n_neurons', 100)}")
+    print(f"Images: {config.get('n_images', 10000)}")
     print(f"Mixed precision: {config.get('enable_mixed_precision', True)}")
     print(f"Early stopping: {config.get('enable_early_stopping', True)}")
     print(f"Checkpointing: {config.get('enable_checkpointing', True)}")
@@ -615,8 +600,12 @@ def main():
         lr = learning_rates[lr_idx]
         batch_size = batch_sizes[bs_idx]
         epochs = args.epochs  # Use command line epochs instead of default
-        run_name = f"lr{lr}_bs{batch_size}_epochs{epochs}_task{args.array_task_id}"
-        experiment_name = f"{args.experiment_name}/{model_type}_encoder_comparison"
+        run_name = (
+            f"lr{lr}_bs{batch_size}_epochs{epochs}_task{args.array_task_id}"
+        )
+        experiment_name = (
+            f"{args.experiment_name}/{model_type}_encoder_comparison"
+        )
 
         print(
             f"Array Task {args.array_task_id}: model={model_type}, "
