@@ -1,6 +1,5 @@
 import numpy as np
 import torch
-import torch.nn.functional as F
 from tqdm import tqdm
 
 
@@ -86,35 +85,9 @@ class SimulateResponse:
         """
         print("Preparing data for batch computation...")
 
-        # Generate neuron-specific parameters with physiological constraints
-        # Baseline rates: mostly very low (0.1-2 Hz), some higher
-        baselines = (
-            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.01)
-            * 0.01
-        )
-
-        # Thresholds: log-normal distribution for more realistic,
-        # skewed thresholds
-        thresholds = (
-            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3)
-            * 0.3
-        )
-
-        # Maximum firing rates: respecting physiological limits
-        # Most neurons max out at 100-200 Hz, with some exceptions
-        max_rates = (
-            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3)
-            * 100
-        )
-
-        # Initialize adaptation state (start at 1.0,
-        # will decrease with adaptation)
-        adaptation_state = torch.ones(self.n_neurons, device=self.device)
-
         # Pre-allocate output tensors on CPU (will be moved to GPU in batches)
         firing_rates = np.zeros((self.n_images, self.n_neurons))
         dot_products = np.zeros((self.n_images, self.n_neurons))
-        adaptation_states = np.zeros((self.n_images, self.n_neurons))
 
         # Process images in batches to avoid memory overflow
         n_batches = (self.n_images + batch_size - 1) // batch_size
@@ -166,11 +139,6 @@ class SimulateResponse:
                 f"{n_batches}..."
             )
             for i in range(batch_size_actual):
-                # Slow recovery of adaptation (increase back towards 1.0)
-                adaptation_state = 1.0 - (1.0 - adaptation_state) * torch.exp(
-                    torch.tensor(-0.1, device=self.device)
-                )
-
                 # Compute all dot products for this image at once
                 # patches_flat[i]: (n_neurons, rf_size^2)
                 # stas_flat: (n_neurons, rf_size^2)
@@ -178,45 +146,23 @@ class SimulateResponse:
                 dot = torch.mean(patches_flat[i] * stas_flat, dim=1)
                 dot_products[start_idx + i] = dot.cpu().numpy()
 
-                # Use a steeper non-linearity for more sparsity
-                response = F.elu(dot - thresholds) + 1
-                response = max_rates * response
+                # Simple response: just the dot product
+                response = dot
 
-                # Apply adaptation from previous response (decrease response)
-                response = response * adaptation_state
-
-                # Add noise before baseline
-                # Subtle multiplicative noise: jitter response by up to ±10%
+                # Add noise if specified
                 if noise_level > 0:
                     noise_factor = 1.0 + 0.2 * noise_level * torch.rand(
                         self.n_neurons, device=self.device
                     )
                     response = response * noise_factor
 
-                # Add baseline firing rate
-                response = response + baselines
-
-                # Final firing rate
-                firing_rate = torch.clamp(
-                    response, min=0.0
-                )  # First clamp to 0
-                firing_rate = torch.minimum(
-                    firing_rate, max_rates
-                )  # Then clamp to max_rates
-
-                # Update adaptation based on current response for next image
-                # Decrease adaptation state (
-                # stronger adaptation for higher responses)
-                adaptation_factor = 0.1 * (firing_rate / max_rates)
-                adaptation_state = adaptation_state * (1.0 - adaptation_factor)
+                # Final firing rate (just the response)
+                firing_rate = response
 
                 firing_rates[start_idx + i] = firing_rate.cpu().numpy()
-                adaptation_states[start_idx + i] = (
-                    adaptation_state.cpu().numpy()
-                )
 
             # Clear GPU memory after each batch
             del patches, patches_flat
             torch.cuda.empty_cache()
 
-        return firing_rates, dot_products, adaptation_states
+        return firing_rates, dot_products, np.zeros_like(firing_rates)
