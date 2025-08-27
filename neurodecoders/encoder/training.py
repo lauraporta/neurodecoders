@@ -273,7 +273,6 @@ def _train_single_model(
     enable_mlflow: bool = True,
     mlflow_experiment_name: str = "neural_encoder",
     mlflow_run_name: Optional[str] = None,
-    mlflow_tracking_uri: Optional[str] = None,
     enable_mixed_precision: bool = True,
     enable_early_stopping: bool = True,
     early_stopping_patience: int = 100,
@@ -461,13 +460,12 @@ def _train_single_model(
         logger=loggers,
         enable_progress_bar=enable_progress_bar,
         log_every_n_steps=log_every_n_steps,
-        accelerator="cpu" if torch.backends.mps.is_available() else "auto",
-        devices=1 if torch.backends.mps.is_available() else "auto",
-        deterministic=False,
+        accelerator="auto",
+        devices="auto",
+        strategy="auto",
+        deterministic=False,  # set to true for reproducibility (pseudorandom)
         enable_checkpointing=enable_checkpointing,
         precision="16-mixed" if enable_mixed_precision else "32",
-        strategy="auto",
-        sync_batchnorm=True,
     )
 
     # Train the model
@@ -626,7 +624,6 @@ def train_encoder(
             enable_mlflow=enable_mlflow,
             mlflow_experiment_name=mlflow_experiment_name,
             mlflow_run_name=fold_run_name,
-            mlflow_tracking_uri=mlflow_tracking_uri,
             enable_mixed_precision=enable_mixed_precision,
             enable_early_stopping=enable_early_stopping,
             early_stopping_patience=early_stopping_patience,
