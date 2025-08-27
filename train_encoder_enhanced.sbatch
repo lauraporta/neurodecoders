@@ -32,7 +32,7 @@ export CUDA_VISIBLE_DEVICES=0
 EPOCHS=10000
 
 # Define hyperparameter arrays
-LEARNING_RATES=(1e-5 5e-5 1e-4 5e-4 1e-3 5e-3)
+LEARNING_RATES=(1e-4 5e-4 1e-3 5e-3)
 BATCH_SIZES=(8 16 32 64 128)
 MODEL_TYPES=("resnet" "simple" "skip")
 

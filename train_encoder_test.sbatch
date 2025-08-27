@@ -1,5 +1,5 @@
 #!/bin/bash
-# 
+#
 #SBATCH -p gpu
 #SBATCH -J encoder_test
 #SBATCH --mem=8G
@@ -26,37 +26,15 @@ mkdir -p "$MLFLOW_TRACKING_URI"
 
 export CUDA_VISIBLE_DEVICES=0
 
-/nfs/nhome/live/lporta/.conda/envs/decoders/bin/python - <<'EOF'
-import os, mlflow
-print('[DEBUG] MLFLOW_TRACKING_URI =', os.environ.get('MLFLOW_TRACKING_URI'))
-print('[DEBUG] MLFLOW_EXPERIMENT_NAME =', os.environ.get('MLFLOW_EXPERIMENT_NAME'))
-try:
-    exp = mlflow.get_experiment_by_name(os.environ.get('MLFLOW_EXPERIMENT_NAME',''))
-    print('[DEBUG] Experiment exists:', bool(exp))
-except Exception as e:
-    print('[WARN] Experiment lookup failed:', e)
-EOF
-
 echo "[INFO] Launching training with user-specified command"
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
-    --model-type resnet \
-    --epochs 3 \
-    --dataset-type cifar10 \
-    --sta-type periodic_patterns,70,70 \
-    --n-neurons 10 \
-    --n-images 10 \
-    --experiment-name with_history \
-    --run-name test1
-
-status=$?
-if [ $status -ne 0 ]; then
-  echo "[ERROR] Training failed with status $status" >&2
-  exit $status
-fi
-
-echo "[INFO] Training completed. Listing recent MLflow files (depth 3)."
-if [ -d "$MLFLOW_TRACKING_URI" ]; then
-  find "$MLFLOW_TRACKING_URI" -maxdepth 3 -type f -printf "%P\n" | head -n 50
-fi
+  --model-type resnet \
+  --epochs 3 \
+  --dataset-type cifar10 \
+  --sta-type periodic_patterns,70,70 \
+  --n-neurons 10 \
+  --n-images 10 \
+  --experiment-name with_history \
+  --run-name test1
 
 echo "[INFO] End time: $(date)"
