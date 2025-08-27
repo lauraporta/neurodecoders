@@ -267,12 +267,6 @@ class EncoderVerificationCallback(Callback):
                 verifier.analyze_firing_rate_distributions()
             )
 
-            # Responsiveness analysis
-            print("Running responsiveness analysis...")
-            results["responsiveness"] = (
-                verifier.analyze_neuron_responsiveness()
-            )
-
             # Classification test (if labels are available)
             if (
                 hasattr(verifier, "image_labels")
@@ -284,23 +278,6 @@ class EncoderVerificationCallback(Callback):
                 )
                 if classification_results:
                     results["classification"] = classification_results
-
-            # Representation analysis
-            print("Running representation analysis...")
-            results["representations"] = (
-                verifier.analyze_encoder_representations()
-            )
-
-            # Feature scaling and separability analysis
-            print("Running feature analysis...")
-            results["feature_analysis"] = (
-                verifier.analyze_feature_scaling_and_separability()
-            )
-
-            # Suggest improvements
-            print("Generating improvement suggestions...")
-            suggestions = verifier.suggest_improvements(results)
-            results["suggestions"] = suggestions
 
             # Store model path in results
             results["model_path"] = model_path
