@@ -101,3 +101,6 @@ workspace/*
 
 # mlflow
 mlruns/
+
+# lightning logs
+lightning_logs/
