@@ -274,7 +274,7 @@ def train_encoder(
     mlflow_experiment_name: str = "neural_encoder",
     mlflow_run_name: Optional[str] = None,
     mlflow_tracking_uri: Optional[str] = None,
-    n_folds: int = 1,  # Default to 1 (no CV)
+    n_folds: int = 5,  # Default to 5 (enable CV by default)
     # Enhanced training options
     enable_mixed_precision: bool = True,
     enable_early_stopping: bool = True,
@@ -304,7 +304,7 @@ def train_encoder(
         mlflow_experiment_name: MLflow experiment name
         mlflow_run_name: MLflow run name
         mlflow_tracking_uri: MLflow tracking URI
-        n_folds: Number of cross-validation folds (1 = no CV)
+        n_folds: Number of cross-validation folds (1 = single training)
         enable_mixed_precision: Whether to use mixed precision training
         enable_early_stopping: Whether to enable early stopping
         early_stopping_patience: Patience for early stopping
@@ -316,33 +316,6 @@ def train_encoder(
         If n_folds>1: list of (trainer, lightning_model, data_module) tuples
     """
 
-    # If n_folds=1, do regular training
-    if n_folds == 1:
-        return _train_single_fold(
-            model=model,
-            data_module=data_module,
-            model_name=model_name,
-            learning_rate=learning_rate,
-            epochs=epochs,
-            optimizer_config=optimizer_config,
-            loss_fn=loss_fn,
-            scheduler_config=scheduler_config,
-            callbacks=callbacks,
-            enable_progress_bar=enable_progress_bar,
-            log_every_n_steps=log_every_n_steps,
-            unfreeze_epoch=unfreeze_epoch,
-            enable_mlflow=enable_mlflow,
-            mlflow_experiment_name=mlflow_experiment_name,
-            mlflow_run_name=mlflow_run_name,
-            mlflow_tracking_uri=mlflow_tracking_uri,
-            enable_mixed_precision=enable_mixed_precision,
-            enable_early_stopping=enable_early_stopping,
-            early_stopping_patience=early_stopping_patience,
-            enable_checkpointing=enable_checkpointing,
-            gradient_clip_val=gradient_clip_val,
-        )
-
-    # Otherwise, do k-fold cross-validation
     return _train_with_cv(
         model=model,
         data_module=data_module,
@@ -369,12 +342,12 @@ def train_encoder(
     )
 
 
-def _train_single_fold(
+def _train_single_model(
     model: nn.Module,
     data_module,
     model_name: str = "encoder",
     learning_rate: float = 1e-3,
-    epochs: int = 2,  # Set to 2 epochs for testing
+    epochs: int = 2,
     optimizer_config: Optional[dict] = None,
     loss_fn: str = "mse",
     scheduler_config: Optional[dict] = None,
@@ -388,11 +361,11 @@ def _train_single_fold(
     mlflow_tracking_uri: Optional[str] = None,
     enable_mixed_precision: bool = True,
     enable_early_stopping: bool = True,
-    early_stopping_patience: int = 100,  # Updated default
+    early_stopping_patience: int = 100,
     enable_checkpointing: bool = True,
     gradient_clip_val: Optional[float] = 1.0,
 ):
-    """Train a single model (no cross-validation)."""
+    """Train a single model instance."""
 
     # Create Lightning module
     lightning_model = EncoderLightningModule(
@@ -454,8 +427,7 @@ def _train_single_fold(
     # Add MLflow logger if enabled
     if enable_mlflow:
         # Force MLflow tracking to the configured base path
-        # (config.yaml base_path + mlruns)
-        configured_mlflow_dir = get_mlflow_path()  # e.g. /<base_path>/mlruns
+        configured_mlflow_dir = get_mlflow_path()
         try:
             os.makedirs(configured_mlflow_dir, exist_ok=True)
         except OSError as e:
@@ -467,7 +439,7 @@ def _train_single_fold(
         mlflow.set_tracking_uri(tracking_uri)
         print(f"Using MLflow tracking URI from config: {tracking_uri}")
 
-        # Set experiment (will create if missing)
+        # Set experiment
         print(f"Setting MLflow experiment: {mlflow_experiment_name}")
 
         # Inform user about directory status
@@ -490,7 +462,7 @@ def _train_single_fold(
 
         mlflow.set_experiment(mlflow_experiment_name)
 
-        # Start MLflow run manually (no MLFlowLogger to avoid duplication)
+        # Start MLflow run
         if mlflow_run_name:
             mlflow.start_run(run_name=mlflow_run_name)
         else:
@@ -528,12 +500,9 @@ def _train_single_fold(
                 f"{data_module.dataset_filename or 'unknown'}"
             )
 
-            # Log the metadata dataset with dataset-level metadata
+            # Log the metadata dataset
             dataset_id = data_module.get_dataset_id()
-
-            # Create dataset summary (side-effect method)
             data_module.get_metadata_summary()
-
             metadata_name = f"neural_data_{dataset_id}"
 
             summary_dataset = mlflow.data.from_pandas(
@@ -578,17 +547,14 @@ def _train_single_fold(
         logger=loggers,
         enable_progress_bar=enable_progress_bar,
         log_every_n_steps=log_every_n_steps,
-        accelerator="cpu"
-        if torch.backends.mps.is_available()
-        else "auto",  # Force CPU on MPS to avoid compatibility issues
+        accelerator="cpu" if torch.backends.mps.is_available() else "auto",
         devices=1 if torch.backends.mps.is_available() else "auto",
         deterministic=False,
         enable_checkpointing=enable_checkpointing,
         precision="16-mixed" if enable_mixed_precision else "32",
         gradient_clip_val=gradient_clip_val,
-        # SLURM optimizations
-        strategy="auto",  # Will use DDP if multiple GPUs
-        sync_batchnorm=True,  # For multi-GPU training
+        strategy="auto",
+        sync_batchnorm=True,
     )
 
     # Train the model
@@ -655,13 +621,50 @@ def _train_with_cv(
     enable_checkpointing: bool = True,
     gradient_clip_val: Optional[float] = 1.0,
 ):
-    """Train with k-fold cross-validation."""
+    """
+    Train with k-fold cross-validation or single training.
 
-    # Create k-fold splits
-    kfold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+    When n_folds=1, performs single training without cross-validation.
+    When n_folds>1, performs k-fold cross-validation.
+    """
+
     results = []
 
-    # Get all indices
+    if n_folds == 1:
+        # Single training - use original data module
+        print("\n=== Single Training ===")
+
+        # Use original run name without fold suffix
+        run_name = mlflow_run_name or model_name
+
+        trainer, lightning_model, _ = _train_single_model(
+            model=model,
+            data_module=data_module,
+            model_name=model_name,
+            learning_rate=learning_rate,
+            epochs=epochs,
+            optimizer_config=optimizer_config,
+            loss_fn=loss_fn,
+            scheduler_config=scheduler_config,
+            callbacks=callbacks,
+            enable_progress_bar=enable_progress_bar,
+            log_every_n_steps=log_every_n_steps,
+            unfreeze_epoch=unfreeze_epoch,
+            enable_mlflow=enable_mlflow,
+            mlflow_experiment_name=mlflow_experiment_name,
+            mlflow_run_name=run_name,
+            mlflow_tracking_uri=mlflow_tracking_uri,
+            enable_mixed_precision=enable_mixed_precision,
+            enable_early_stopping=enable_early_stopping,
+            early_stopping_patience=early_stopping_patience,
+            enable_checkpointing=enable_checkpointing,
+            gradient_clip_val=gradient_clip_val,
+        )
+
+        return trainer, lightning_model, data_module
+
+    # Cross-validation - create k-fold splits
+    kfold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
     all_indices = np.arange(len(data_module.full_dataset))
 
     for fold in range(n_folds):
@@ -697,7 +700,7 @@ def _train_with_cv(
         )
 
         # Train this fold
-        trainer, lightning_model, _ = _train_single_fold(
+        trainer, lightning_model, _ = _train_single_model(
             model=model,
             data_module=fold_data_module,
             model_name=f"{model_name}_fold_{fold + 1}",
