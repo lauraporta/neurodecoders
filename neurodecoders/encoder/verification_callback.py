@@ -385,21 +385,6 @@ class EncoderVerificationCallback(Callback):
                             degradation
                         )
 
-            # Extract PCA metrics (keep the 👍 ones)
-            if "representations" in verification_results:
-                rep_results = verification_results["representations"]
-                if "explained_variance_ratio" in rep_results:
-                    explained_var = rep_results["explained_variance_ratio"]
-                    metrics["verification_pca_5_components_variance"] = float(
-                        np.sum(explained_var[:5])
-                    )
-                    metrics["verification_pca_10_components_variance"] = float(
-                        np.sum(explained_var[:10])
-                    )
-                    metrics["verification_pca_20_components_variance"] = float(
-                        np.sum(explained_var[:20])
-                    )
-
             # Log metrics to MLflow
             if metrics:
                 mlflow.log_metrics(metrics)
