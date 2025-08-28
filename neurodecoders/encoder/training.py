@@ -64,7 +64,7 @@ class MLflowHistoryCallback(Callback):
 
         # Log learning rate if available
         if hasattr(pl_module, "optimizers") and pl_module.optimizers():
-            optimizer = pl_module.optimizers()[0]
+            optimizer = pl_module.optimizers()
             if hasattr(optimizer, "param_groups") and optimizer.param_groups:
                 current_lr = optimizer.param_groups[0]["lr"]
                 mlflow.log_metric(
@@ -485,10 +485,9 @@ def _train_single_model(
             traceback.print_exc()
 
     # Add LearningRateMonitor for learning rate tracking
-    # Always add it when MLflow is enabled, regardless of loggers
-    if enable_mlflow:
-        callbacks.extend([LearningRateMonitor(logging_interval="epoch")])
-    elif loggers:
+    # Only add when not using MLflow,
+    # since MLflowHistoryCallback already logs LR
+    if not enable_mlflow and loggers:
         callbacks.extend([LearningRateMonitor(logging_interval="epoch")])
 
     # Create trainer with enhanced configuration
