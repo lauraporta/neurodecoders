@@ -648,6 +648,47 @@ def train_encoder(
         list of (trainer, lightning_model, data_module) tuples for all folds
     """
 
+    # Handle single fold case (no cross-validation)
+    if n_folds == 1:
+        print("\n=== Single Training Run (No Cross-Validation) ===")
+
+        # Setup MLflow for single run
+        if enable_mlflow:
+            configured_mlflow_dir = get_mlflow_path()
+            tracking_uri = f"file:{configured_mlflow_dir}"
+            mlflow.set_tracking_uri(tracking_uri)
+            mlflow.set_experiment(mlflow_experiment_name)
+
+        # Use the data module as-is (with existing train/val splits)
+        fold_model = _clone_model(model)
+        fold_data_module = data_module
+
+        # Train single model
+        trainer, lightning_model, _ = _train_single_model(
+            model=fold_model,
+            data_module=fold_data_module,
+            model_name=model_name,
+            learning_rate=learning_rate,
+            epochs=epochs,
+            optimizer_config=optimizer_config,
+            loss_fn=loss_fn,
+            scheduler_config=scheduler_config,
+            callbacks=callbacks,
+            enable_progress_bar=enable_progress_bar,
+            log_every_n_steps=log_every_n_steps,
+            unfreeze_epoch=unfreeze_epoch,
+            enable_mlflow=enable_mlflow,
+            mlflow_experiment_name=mlflow_experiment_name,
+            mlflow_run_name=mlflow_run_name,
+            enable_mixed_precision=enable_mixed_precision,
+            enable_early_stopping=enable_early_stopping,
+            early_stopping_patience=early_stopping_patience,
+            enable_checkpointing=enable_checkpointing,
+        )
+
+        return [(trainer, lightning_model, fold_data_module)]
+
+    # Multi-fold cross-validation
     print(f"\n=== K-Fold Cross-Validation ({n_folds} folds) ===")
 
     # Setup MLflow for cross-validation
