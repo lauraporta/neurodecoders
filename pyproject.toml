@@ -19,6 +19,7 @@ dependencies = [
     "mlflow",
     "pyyaml",
     "pynvml",
+    "imageio",
 ]
 
 license = {text = "BSD-3-Clause"}
