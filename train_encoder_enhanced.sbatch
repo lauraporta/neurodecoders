@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-06:00 # time (D-HH:MM)
-#SBATCH --array=0-27%9 # 90 combinations (3 model types x 3 learning rates x 3 batch sizes), max 9 running simultaneously
+#SBATCH --array=0-11%9 # 12 combinations (1 model type x 1 learning rate x 1 batch size x 3 optimizers x 4 schedulers), max 9 running simultaneously
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -35,29 +35,43 @@ EPOCHS=40
 LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
 MODEL_TYPES=("resnet")
+OPTIMIZERS=("adam" "adamw" "sgd")
+SCHEDULERS=("none" "step" "cosine" "plateau")
 
 # Calculate indices from array task ID
 TOTAL_LR=${#LEARNING_RATES[@]}
 TOTAL_BS=${#BATCH_SIZES[@]}
 TOTAL_MODELS=${#MODEL_TYPES[@]}
+TOTAL_OPT=${#OPTIMIZERS[@]}
+TOTAL_SCH=${#SCHEDULERS[@]}
 
 # Calculate which combination this array task should run
-# Order: model_type, learning_rate, batch_size
-MODEL_IDX=$((SLURM_ARRAY_TASK_ID / (TOTAL_LR * TOTAL_BS)))
-REMAINING=$((SLURM_ARRAY_TASK_ID % (TOTAL_LR * TOTAL_BS)))
-LR_IDX=$((REMAINING / TOTAL_BS))
-BS_IDX=$((REMAINING % TOTAL_BS))
+# Order: model_type, learning_rate, batch_size, optimizer, scheduler
+TEMP1=$((SLURM_ARRAY_TASK_ID / (TOTAL_LR * TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
+TEMP2=$((SLURM_ARRAY_TASK_ID % (TOTAL_LR * TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
+TEMP3=$((TEMP2 / (TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
+TEMP4=$((TEMP2 % (TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
+TEMP5=$((TEMP4 / (TOTAL_OPT * TOTAL_SCH)))
+TEMP6=$((TEMP4 % (TOTAL_OPT * TOTAL_SCH)))
+
+MODEL_IDX=$TEMP1
+LR_IDX=$TEMP3
+BS_IDX=$((TEMP5))
+OPT_IDX=$((TEMP6 / TOTAL_SCH))
+SCH_IDX=$((TEMP6 % TOTAL_SCH))
 
 # Extract values
 MODEL_TYPE=${MODEL_TYPES[$MODEL_IDX]}
 LEARNING_RATE=${LEARNING_RATES[$LR_IDX]}
 BATCH_SIZE=${BATCH_SIZES[$BS_IDX]}
+OPTIMIZER=${OPTIMIZERS[$OPT_IDX]}
+SCHEDULER=${SCHEDULERS[$SCH_IDX]}
 
-# Create run name
-RUN_NAME="lr${LEARNING_RATE}_bs${BATCH_SIZE}_epochs${EPOCHS}_task${SLURM_ARRAY_TASK_ID}"
-EXPERIMENT_NAME="fourth_run/${MODEL_TYPE}_encoder_comparison"
+# Create run name with all hyperparameters
+RUN_NAME="opt_${OPTIMIZER}_sched_${SCHEDULER}_epochs${EPOCHS}_task${SLURM_ARRAY_TASK_ID}"
+EXPERIMENT_NAME="resnet_optimizer_scheduler_sweep"
 
-echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, epochs=$EPOCHS"
+echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS"
 
 # Pass individual parameters to the Python script
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
@@ -65,6 +79,8 @@ echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, bat
     --learning-rate "$LEARNING_RATE" \
     --batch-size "$BATCH_SIZE" \
     --epochs "$EPOCHS" \
+    --optimizer "$OPTIMIZER" \
+    --scheduler "$SCHEDULER" \
     --mixed-precision \
     --no-early-stopping \
     --checkpointing \
