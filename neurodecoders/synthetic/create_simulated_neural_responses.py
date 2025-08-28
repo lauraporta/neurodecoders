@@ -95,6 +95,67 @@ def calculate_sta_vs_zscore_correlations(images, responses, stas, rf_coords):
     return sta_avg_correlations
 
 
+def split_dataset(
+    images,
+    responses,
+    stas,
+    coords,
+    adaptation_states,
+    labels,
+    train_split=0.8,
+    random_seed=42,
+):
+    """
+    Split dataset into train and test sets.
+
+    Args:
+        images: Image tensor
+        responses: Firing rates array
+        stas: STA patterns array
+        coords: RF coordinates array
+        adaptation_states: Adaptation states array
+        labels: Labels tensor
+        train_split: Fraction for training (default: 0.8)
+        random_seed: Random seed for reproducibility
+
+    Returns:
+        Dictionary with train/test splits
+    """
+    n_samples = len(images)
+    indices = np.arange(n_samples)
+
+    # Set random seed for reproducibility
+    np.random.seed(random_seed)
+    np.random.shuffle(indices)
+
+    # Calculate split sizes
+    train_size = int(n_samples * train_split)
+    test_size = n_samples - train_size
+
+    # Split indices
+    train_indices = indices[:train_size]
+    test_indices = indices[train_size:]
+
+    print(f"Dataset split: {train_size} train, {test_size} test")
+
+    # Create splits
+    splits = {}
+    for split_name, split_indices in [
+        ("train", train_indices),
+        ("test", test_indices),
+    ]:
+        splits[split_name] = {
+            "images": images[split_indices],
+            "responses": responses[split_indices],
+            "stas": stas,  # STAs are the same for all splits
+            "rf_coords": coords,  # RF coords are the same for all splits
+            "adaptation_states": adaptation_states[split_indices],
+            "labels": labels[split_indices] if labels is not None else None,
+        }
+
+    return splits
+
+
 def save_output(
     images,
     responses,
@@ -107,31 +168,76 @@ def save_output(
     n_neurons,
     n_images,
     sta_avg_correlations=None,
+    train_split=0.8,
 ):
-    output_dir = get_path("workspace/datasets/synthetic")
-    os.makedirs(output_dir, exist_ok=True)
-    filename = (
-        f"synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-"
-        f"{n_neurons}_n_images-{n_images}_datetime-"
-        f"{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.npz"
+    """
+    Save dataset with train and test splits in separate folders.
+
+    Args:
+        images: Image tensor
+        responses: Firing rates array
+        stas: STA patterns array
+        coords: RF coordinates array
+        adaptation_states: Adaptation states array
+        labels: Labels tensor
+        dataset_type: Type of dataset
+        sta_type: Type of STA patterns
+        n_neurons: Number of neurons
+        n_images: Number of images
+        sta_avg_correlations: STA correlations array
+        train_split: Fraction for training
+    """
+    # Split the dataset
+    splits = split_dataset(
+        images,
+        responses,
+        stas,
+        coords,
+        adaptation_states,
+        labels,
+        train_split=train_split,
     )
-    filepath = os.path.join(output_dir, filename)
 
-    # Prepare save data
-    save_data = {
-        "images": images.cpu().numpy(),
-        "responses": responses,
-        "stas": stas,
-        "rf_coords": coords,
-        "adaptation_states": adaptation_states,
-        "labels": labels.cpu().numpy(),
-    }
+    # Create base output directory
+    base_output_dir = get_path("workspace/datasets/synthetic")
+    os.makedirs(base_output_dir, exist_ok=True)
 
-    # Add correlations if provided
-    if sta_avg_correlations is not None:
-        save_data["sta_avg_correlations"] = sta_avg_correlations
+    # Generate timestamp for consistent naming
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    np.savez(filepath, **save_data)
+    # Save each split
+    for split_name, split_data in splits.items():
+        # Create split-specific directory
+        split_dir = os.path.join(base_output_dir, split_name)
+        os.makedirs(split_dir, exist_ok=True)
+
+        # Generate filename for this split
+        filename = (
+            f"synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-"
+            f"{n_neurons}_n_images-{len(split_data['images'])}_split-{split_name}_"
+            f"datetime-{timestamp}.npz"
+        )
+        filepath = os.path.join(split_dir, filename)
+
+        # Prepare save data
+        save_data = {
+            "images": split_data["images"].cpu().numpy(),
+            "responses": split_data["responses"],
+            "stas": split_data["stas"],
+            "rf_coords": split_data["rf_coords"],
+            "adaptation_states": split_data["adaptation_states"],
+            "labels": split_data["labels"].cpu().numpy()
+            if split_data["labels"] is not None
+            else None,
+        }
+
+        # Add correlations if provided (same for all splits)
+        if sta_avg_correlations is not None:
+            save_data["sta_avg_correlations"] = sta_avg_correlations
+
+        # Save the split
+        np.savez(filepath, **save_data)
+        print(f"Saved {split_name} split: {filepath}")
 
 
 def plot_sta_and_spikes(
@@ -489,6 +595,7 @@ def main():
         args.n_neurons,
         args.n_images,
         sta_avg_correlations,
+        train_split=0.8,
     )
     print("Done.")
 

@@ -201,19 +201,18 @@ class EncoderVerificationCallback(Callback):
                     "from workspace for verification"
                 )
 
-                # Try to load synthetic data from workspace
+                # Try to load synthetic data from workspace train split
                 synthetic_dir = get_path("workspace/datasets/synthetic")
-                if os.path.exists(synthetic_dir):
+                train_dir = os.path.join(synthetic_dir, "train")
+                if os.path.exists(train_dir):
                     available_files = [
-                        f
-                        for f in os.listdir(synthetic_dir)
-                        if f.endswith(".npz")
+                        f for f in os.listdir(train_dir) if f.endswith(".npz")
                     ]
                     if available_files:
                         # Use the most recent file
                         available_files.sort(reverse=True)
                         selected_file = available_files[0]
-                        file_path = os.path.join(synthetic_dir, selected_file)
+                        file_path = os.path.join(train_dir, selected_file)
 
                         try:
                             data = np.load(file_path)

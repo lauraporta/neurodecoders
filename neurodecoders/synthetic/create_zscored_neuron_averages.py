@@ -283,20 +283,21 @@ def main():
         )
         return
 
-    # Find the most recent .npz file
-    npz_files = [f for f in os.listdir(data_dir) if f.endswith(".npz")]
+    # Load from train split
+    train_dir = os.path.join(data_dir, "train")
+    npz_files = [f for f in os.listdir(train_dir) if f.endswith(".npz")]
     if not npz_files:
         print(
-            f"No .npz files found in {data_dir}. "
+            f"No .npz files found in {train_dir}. "
             "Please run create_simulated_neural_responses.py first."
         )
         return
 
     # Sort by modification time and take the most recent
     data_file = sorted(
-        npz_files, key=lambda x: os.path.getmtime(os.path.join(data_dir, x))
+        npz_files, key=lambda x: os.path.getmtime(os.path.join(train_dir, x))
     )[-1]
-    data_path = os.path.join(data_dir, data_file)
+    data_path = os.path.join(train_dir, data_file)
 
     print(f"Loading data from {data_path}")
     data = load_synthetic_data(data_path)

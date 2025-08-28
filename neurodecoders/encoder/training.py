@@ -565,19 +565,45 @@ def train_encoder(
 
     results = []
 
-    # Create k-fold splits (works for n_folds=1 too)
-    kfold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-    all_indices = np.arange(len(data_module.full_dataset))
+    if n_folds == 1:
+        # Single training - use original data module
+        print("\n=== Single Training ===")
+        fold_data_module = data_module
+        fold_run_name = mlflow_run_name or model_name
+        fold_model_name = model_name
 
-    for fold in range(n_folds):
-        print(f"\n=== Training Fold {fold + 1}/{n_folds} ===")
+        # Train single model
+        trainer, lightning_model, _ = _train_single_model(
+            model=model,
+            data_module=fold_data_module,
+            model_name=fold_model_name,
+            learning_rate=learning_rate,
+            epochs=epochs,
+            optimizer_config=optimizer_config,
+            loss_fn=loss_fn,
+            scheduler_config=scheduler_config,
+            callbacks=callbacks,
+            enable_progress_bar=enable_progress_bar,
+            log_every_n_steps=log_every_n_steps,
+            unfreeze_epoch=unfreeze_epoch,
+            enable_mlflow=enable_mlflow,
+            mlflow_experiment_name=mlflow_experiment_name,
+            mlflow_run_name=fold_run_name,
+            enable_mixed_precision=enable_mixed_precision,
+            enable_early_stopping=enable_early_stopping,
+            early_stopping_patience=early_stopping_patience,
+            enable_checkpointing=enable_checkpointing,
+        )
 
-        if n_folds == 1:
-            # Single training - use original data module
-            fold_data_module = data_module
-            fold_run_name = mlflow_run_name or model_name
-            fold_model_name = model_name
-        else:
+        return (trainer, lightning_model, fold_data_module)
+    else:
+        # Cross-validation - create k-fold splits
+        kfold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+        all_indices = np.arange(len(data_module.full_dataset))
+
+        for fold in range(n_folds):
+            print(f"\n=== Training Fold {fold + 1}/{n_folds} ===")
+
             # Cross-validation - create fold-specific data module
             train_indices, val_indices = list(kfold.split(all_indices))[fold]
 
@@ -607,32 +633,29 @@ def train_encoder(
             )
             fold_model_name = f"{model_name}_fold_{fold + 1}"
 
-        # Train this fold
-        trainer, lightning_model, _ = _train_single_model(
-            model=model,
-            data_module=fold_data_module,
-            model_name=fold_model_name,
-            learning_rate=learning_rate,
-            epochs=epochs,
-            optimizer_config=optimizer_config,
-            loss_fn=loss_fn,
-            scheduler_config=scheduler_config,
-            callbacks=callbacks,
-            enable_progress_bar=enable_progress_bar,
-            log_every_n_steps=log_every_n_steps,
-            unfreeze_epoch=unfreeze_epoch,
-            enable_mlflow=enable_mlflow,
-            mlflow_experiment_name=mlflow_experiment_name,
-            mlflow_run_name=fold_run_name,
-            enable_mixed_precision=enable_mixed_precision,
-            enable_early_stopping=enable_early_stopping,
-            early_stopping_patience=early_stopping_patience,
-            enable_checkpointing=enable_checkpointing,
-        )
+            # Train this fold
+            trainer, lightning_model, _ = _train_single_model(
+                model=model,
+                data_module=fold_data_module,
+                model_name=fold_model_name,
+                learning_rate=learning_rate,
+                epochs=epochs,
+                optimizer_config=optimizer_config,
+                loss_fn=loss_fn,
+                scheduler_config=scheduler_config,
+                callbacks=callbacks,
+                enable_progress_bar=enable_progress_bar,
+                log_every_n_steps=log_every_n_steps,
+                unfreeze_epoch=unfreeze_epoch,
+                enable_mlflow=enable_mlflow,
+                mlflow_experiment_name=mlflow_experiment_name,
+                mlflow_run_name=fold_run_name,
+                enable_mixed_precision=enable_mixed_precision,
+                enable_early_stopping=enable_early_stopping,
+                early_stopping_patience=early_stopping_patience,
+                enable_checkpointing=enable_checkpointing,
+            )
 
-        results.append((trainer, lightning_model, fold_data_module))
+            results.append((trainer, lightning_model, fold_data_module))
 
-    # Return single result for n_folds=1, list for n_folds>1
-    if n_folds == 1:
-        return results[0]
-    return results
+        return results

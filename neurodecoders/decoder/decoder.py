@@ -205,16 +205,21 @@ class DecoderDataModule(pl.LightningDataModule):
 
     def setup_splits(self):
         """Setup train/val/test splits"""
+        # Since we're loading from train split, create validation split from it
         total_size = len(self.full_dataset)
-        train_size = int(self.train_split * total_size)
-        val_size = int(self.val_split * total_size)
-        test_size = total_size - train_size - val_size
+        train_size = int(
+            total_size * 0.8
+        )  # Use 80% of train data for training
+        val_size = total_size - train_size  # Use 20% for validation
 
-        self.train_dataset, self.val_dataset, self.test_dataset = random_split(
+        self.train_dataset, self.val_dataset = random_split(
             self.full_dataset,
-            [train_size, val_size, test_size],
+            [train_size, val_size],
             generator=torch.Generator().manual_seed(42),
         )
+        # For test, we'll use the same as validation for now
+        self.test_dataset = self.val_dataset
+        print(f"Using train split data: {train_size} train, {val_size} val")
 
     def train_dataloader(self):
         return DataLoader(
@@ -240,7 +245,7 @@ class DecoderDataModule(pl.LightningDataModule):
 
 
 def load_latest_data(dataset_to_load):
-    """Load the latest neural data file"""
+    """Load the latest neural data file from train split"""
     # Convert Path object to string if needed
     if hasattr(dataset_to_load, "__str__"):
         dataset_to_load = str(dataset_to_load)
@@ -250,13 +255,14 @@ def load_latest_data(dataset_to_load):
         # Full path provided
         latest_file = dataset_to_load
     else:
-        # Just filename provided - construct full path
+        # Just filename provided - construct full path to train split
         synthetic_dir = get_path("workspace/datasets/synthetic")
-        latest_file = os.path.join(synthetic_dir, dataset_to_load)
+        train_dir = os.path.join(synthetic_dir, "train")
+        latest_file = os.path.join(train_dir, dataset_to_load)
 
     # Verify file exists
     if not os.path.exists(latest_file):
-        raise FileNotFoundError(f"Data file not found: {latest_file}")
+        raise FileNotFoundError(f"Train data file not found: {latest_file}")
 
     data = np.load(latest_file)
     images = data["images"]  # Expecting shape: (N, 1, H, W) or (N, H, W)

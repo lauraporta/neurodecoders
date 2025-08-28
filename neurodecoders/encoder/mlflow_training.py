@@ -94,7 +94,7 @@ def load_synthetic_data_from_workspace(
     config: Dict[str, Any],
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """
-    Load synthetic data from workspace/datasets/synthetic based on
+    Load synthetic data from workspace/datasets/synthetic/train based on
     configuration.
 
     Args:
@@ -104,21 +104,32 @@ def load_synthetic_data_from_workspace(
         images, firing_rates, labels, metadata: Synthetic data and metadata
     """
     synthetic_dir = get_path("workspace/datasets/synthetic")
+    train_dir = os.path.join(synthetic_dir, "train")
+    test_dir = os.path.join(synthetic_dir, "test")
 
-    if not os.path.exists(synthetic_dir):
+    if not os.path.exists(train_dir) or not os.path.exists(test_dir):
         raise FileNotFoundError(
-            f"Synthetic data directory {synthetic_dir} not found. "
+            "Split data directories not found. "
             "Please run the synthetic data generation first."
         )
 
-    # Get available synthetic data files
-    available_files = [
-        f for f in os.listdir(synthetic_dir) if f.endswith(".npz")
-    ]
+    return _load_from_split_structure(config, synthetic_dir)
+
+
+def _load_from_split_structure(
+    config: Dict[str, Any], synthetic_dir: str
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
+    """
+    Load data from the split structure (train/val/test folders).
+    """
+    train_dir = os.path.join(synthetic_dir, "train")
+
+    # Get available train files
+    available_files = [f for f in os.listdir(train_dir) if f.endswith(".npz")]
 
     if not available_files:
         raise FileNotFoundError(
-            f"No synthetic data files found in {synthetic_dir}. "
+            f"No train data files found in {train_dir}. "
             "Please run the synthetic data generation first."
         )
 
@@ -134,7 +145,7 @@ def load_synthetic_data_from_workspace(
             meta.get("n_neurons") == n_neurons
             and meta.get("n_images") == n_images
         ):
-            fpath = os.path.join(synthetic_dir, fname)
+            fpath = os.path.join(train_dir, fname)
             try:
                 mtime = os.path.getmtime(fpath)
             except OSError:
@@ -143,7 +154,7 @@ def load_synthetic_data_from_workspace(
 
     if not matching:
         raise ValueError(
-            "No synthetic dataset matches the requested counts. "
+            "No train dataset matches the requested counts. "
             f"Requested n_neurons={n_neurons}, n_images={n_images}."
         )
 
@@ -157,10 +168,11 @@ def load_synthetic_data_from_workspace(
     # Add timestamp for dataset identification
     metadata["dataset_timestamp"] = datetime.datetime.now().isoformat()
     metadata["dataset_filename"] = selected_file
+    metadata["data_split"] = "train"
 
     # Load the data
-    file_path = os.path.join(synthetic_dir, selected_file)
-    print(f"Loading synthetic data from: {file_path}")
+    file_path = os.path.join(train_dir, selected_file)
+    print(f"Loading train data from: {file_path}")
 
     try:
         # Check if memory mapping should be used
@@ -182,13 +194,13 @@ def load_synthetic_data_from_workspace(
 
             if labels is not None:
                 print(
-                    f"Loaded data: {images.shape} images, "
+                    f"Loaded train data: {images.shape} images, "
                     f"{firing_rates.shape} firing rates, "
                     f"{len(labels)} labels"
                 )
             else:
                 print(
-                    f"Loaded data: {images.shape} images, "
+                    f"Loaded train data: {images.shape} images, "
                     f"{firing_rates.shape} firing rates "
                     "(no labels available)"
                 )
@@ -205,7 +217,7 @@ def load_synthetic_data_from_workspace(
             + (labels.nbytes if labels is not None else 0)
         ) / (1024 * 1024)
 
-        print(f"Dataset memory usage: {total_memory_mb:.1f} MB")
+        print(f"Train dataset memory usage: {total_memory_mb:.1f} MB")
 
         if total_memory_mb > 1000 and not use_memory_mapping:
             print(
@@ -216,9 +228,7 @@ def load_synthetic_data_from_workspace(
         return images, firing_rates, labels, metadata
 
     except Exception as e:
-        raise RuntimeError(
-            f"Error loading synthetic data from {file_path}: {e}"
-        )
+        raise RuntimeError(f"Error loading train data from {file_path}: {e}")
 
 
 def get_model(config: Dict[str, Any]) -> torch.nn.Module:

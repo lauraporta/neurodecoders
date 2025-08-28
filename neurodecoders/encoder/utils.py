@@ -143,6 +143,31 @@ class NeuralDataModule(pl.LightningDataModule):
 
     def setup_splits(self):
         """Set up train/validation/test splits."""
+        # Check if we're using pre-split data (from synthetic generation)
+        if hasattr(self, "dataset_metadata") and self.dataset_metadata:
+            data_split = self.dataset_metadata.get("data_split")
+            if data_split == "train":
+                # We're using train data, create validation split from it
+                total_size = len(self.full_dataset)
+                train_size = int(
+                    total_size * 0.8
+                )  # Use 80% of train data for training
+                val_size = total_size - train_size  # Use 20% for validation
+
+                self.train_dataset, self.val_dataset = random_split(
+                    self.full_dataset,
+                    [train_size, val_size],
+                    generator=torch.Generator().manual_seed(42),
+                )
+                # For test, we'll use the same as validation for now
+                self.test_dataset = self.val_dataset
+                print(
+                    f"Using pre-split train data: "
+                    f"{train_size} train, {val_size} val"
+                )
+                return
+
+        # Default behavior for non-pre-split data
         total_size = len(self.full_dataset)
         train_size = int(total_size * self.train_split)
         val_size = int(total_size * self.val_split)
