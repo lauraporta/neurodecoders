@@ -507,13 +507,61 @@ def _train_single_model(
     return trainer, lightning_model, data_module
 
 
+def _clone_model(model: nn.Module) -> nn.Module:
+    """
+    Create a deep copy of a model with fresh weights.
+
+    Args:
+        model: The model to clone
+
+    Returns:
+        A new model instance with the same architecture but fresh weights
+    """
+    # Get the model class
+    model_class = model.__class__
+
+    # Extract parameters from model architecture
+    if (
+        model_class.__name__ == "SimpleEncoder"
+        or model_class.__name__ == "SimpleEncoderWithSkipConnection"
+    ):
+        # Extract out_neurons from the last linear layer of the fc module
+        # Find the last Linear layer (before the ELU activation)
+        for layer in reversed(model.fc):
+            if hasattr(layer, "out_features"):
+                out_neurons = layer.out_features
+                break
+        else:
+            raise ValueError("Could not find Linear layer with out_features")
+        cloned_model = model_class(out_neurons=out_neurons)
+
+    elif model_class.__name__ == "ResNetEncoder":
+        # Extract out_neurons from the last layer of the firing_head module
+        out_neurons = model.firing_head[-1].out_features
+        resnet_type = getattr(model, "resnet_type", "resnet18")
+        freeze_backbone = getattr(model, "freeze_backbone", True)
+        cloned_model = model_class(
+            out_neurons=out_neurons,
+            resnet_type=resnet_type,
+            freeze_backbone=freeze_backbone,
+        )
+    else:
+        # Fallback: try to recreate with default parameters
+        try:
+            cloned_model = model_class()
+        except Exception as e:
+            raise ValueError(f"Cannot clone model {model_class.__name__}: {e}")
+
+    return cloned_model
+
+
 def train_encoder(
     model: nn.Module,
     data_module,
     model_name: str = "encoder",
     n_folds: int = 5,
     learning_rate: float = 1e-3,
-    epochs: int = 2,  # Set to 2 epochs for testing
+    epochs: int = 2,
     optimizer_config: Optional[dict] = None,
     loss_fn: str = "mse",
     scheduler_config: Optional[dict] = None,
@@ -527,15 +575,15 @@ def train_encoder(
     mlflow_tracking_uri: Optional[str] = None,
     enable_mixed_precision: bool = True,
     enable_early_stopping: bool = True,
-    early_stopping_patience: int = 100,  # Updated default
+    early_stopping_patience: int = 100,
     enable_checkpointing: bool = True,
 ):
     """
     Generic training function that works with any model architecture.
-    Supports both single training and k-fold cross-validation.
+    Supports k-fold cross-validation with proper model isolation.
 
     Args:
-        model: The neural network model to train
+        model: The neural network model to train (will be cloned for each fold)
         data_module: Lightning data module with train/val/test dataloaders
         model_name: Name for the model (used in logging)
         learning_rate: Learning rate for training
@@ -546,35 +594,87 @@ def train_encoder(
         callbacks: List of additional callbacks
         enable_progress_bar: Whether to show progress bar
         log_every_n_steps: Logging frequency
-        unfreeze_epoch: Epoch to start unfreezing backbone (for transfer
-        learning)
+        unfreeze_epoch: Epoch to start unfreezing backbone
+        (for transfer learning)
         enable_mlflow: Whether to enable MLflow logging
         mlflow_experiment_name: MLflow experiment name
         mlflow_run_name: MLflow run name
         mlflow_tracking_uri: MLflow tracking URI
-        n_folds: Number of cross-validation folds (1 = single training)
+        n_folds: Number of cross-validation folds
         enable_mixed_precision: Whether to use mixed precision training
         enable_early_stopping: Whether to enable early stopping
         early_stopping_patience: Patience for early stopping
         enable_checkpointing: Whether to enable model checkpointing
 
     Returns:
-        If n_folds=1: (trainer, lightning_model, data_module)
-        If n_folds>1: list of (trainer, lightning_model, data_module) tuples
+        list of (trainer, lightning_model, data_module) tuples for all folds
     """
 
-    results = []
+    print(f"\n=== K-Fold Cross-Validation ({n_folds} folds) ===")
 
-    if n_folds == 1:
-        # Single training - use original data module
-        print("\n=== Single Training ===")
-        fold_data_module = data_module
-        fold_run_name = mlflow_run_name or model_name
-        fold_model_name = model_name
+    # Setup MLflow for cross-validation
+    if enable_mlflow:
+        configured_mlflow_dir = get_mlflow_path()
+        tracking_uri = f"file:{configured_mlflow_dir}"
+        mlflow.set_tracking_uri(tracking_uri)
+        mlflow.set_experiment(mlflow_experiment_name)
 
-        # Train single model
+        # Start main CV run to log aggregated results
+        cv_run_name = (
+            f"{mlflow_run_name}_cv_summary"
+            if mlflow_run_name
+            else "cv_summary"
+        )
+
+    kfold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
+    all_indices = np.arange(len(data_module.full_dataset))
+
+    fold_results = []
+    fold_metrics: dict[str, list[float]] = {
+        "train_losses": [],
+        "val_losses": [],
+        "test_losses": [],
+        "test_correlations": [],
+    }
+
+    for fold in range(n_folds):
+        print(f"\n=== Training Fold {fold + 1}/{n_folds} ===")
+
+        # Create a fresh model instance for this fold
+        fold_model = _clone_model(model)
+
+        # Create fold-specific data module
+        train_indices, val_indices = list(kfold.split(all_indices))[fold]
+
+        fold_data_module = data_module.__class__(
+            images=data_module.images,
+            firing_rates=data_module.firing_rates,
+            labels=data_module.labels,
+            batch_size=data_module.batch_size,
+            dataset_metadata=data_module.dataset_metadata,
+            use_memory_mapping=data_module.use_memory_mapping,
+            chunk_size=data_module.chunk_size,
+            prefetch_factor=data_module.prefetch_factor,
+            num_workers=data_module.num_workers,
+            pin_memory=data_module.pin_memory,
+        )
+
+        # Set custom splits for this fold
+        fold_data_module.train_indices = train_indices
+        fold_data_module.val_indices = val_indices
+        fold_data_module.setup_splits()
+
+        # Create fold-specific run name
+        fold_run_name = (
+            f"{mlflow_run_name}_fold_{fold + 1}"
+            if mlflow_run_name
+            else f"fold_{fold + 1}"
+        )
+        fold_model_name = f"{model_name}_fold_{fold + 1}"
+
+        # Train this fold with its own model instance
         trainer, lightning_model, _ = _train_single_model(
-            model=model,
+            model=fold_model,  # Use the cloned model
             data_module=fold_data_module,
             model_name=fold_model_name,
             learning_rate=learning_rate,
@@ -595,67 +695,112 @@ def train_encoder(
             enable_checkpointing=enable_checkpointing,
         )
 
-        return (trainer, lightning_model, fold_data_module)
-    else:
-        # Cross-validation - create k-fold splits
-        kfold = KFold(n_splits=n_folds, shuffle=True, random_state=42)
-        all_indices = np.arange(len(data_module.full_dataset))
+        fold_results.append((trainer, lightning_model, fold_data_module))
 
-        for fold in range(n_folds):
-            print(f"\n=== Training Fold {fold + 1}/{n_folds} ===")
+        # Collect metrics from this fold
+        if (
+            hasattr(lightning_model, "train_losses")
+            and lightning_model.train_losses
+        ):
+            fold_metrics["train_losses"].append(
+                lightning_model.train_losses[-1]
+            )
+        if (
+            hasattr(lightning_model, "val_losses")
+            and lightning_model.val_losses
+        ):
+            fold_metrics["val_losses"].append(lightning_model.val_losses[-1])
 
-            # Cross-validation - create fold-specific data module
-            train_indices, val_indices = list(kfold.split(all_indices))[fold]
-
-            fold_data_module = data_module.__class__(
-                images=data_module.images,
-                firing_rates=data_module.firing_rates,
-                labels=data_module.labels,
-                batch_size=data_module.batch_size,
-                dataset_metadata=data_module.dataset_metadata,
-                use_memory_mapping=data_module.use_memory_mapping,
-                chunk_size=data_module.chunk_size,
-                prefetch_factor=data_module.prefetch_factor,
-                num_workers=data_module.num_workers,
-                pin_memory=data_module.pin_memory,
+        # Get test metrics from trainer
+        test_results = trainer.test(
+            lightning_model, fold_data_module, verbose=False
+        )
+        if test_results:
+            test_metrics = test_results[0]
+            fold_metrics["test_losses"].append(
+                test_metrics.get("test_loss", 0)
+            )
+            fold_metrics["test_correlations"].append(
+                test_metrics.get("test_correlation", 0)
             )
 
-            # Set custom splits for this fold
-            fold_data_module.train_indices = train_indices
-            fold_data_module.val_indices = val_indices
-            fold_data_module.setup_splits()
-
-            # Create fold-specific run name
-            fold_run_name = (
-                f"{mlflow_run_name}_fold_{fold + 1}"
-                if mlflow_run_name
-                else f"fold_{fold + 1}"
-            )
-            fold_model_name = f"{model_name}_fold_{fold + 1}"
-
-            # Train this fold
-            trainer, lightning_model, _ = _train_single_model(
-                model=model,
-                data_module=fold_data_module,
-                model_name=fold_model_name,
-                learning_rate=learning_rate,
-                epochs=epochs,
-                optimizer_config=optimizer_config,
-                loss_fn=loss_fn,
-                scheduler_config=scheduler_config,
-                callbacks=callbacks,
-                enable_progress_bar=enable_progress_bar,
-                log_every_n_steps=log_every_n_steps,
-                unfreeze_epoch=unfreeze_epoch,
-                enable_mlflow=enable_mlflow,
-                mlflow_experiment_name=mlflow_experiment_name,
-                mlflow_run_name=fold_run_name,
-                enable_mixed_precision=enable_mixed_precision,
-                enable_early_stopping=enable_early_stopping,
-                early_stopping_patience=early_stopping_patience,
-                enable_checkpointing=enable_checkpointing,
+    # Log aggregated cross-validation results
+    if enable_mlflow:
+        with mlflow.start_run(run_name=cv_run_name, nested=True):
+            # Log CV parameters
+            mlflow.log_params(
+                {
+                    "cv_folds": n_folds,
+                    "learning_rate": learning_rate,
+                    "epochs": epochs,
+                    "model_type": model_name,
+                    "loss_function": loss_fn,
+                }
             )
 
-            results.append((trainer, lightning_model, fold_data_module))
+            # Calculate and log aggregated metrics
+            if fold_metrics["train_losses"]:
+                avg_train_loss = np.mean(fold_metrics["train_losses"])
+                std_train_loss = np.std(fold_metrics["train_losses"])
+                mlflow.log_metric("cv_avg_train_loss", avg_train_loss)
+                mlflow.log_metric("cv_std_train_loss", std_train_loss)
 
-        return results
+            if fold_metrics["val_losses"]:
+                avg_val_loss = np.mean(fold_metrics["val_losses"])
+                std_val_loss = np.std(fold_metrics["val_losses"])
+                mlflow.log_metric("cv_avg_val_loss", avg_val_loss)
+                mlflow.log_metric("cv_std_val_loss", std_val_loss)
+
+            if fold_metrics["test_losses"]:
+                avg_test_loss = np.mean(fold_metrics["test_losses"])
+                std_test_loss = np.std(fold_metrics["test_losses"])
+                mlflow.log_metric("cv_avg_test_loss", avg_test_loss)
+                mlflow.log_metric("cv_std_test_loss", std_test_loss)
+
+            if fold_metrics["test_correlations"]:
+                avg_correlation = np.mean(fold_metrics["test_correlations"])
+                std_correlation = np.std(fold_metrics["test_correlations"])
+                mlflow.log_metric("cv_avg_test_correlation", avg_correlation)
+                mlflow.log_metric("cv_std_test_correlation", std_correlation)
+
+            # Log individual fold results
+            for fold in range(n_folds):
+                mlflow.log_metric(
+                    f"fold_{fold + 1}_train_loss",
+                    fold_metrics["train_losses"][fold]
+                    if fold < len(fold_metrics["train_losses"])
+                    else 0,
+                )
+                mlflow.log_metric(
+                    f"fold_{fold + 1}_val_loss",
+                    fold_metrics["val_losses"][fold]
+                    if fold < len(fold_metrics["val_losses"])
+                    else 0,
+                )
+                mlflow.log_metric(
+                    f"fold_{fold + 1}_test_loss",
+                    fold_metrics["test_losses"][fold]
+                    if fold < len(fold_metrics["test_losses"])
+                    else 0,
+                )
+                mlflow.log_metric(
+                    f"fold_{fold + 1}_test_correlation",
+                    fold_metrics["test_correlations"][fold]
+                    if fold < len(fold_metrics["test_correlations"])
+                    else 0,
+                )
+
+            print("\n=== Cross-Validation Summary ===")
+            if fold_metrics["test_losses"]:
+                print(
+                    f"Average Test Loss: {avg_test_loss:.4f} ± "
+                    f"{std_test_loss:.4f}"
+                )
+            if fold_metrics["test_correlations"]:
+                print(
+                    f"Average Test Correlation: {avg_correlation:.4f} ± "
+                    f"{std_correlation:.4f}"
+                )
+            print(f"Results logged to MLflow run: {cv_run_name}")
+
+    return fold_results

@@ -334,7 +334,7 @@ def train_with_config(config: Dict[str, Any]):
     model = get_model(config)
 
     # Train the model using the main training function
-    trainer, lightning_model, _ = train_encoder(
+    fold_results = train_encoder(
         model=model,
         data_module=data_module,
         model_name=f"{config['model_type']}_encoder",
@@ -353,7 +353,11 @@ def train_with_config(config: Dict[str, Any]):
         enable_checkpointing=config["enable_checkpointing"],
     )
 
-    return trainer, lightning_model, data_module
+    # Return the first fold result for backward compatibility
+    if fold_results:
+        return fold_results[0]
+    else:
+        return None, None, data_module
 
 
 def main():
