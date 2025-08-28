@@ -1,7 +1,4 @@
 import numpy as np
-import scipy.ndimage
-import torch
-import torchvision
 from noise import pnoise2  # for Perlin noise
 
 
@@ -9,30 +6,11 @@ class STA:
     def __init__(self):
         pass
 
-    def get_simulated_sta(self, type="from_model:Alexnet,1", length=1000):
-        if "from_model" in type:
-            # We have to specify the patch size here as well!
-            if "Alexnet" in type:
-                model = torchvision.models.alexnet(pretrained=True)
-                layer = int(type.split(",")[1])
-                sta = self.from_model(model, layer)
-                return sta[:length]
-            elif "ResNet" in type:
-                model = torchvision.models.resnet18(pretrained=True)
-                layer = int(type.split(",")[1])
-                sta = self.from_model(model, layer)
-                return sta[:length]
-            elif "VGG" in type:
-                model = torchvision.models.vgg16(pretrained=True)
-                layer = int(type.split(",")[1])
-                sta = self.from_model(model, layer)
-                return sta[:length]
-            else:
-                raise ValueError(f"Model {type} not found")
-        elif "binary_patterns" in type:
-            #  example: "binary_patterns,100,100"
+    def get_simulated_sta(self, type="gabor,100,100", length=1000):
+        if "gabor" in type:
+            #  example: "gabor,100,100"
             sta_shape = (int(type.split(",")[1]), int(type.split(",")[2]))
-            return self.make_binary_patterns(sta_shape, length)
+            return self.make_gabor_patterns(sta_shape, length)
         elif "perlin_noise_patterns" in type:
             sta_shape = (int(type.split(",")[1]), int(type.split(",")[2]))
             return self.make_perlin_noise_patterns(sta_shape, length)
@@ -42,33 +20,42 @@ class STA:
         else:
             raise ValueError(f"Type {type} not found")
 
-    def from_model(self, model, layer):
-        with torch.no_grad():
-            weights = model.features[layer].weight.data.cpu().numpy()
-            weights = weights[:, :1, :, :]
+    def make_gabor_patterns(self, sta_shape, n_patterns):
+        patterns = np.zeros((n_patterns, sta_shape[0], sta_shape[1]))
 
-            resized_filters = np.array(
-                [
-                    scipy.ndimage.zoom(
-                        w, (1, 63 / w.shape[1], 63 / w.shape[2]), order=1
-                    )
-                    / np.linalg.norm(w)
-                    for w in weights
-                ]
-            )
-            #  rescale from -1 to 1
-            resized_filters = (
-                2
-                * (resized_filters - resized_filters.min())
-                / (resized_filters.max() - resized_filters.min())
+        for i in range(n_patterns):
+            # Random Gabor parameters
+            sigma = np.random.uniform(5, 20)  # Standard deviation
+            theta = np.random.uniform(0, 2 * np.pi)  # Orientation
+            lambda_param = np.random.uniform(10, 30)  # Wavelength
+            psi = np.random.uniform(0, 2 * np.pi)  # Phase offset
+            gamma = np.random.uniform(0.3, 1.0)  # Spatial aspect ratio
+
+            # Create coordinate grids
+            x = np.arange(sta_shape[1])
+            y = np.arange(sta_shape[0])
+            X, Y = np.meshgrid(x, y)
+
+            # Center the coordinates
+            X = X - sta_shape[1] // 2
+            Y = Y - sta_shape[0] // 2
+
+            # Rotate coordinates
+            X_theta = X * np.cos(theta) + Y * np.sin(theta)
+            Y_theta = -X * np.sin(theta) + Y * np.cos(theta)
+
+            # Generate Gabor pattern
+            pattern = np.exp(
+                -(X_theta**2 + gamma**2 * Y_theta**2) / (2 * sigma**2)
+            ) * np.cos(2 * np.pi * X_theta / lambda_param + psi)
+
+            # Normalize the pattern to [-1, 1]
+            patterns[i] = (
+                2 * (pattern - pattern.min()) / (pattern.max() - pattern.min())
                 - 1
             )
-            return resized_filters
 
-    def make_binary_patterns(self, sta_shape, n_patterns):
-        return np.random.randint(
-            0, 2, (n_patterns, sta_shape[0], sta_shape[1])
-        )
+        return patterns
 
     def make_perlin_noise_patterns(self, sta_shape, n_patterns):
         patterns = np.zeros((n_patterns, sta_shape[0], sta_shape[1]))
