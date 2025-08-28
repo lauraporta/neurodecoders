@@ -62,6 +62,15 @@ class MLflowHistoryCallback(Callback):
                     pl_module.train_losses = []
                 pl_module.train_losses.append(train_loss)
 
+        # Log learning rate if available
+        if hasattr(pl_module, "optimizers") and pl_module.optimizers():
+            optimizer = pl_module.optimizers()[0]
+            if hasattr(optimizer, "param_groups") and optimizer.param_groups:
+                current_lr = optimizer.param_groups[0]["lr"]
+                mlflow.log_metric(
+                    "learning_rate", current_lr, step=self.current_epoch
+                )
+
     def on_validation_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ):
@@ -381,6 +390,32 @@ def _train_single_model(
         else:
             mlflow.start_run(log_system_metrics=True)
 
+        # Log training parameters
+        try:
+            training_params = {
+                "learning_rate": learning_rate,
+                "epochs": epochs,
+                "model_type": model_name,
+                "loss_function": loss_fn,
+                "optimizer_type": lightning_model.optimizer_config.get(
+                    "type", "adam"
+                ),
+                "scheduler_type": lightning_model.scheduler_config.get(
+                    "type", "none"
+                ),
+                "batch_size": data_module.batch_size
+                if hasattr(data_module, "batch_size")
+                else "unknown",
+                "enable_mixed_precision": enable_mixed_precision,
+                "enable_early_stopping": enable_early_stopping,
+                "early_stopping_patience": early_stopping_patience,
+            }
+            mlflow.log_params(training_params)
+            print("Logged training parameters to MLflow")
+        except Exception as e:
+            print(f"Warning: Could not log training parameters to MLflow: {e}")
+            traceback.print_exc()
+
         # Log dataset metadata
         try:
             # Create metadata summary DataFrame
@@ -449,8 +484,11 @@ def _train_single_model(
             print(f"Warning: Could not log dataset metadata to MLflow: {e}")
             traceback.print_exc()
 
-    # Add LearningRateMonitor if we have loggers
-    if loggers:
+    # Add LearningRateMonitor for learning rate tracking
+    # Always add it when MLflow is enabled, regardless of loggers
+    if enable_mlflow:
+        callbacks.extend([LearningRateMonitor(logging_interval="epoch")])
+    elif loggers:
         callbacks.extend([LearningRateMonitor(logging_interval="epoch")])
 
     # Create trainer with enhanced configuration
