@@ -32,8 +32,8 @@ echo "[INFO] Launching training with user-specified command"
   --epochs 3 \
   --dataset-type cifar10 \
   --sta-type periodic_patterns,70,70 \
-  --n-neurons 10 \
-  --n-images 10 \
+  --n-neurons 100 \
+  --n-images 10000 \
   --cv-folds 1 \
   --experiment-name with_history \
   --run-name test1

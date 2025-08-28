@@ -24,6 +24,6 @@ export CUDA_VISIBLE_DEVICES=0
 
 echo "[INFO] Launching decoder training"
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/decoder/decoder.py \
-  --dataset "workspace/datasets/synthetic/*.npz"
+  --dataset "synthdata_dataset-mnist_sta-periodic_patterns,70,70_n_neurons-100_n_images-10000_datetime-20250827_121741.npz"
 
 echo "[INFO] End time: $(date)"
