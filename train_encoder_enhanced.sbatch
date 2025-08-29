@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-06:00 # time (D-HH:MM)
-#SBATCH --array=0-3%3 
+#SBATCH --array=0-2%3
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -37,46 +37,25 @@ BATCH_SIZES=(32)
 MODEL_TYPES=("resnet")
 OPTIMIZERS=("adam")
 SCHEDULERS=("none")
-DATASETS=("perlin_noise_patterns,70,70", "gabor,70,70", "periodic_patterns,70,70")
+DATASETS=("perlin_noise_patterns,70,70" "gabor,70,70" "periodic_patterns,70,70")
 
 # Calculate indices from array task ID
-TOTAL_LR=${#LEARNING_RATES[@]}
-TOTAL_BS=${#BATCH_SIZES[@]}
-TOTAL_MODELS=${#MODEL_TYPES[@]}
-TOTAL_OPT=${#OPTIMIZERS[@]}
-TOTAL_SCH=${#SCHEDULERS[@]}
-TOTAL_DATASETS=${#DATASETS[@]}
-
-# Calculate which combination this array task should run
-# Order: model_type, learning_rate, batch_size, optimizer, scheduler
-TEMP1=$((SLURM_ARRAY_TASK_ID / (TOTAL_LR * TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
-TEMP2=$((SLURM_ARRAY_TASK_ID % (TOTAL_LR * TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
-TEMP3=$((TEMP2 / (TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
-TEMP4=$((TEMP2 % (TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
-TEMP5=$((TEMP4 / (TOTAL_OPT * TOTAL_SCH)))
-TEMP6=$((TEMP4 % (TOTAL_OPT * TOTAL_SCH)))
-
-
-MODEL_IDX=$TEMP1
-LR_IDX=$TEMP3
-BS_IDX=$((TEMP5))
-OPT_IDX=$((TEMP6 / TOTAL_SCH))
-SCH_IDX=$((TEMP6 % TOTAL_SCH))
-DATASET_IDX=$((TEMP6 / TOTAL_DATASETS))
+# For this simple case, we're just sweeping over datasets
+DATASET_IDX=$SLURM_ARRAY_TASK_ID
 
 # Extract values
-MODEL_TYPE=${MODEL_TYPES[$MODEL_IDX]}
-LEARNING_RATE=${LEARNING_RATES[$LR_IDX]}
-BATCH_SIZE=${BATCH_SIZES[$BS_IDX]}
-OPTIMIZER=${OPTIMIZERS[$OPT_IDX]}
-SCHEDULER=${SCHEDULERS[$SCH_IDX]}
+MODEL_TYPE=${MODEL_TYPES[0]}
+LEARNING_RATE=${LEARNING_RATES[0]}
+BATCH_SIZE=${BATCH_SIZES[0]}
+OPTIMIZER=${OPTIMIZERS[0]}
+SCHEDULER=${SCHEDULERS[0]}
 DATASET=${DATASETS[$DATASET_IDX]}
 
 # Create run name with all hyperparameters
 RUN_NAME="dataset=${DATASET}"
 EXPERIMENT_NAME="dataset_sweep2"
 
-echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS"
+echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET"
 
 # Pass individual parameters to the Python script
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
