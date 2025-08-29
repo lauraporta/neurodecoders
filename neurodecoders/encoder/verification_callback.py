@@ -43,7 +43,6 @@ class EncoderVerificationCallback(Callback):
         data_module,
         save_model: bool = True,
         model_save_dir: str = get_path("workspace/models/encoders"),
-        plots_save_dir: str = get_path("workspace/plots/verification"),
         enable_mlflow_logging: bool = True,
     ):
         """
@@ -53,19 +52,16 @@ class EncoderVerificationCallback(Callback):
             data_module: The data module used for training
             save_model: Whether to save the model before verification
             model_save_dir: Directory to save the model
-            plots_save_dir: Directory to save verification plots
             enable_mlflow_logging: Whether to log results to MLflow
         """
         super().__init__()
         self.data_module = data_module
         self.save_model = save_model
         self.model_save_dir = model_save_dir
-        self.plots_save_dir = plots_save_dir
         self.enable_mlflow_logging = enable_mlflow_logging
 
         # Create directories
         ensure_dir(self.model_save_dir)
-        ensure_dir(self.plots_save_dir)
 
         # Store training data for verification
         self.training_images = None
@@ -154,17 +150,6 @@ class EncoderVerificationCallback(Callback):
         try:
             # Create verifier
             verifier = EncoderVerifier()
-
-            # Set up custom plots directory for this training run
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            model_type = type(pl_module.model).__name__
-            run_plots_dir = os.path.join(
-                self.plots_save_dir, f"{model_type.lower()}_{timestamp}"
-            )
-            os.makedirs(run_plots_dir, exist_ok=True)
-            verifier.plots_dir = run_plots_dir
-
-            print(f"Verification plots will be saved to: {run_plots_dir}")
 
             # Set the encoder model
             verifier.encoder = pl_module.model
@@ -280,12 +265,8 @@ class EncoderVerificationCallback(Callback):
 
             # Store model path in results
             results["model_path"] = model_path
-            results["plots_dir"] = run_plots_dir
 
-            print(
-                f"Verification analysis complete. Results saved to: "
-                f"{run_plots_dir}"
-            )
+            print("Verification analysis complete.")
 
             return results
 
@@ -388,12 +369,6 @@ class EncoderVerificationCallback(Callback):
             if metrics:
                 mlflow.log_metrics(metrics)
                 print(f"Logged {len(metrics)} verification metrics to MLflow")
-
-            # Log plots directory as artifact
-            plots_dir = verification_results.get("plots_dir")
-            if plots_dir and os.path.exists(plots_dir):
-                mlflow.log_artifacts(plots_dir, "verification_plots")
-                print(f"Logged verification plots to MLflow: {plots_dir}")
 
             # Log model path if available
             model_path = verification_results.get("model_path")

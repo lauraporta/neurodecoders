@@ -136,14 +136,16 @@ def _load_from_split_structure(
     # Required exact matches from config
     n_neurons = str(int(config["n_neurons"]))
     n_images = str(int(config["n_images"]))
+    sta_type = config.get("sta_type", "")
 
-    # Filter files that exactly match both counts
+    # Filter files that exactly match counts and STA type
     matching = []
     for fname in available_files:
         meta = parse_dataset_metadata(fname)
         if (
             meta.get("n_neurons") == n_neurons
             and meta.get("n_images") == n_images
+            and meta.get("sta_type") == sta_type
         ):
             fpath = os.path.join(train_dir, fname)
             try:
@@ -154,13 +156,17 @@ def _load_from_split_structure(
 
     if not matching:
         raise ValueError(
-            "No train dataset matches the requested counts. "
-            f"Requested n_neurons={n_neurons}, n_images={n_images}."
+            "No train dataset matches the requested parameters. "
+            f"Requested n_neurons={n_neurons}, n_images={n_images}, "
+            f"sta_type={sta_type}."
         )
 
     # Select the latest by modification time
     matching.sort(key=lambda x: x[0], reverse=True)
     selected_file = matching[0][1]
+
+    print(f"Selected dataset file: {selected_file}")
+    print(f"Available matching files: {[f[1] for f in matching]}")
 
     # Parse metadata from filename
     metadata = parse_dataset_metadata(selected_file)

@@ -37,7 +37,6 @@ class EncoderVerifier:
         self.true_firing_rates = None
         self.predicted_firing_rates = None
         self.image_labels = None
-        self.plots_dir = None
 
     def predict_firing_rates(self):
         """Generate predictions using the encoder model."""

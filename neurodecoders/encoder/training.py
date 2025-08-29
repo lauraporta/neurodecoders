@@ -338,7 +338,6 @@ def _train_single_model(
             data_module=data_module,
             save_model=True,
             model_save_dir=get_path("workspace/models/encoders"),
-            plots_save_dir=get_path("workspace/plots/verification"),
             enable_mlflow_logging=True,
         )
         callbacks.append(verification_callback)

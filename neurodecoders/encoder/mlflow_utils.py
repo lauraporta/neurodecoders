@@ -180,32 +180,6 @@ class MLflowExperimentTracker:
         mlflow.end_run()
 
 
-def create_mlflow_logger(
-    experiment_name: str = "neural_encoder",
-    run_name: Optional[str] = None,
-    tracking_uri: Optional[str] = None,
-    log_model: bool = True,
-) -> None:
-    """
-    DEPRECATED: This function is no longer used.
-    MLflow logging is now handled directly via the native API.
-
-    Args:
-        experiment_name: Name of the MLflow experiment
-        run_name: Name for this specific run
-        tracking_uri: MLflow tracking server URI
-        log_model: Whether to log the model automatically
-
-    Returns:
-        None
-    """
-    print(
-        "Warning: create_mlflow_logger is deprecated. "
-        "Use native MLflow API instead."
-    )
-    return None
-
-
 def get_experiment_comparison(experiment_name: str = "neural_encoder"):
     """
     Get a comparison of all runs in an experiment.

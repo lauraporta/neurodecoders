@@ -22,8 +22,10 @@ class ImageDataset:
                 transforms.Grayscale(num_output_channels=1),
                 transforms.ToTensor(),
                 transforms.Normalize(
-                    mean=[0.5], std=[0.5] 
-                    # NB: this is not the normalization suggested for RGB images
+                    mean=[0.5],
+                    std=[0.5],
+                    # NB: this is not the normalization
+                    # suggested for RGB images
                 ),  # Normalize to [-1, 1] with mean=0.5
             ]
         )
