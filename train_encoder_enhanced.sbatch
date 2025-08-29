@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-06:00 # time (D-HH:MM)
-#SBATCH --array=0-11%9 # 12 combinations (1 model type x 1 learning rate x 1 batch size x 3 optimizers x 4 schedulers), max 9 running simultaneously
+#SBATCH --array=0-3%3 
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -29,14 +29,15 @@ export CUDA_VISIBLE_DEVICES=0
 # ==========================================
 # HYPERPARAMETER SWEEP CONFIGURATION:
 # ==========================================
-EPOCHS=40
+EPOCHS=100
 
 # Define hyperparameter arrays
 LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
 MODEL_TYPES=("resnet")
-OPTIMIZERS=("adam" "adamw" "sgd")
-SCHEDULERS=("none" "step" "cosine" "plateau")
+OPTIMIZERS=("adam")
+SCHEDULERS=("none")
+DATASETS=("perlin_noise_patterns,70,70", "gabor,70,70", "periodic_patterns,70,70")
 
 # Calculate indices from array task ID
 TOTAL_LR=${#LEARNING_RATES[@]}
@@ -44,6 +45,7 @@ TOTAL_BS=${#BATCH_SIZES[@]}
 TOTAL_MODELS=${#MODEL_TYPES[@]}
 TOTAL_OPT=${#OPTIMIZERS[@]}
 TOTAL_SCH=${#SCHEDULERS[@]}
+TOTAL_DATASETS=${#DATASETS[@]}
 
 # Calculate which combination this array task should run
 # Order: model_type, learning_rate, batch_size, optimizer, scheduler
@@ -54,11 +56,13 @@ TEMP4=$((TEMP2 % (TOTAL_BS * TOTAL_OPT * TOTAL_SCH)))
 TEMP5=$((TEMP4 / (TOTAL_OPT * TOTAL_SCH)))
 TEMP6=$((TEMP4 % (TOTAL_OPT * TOTAL_SCH)))
 
+
 MODEL_IDX=$TEMP1
 LR_IDX=$TEMP3
 BS_IDX=$((TEMP5))
 OPT_IDX=$((TEMP6 / TOTAL_SCH))
 SCH_IDX=$((TEMP6 % TOTAL_SCH))
+DATASET_IDX=$((TEMP6 / TOTAL_DATASETS))
 
 # Extract values
 MODEL_TYPE=${MODEL_TYPES[$MODEL_IDX]}
@@ -66,10 +70,11 @@ LEARNING_RATE=${LEARNING_RATES[$LR_IDX]}
 BATCH_SIZE=${BATCH_SIZES[$BS_IDX]}
 OPTIMIZER=${OPTIMIZERS[$OPT_IDX]}
 SCHEDULER=${SCHEDULERS[$SCH_IDX]}
+DATASET=${DATASETS[$DATASET_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="opt_${OPTIMIZER}_sched_${SCHEDULER}_epochs${EPOCHS}_task${SLURM_ARRAY_TASK_ID}"
-EXPERIMENT_NAME="resnet_optimizer_scheduler_sweep"
+RUN_NAME="dataset=${DATASET}"
+EXPERIMENT_NAME="dataset_sweep2"
 
 echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS"
 
@@ -84,8 +89,9 @@ echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, bat
     --mixed-precision \
     --no-early-stopping \
     --checkpointing \
+    --sta-type "$DATASET" \
     --n-neurons 100 \
-    --n-images 10000 \
+    --n-images 8000 \
     --cv-folds 1 \
     --experiment-name "$EXPERIMENT_NAME" \
     --run-name "$RUN_NAME"
