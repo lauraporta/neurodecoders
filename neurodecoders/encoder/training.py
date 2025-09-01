@@ -508,7 +508,7 @@ def _train_single_model(
     trainer.fit(lightning_model, data_module)
 
     # Test the model
-    trainer.test(lightning_model, data_module)
+    test_results = trainer.test(lightning_model, data_module)
 
     # Log final metrics to MLflow if enabled
     if enable_mlflow:
@@ -522,6 +522,12 @@ def _train_single_model(
                 if lightning_model.val_losses
                 else None,
             }
+
+            # Add final test loss if available
+            if test_results:
+                training_info["final_test_loss"] = test_results[0].get(
+                    "test_loss"
+                )
 
             # Log metrics (only numeric values)
             mlflow.log_metrics(training_info)
