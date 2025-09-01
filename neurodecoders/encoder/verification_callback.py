@@ -352,17 +352,17 @@ class EncoderVerificationCallback(Callback):
                             best_true_accuracy
                         )
 
-                    # Calculate performance degradation
+                    # Calculate performance improvement
                     if (
                         best_true_accuracy > 0
                         and "best_classifier_accuracy_pred" in metrics
                     ):
-                        degradation = (
-                            (best_true_accuracy - best_pred_accuracy)
+                        improvement = (
+                            (best_pred_accuracy - best_true_accuracy)
                             / best_true_accuracy
                         ) * 100
-                        metrics["classifier_performance_degradation"] = float(
-                            degradation
+                        metrics["classifier_performance_improvement"] = float(
+                            improvement
                         )
 
             # Log metrics to MLflow
