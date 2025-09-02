@@ -12,7 +12,6 @@ import sys
 import traceback
 from typing import Any, Dict, Optional
 
-import mlflow
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -21,6 +20,10 @@ from pytorch_lightning.callbacks import Callback
 # Add the encoder directory to the path for imports
 sys.path.append(os.path.dirname(__file__))
 
+from neurodecoders.mlflow_utils.utils import (
+    log_encoder_verification_metrics,
+    log_single_artifact,
+)
 from neurodecoders.paths import ensure_dir, get_path
 
 from .verify_encoder import EncoderVerifier
@@ -75,7 +78,6 @@ class EncoderVerificationCallback(Callback):
         # Extract training data from data module
         try:
             # Store the full training dataset for verification
-            # This ensures we have all the data with correct labels
             self.training_images = self.data_module.images
             self.training_firing_rates = self.data_module.firing_rates
 
@@ -124,7 +126,24 @@ class EncoderVerificationCallback(Callback):
 
         # Log results to MLflow if enabled
         if self.enable_mlflow_logging and verification_results:
-            self._log_verification_to_mlflow(verification_results)
+            try:
+                log_encoder_verification_metrics(verification_results)
+                print(
+                    "Logged verification metrics via shared MLflow utilities"
+                )
+            except Exception as e:
+                print(f"Error logging verification metrics to MLflow: {e}")
+                traceback.print_exc()
+
+            # Log model artifact if available
+            model_path = verification_results.get("model_path")
+            if model_path and os.path.exists(model_path):
+                try:
+                    log_single_artifact(model_path, "trained_model")
+                    print(f"Logged trained model to MLflow: {model_path}")
+                except Exception as e:
+                    print(f"Error logging trained model artifact: {e}")
+                    traceback.print_exc()
 
         print("=== VERIFICATION ANALYSIS COMPLETE ===")
 
@@ -278,137 +297,8 @@ class EncoderVerificationCallback(Callback):
     def _log_verification_to_mlflow(
         self, verification_results: Dict[str, Any]
     ):
-        """Log verification results to MLflow."""
+        """Deprecated: kept for backward compatibility, no-op."""
         try:
-            # Log verification metrics
-            metrics = {}
-
-            # Extract key metrics from firing rate analysis
-            if "firing_rates" in verification_results:
-                firing_results = verification_results["firing_rates"]
-                if "correlations" in firing_results:
-                    correlations = firing_results["correlations"]
-                    metrics["test_correlation"] = float(np.mean(correlations))
-                    # Add correlation std as requested
-                    metrics["test_correlation_std"] = float(
-                        np.std(correlations)
-                    )
-
-                # Add linear regression analysis for mean firing
-                # rates scatter plot
-                if (
-                    "true_mean" in firing_results
-                    and "pred_mean" in firing_results
-                ):
-                    true_mean = firing_results["true_mean"]
-                    pred_mean = firing_results["pred_mean"]
-
-                    # Linear regression for mean firing rates
-                    slope_mean, r2_mean = self._calculate_linear_regression(
-                        true_mean, pred_mean
-                    )
-                    metrics["mean_firing_rate_slope"] = float(slope_mean)
-                    metrics["mean_firing_rate_r2"] = float(r2_mean)
-
-                # Add linear regression analysis for std firing
-                # rates scatter plot
-                if (
-                    "true_std" in firing_results
-                    and "pred_std" in firing_results
-                ):
-                    true_std = firing_results["true_std"]
-                    pred_std = firing_results["pred_std"]
-
-                    # Linear regression for std firing rates
-                    slope_std, r2_std = self._calculate_linear_regression(
-                        true_std, pred_std
-                    )
-                    metrics["std_firing_rate_slope"] = float(slope_std)
-                    metrics["std_firing_rate_r2"] = float(r2_std)
-
-            # Extract classification metrics
-            if "classification" in verification_results:
-                class_results = verification_results["classification"]
-                if "results" in class_results:
-                    results = class_results["results"]
-
-                    # Find best classifier accuracy for predicted firing rates
-                    pred_accuracies = {
-                        k: v for k, v in results.items() if k.endswith("_pred")
-                    }
-                    if pred_accuracies:
-                        best_pred_accuracy = max(pred_accuracies.values())
-                        metrics["best_classifier_accuracy_pred"] = float(
-                            best_pred_accuracy
-                        )
-
-                    # Find best classifier accuracy for true firing rates
-                    true_accuracies = {
-                        k: v for k, v in results.items() if k.endswith("_true")
-                    }
-                    if true_accuracies:
-                        best_true_accuracy = max(true_accuracies.values())
-                        metrics["best_classifier_accuracy_true"] = float(
-                            best_true_accuracy
-                        )
-
-                    # Calculate performance improvement
-                    if (
-                        best_true_accuracy > 0
-                        and "best_classifier_accuracy_pred" in metrics
-                    ):
-                        improvement = (
-                            (best_pred_accuracy - best_true_accuracy)
-                            / best_true_accuracy
-                        ) * 100
-                        metrics["classifier_performance_improvement"] = float(
-                            improvement
-                        )
-
-            # Log metrics to MLflow
-            if metrics:
-                mlflow.log_metrics(metrics)
-                print(f"Logged {len(metrics)} verification metrics to MLflow")
-
-            # Log model path if available
-            model_path = verification_results.get("model_path")
-            if model_path and os.path.exists(model_path):
-                mlflow.log_artifact(model_path, "trained_model")
-                print(f"Logged trained model to MLflow: {model_path}")
-
-        except Exception as e:
-            print(f"Error logging verification results to MLflow: {e}")
-            traceback.print_exc()
-
-    def _calculate_linear_regression(self, x, y):
-        """
-        Calculate linear regression parameters for scatter plot analysis.
-
-        Args:
-            x: Independent variable (true values)
-            y: Dependent variable (predicted values)
-
-        Returns:
-            tuple: (slope, r2_score)
-        """
-        try:
-            from sklearn.linear_model import LinearRegression
-            from sklearn.metrics import r2_score
-
-            # Reshape for sklearn
-            X = x.reshape(-1, 1)
-
-            # Fit linear regression
-            reg = LinearRegression()
-            reg.fit(X, y)
-
-            # Get slope and R²
-            slope = reg.coef_[0]
-            y_pred = reg.predict(X)
-            r2 = r2_score(y, y_pred)
-
-            return slope, r2
-
-        except Exception as e:
-            print(f"Error calculating linear regression: {e}")
-            return 0.0, 0.0
+            log_encoder_verification_metrics(verification_results)
+        except Exception:
+            pass

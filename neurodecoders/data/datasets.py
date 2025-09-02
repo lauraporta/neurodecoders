@@ -1,8 +1,5 @@
 """
-Utility functions for neural encoder training and evaluation.
-
-This module contains data loading, preprocessing, visualization, and
-model saving/loading utilities used across different encoder architectures.
+Datasets and DataModules shared across encoder and decoder.
 """
 
 import pytorch_lightning as pl
@@ -10,7 +7,6 @@ import torch
 from torch.utils.data import DataLoader, Dataset, random_split
 
 
-# ---- Dataset class ----
 class NeuralDataset(Dataset):
     """Dataset for neural firing rate data paired with images."""
 
@@ -28,7 +24,6 @@ class NeuralDataset(Dataset):
         return self.images[idx], self.firing_rates[idx]
 
 
-# ---- Data Module ----
 class NeuralDataModule(pl.LightningDataModule):
     """Lightning data module for handling neural firing rate datasets."""
 
@@ -149,10 +144,8 @@ class NeuralDataModule(pl.LightningDataModule):
             if data_split == "train":
                 # We're using train data, create validation split from it
                 total_size = len(self.full_dataset)
-                train_size = int(
-                    total_size * 0.8
-                )  # Use 80% of train data for training
-                val_size = total_size - train_size  # Use 20% for validation
+                train_size = int(total_size * 0.8)
+                val_size = total_size - train_size
 
                 self.train_dataset, self.val_dataset = random_split(
                     self.full_dataset,

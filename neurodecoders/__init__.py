@@ -5,3 +5,5 @@ try:
 except PackageNotFoundError:
     # package is not installed
     pass
+
+__all__: list[str] = []

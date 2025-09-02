@@ -8,7 +8,6 @@ from typing import List, Optional
 
 import mlflow
 import numpy as np
-import pandas as pd
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -22,6 +21,13 @@ from sklearn.model_selection import KFold
 
 from neurodecoders.encoder.verification_callback import (
     EncoderVerificationCallback,
+)
+from neurodecoders.mlflow_utils.utils import (
+    log_cross_validation_metrics,
+    log_dataset_input_and_params,
+    log_training_config,
+    log_training_metrics,
+    setup_mlflow_experiment,
 )
 from neurodecoders.paths import get_mlflow_path, get_path
 
@@ -48,16 +54,14 @@ class MLflowHistoryCallback(Callback):
         if trainer.logged_metrics:
             train_loss = trainer.logged_metrics.get("train_loss")
             if train_loss is not None:
-                # Convert tensor to float if needed
                 if isinstance(train_loss, torch.Tensor):
                     train_loss = train_loss.item()
 
-                # Log to MLflow with epoch as step
-                mlflow.log_metric(
-                    "train_loss", train_loss, step=self.current_epoch
+                # Use shared metric logger
+                log_training_metrics(
+                    {"train_loss": float(train_loss)}, step=self.current_epoch
                 )
 
-                # Also store in the module's history list
                 if not hasattr(pl_module, "train_losses"):
                     pl_module.train_losses = []
                 pl_module.train_losses.append(train_loss)
@@ -67,8 +71,9 @@ class MLflowHistoryCallback(Callback):
             optimizer = pl_module.optimizers()
             if hasattr(optimizer, "param_groups") and optimizer.param_groups:
                 current_lr = optimizer.param_groups[0]["lr"]
-                mlflow.log_metric(
-                    "learning_rate", current_lr, step=self.current_epoch
+                log_training_metrics(
+                    {"learning_rate": float(current_lr)},
+                    step=self.current_epoch,
                 )
 
     def on_validation_epoch_end(
@@ -83,16 +88,13 @@ class MLflowHistoryCallback(Callback):
         if trainer.logged_metrics:
             val_loss = trainer.logged_metrics.get("val_loss")
             if val_loss is not None:
-                # Convert tensor to float if needed
                 if isinstance(val_loss, torch.Tensor):
                     val_loss = val_loss.item()
 
-                # Log to MLflow with epoch as step
-                mlflow.log_metric(
-                    "val_loss", val_loss, step=self.current_epoch
+                log_training_metrics(
+                    {"val_loss": float(val_loss)}, step=self.current_epoch
                 )
 
-                # Also store in the module's history list
                 if not hasattr(pl_module, "val_losses"):
                     pl_module.val_losses = []
                 pl_module.val_losses.append(val_loss)
@@ -357,13 +359,13 @@ def _train_single_model(
                 f"{configured_mlflow_dir}: {e}"
             )
         tracking_uri = f"file:{configured_mlflow_dir}"
-        mlflow.set_tracking_uri(tracking_uri)
+        setup_mlflow_experiment(
+            experiment_name=mlflow_experiment_name, tracking_uri=tracking_uri
+        )
         print(f"Using MLflow tracking URI from config: {tracking_uri}")
 
-        # Set experiment
         print(f"Setting MLflow experiment: {mlflow_experiment_name}")
 
-        # Inform user about directory status
         if os.path.exists(configured_mlflow_dir):
             if os.access(configured_mlflow_dir, os.W_OK):
                 print(
@@ -381,104 +383,43 @@ def _train_single_model(
                 f"{configured_mlflow_dir}"
             )
 
-        mlflow.set_experiment(mlflow_experiment_name)
-
-        # Start MLflow run with GPU monitoring
         if mlflow_run_name:
             mlflow.start_run(run_name=mlflow_run_name, log_system_metrics=True)
         else:
             mlflow.start_run(log_system_metrics=True)
 
-        # Log training parameters
+        # Log training parameters via shared util
         try:
             training_params = {
                 "learning_rate": learning_rate,
                 "epochs": epochs,
                 "model_type": model_name,
                 "loss_function": loss_fn,
-                "optimizer_type": lightning_model.optimizer_config.get(
-                    "type", "adam"
+                "optimizer_type": (
+                    lightning_model.optimizer_config.get("type", "adam")
                 ),
-                "scheduler_type": lightning_model.scheduler_config.get(
-                    "type", "none"
+                "scheduler_type": (
+                    lightning_model.scheduler_config.get("type", "none")
                 ),
-                "batch_size": data_module.batch_size
-                if hasattr(data_module, "batch_size")
-                else "unknown",
+                "batch_size": (
+                    data_module.batch_size
+                    if hasattr(data_module, "batch_size")
+                    else "unknown"
+                ),
                 "enable_mixed_precision": enable_mixed_precision,
                 "enable_early_stopping": enable_early_stopping,
                 "early_stopping_patience": early_stopping_patience,
             }
-            mlflow.log_params(training_params)
+            log_training_config(training_params)
             print("Logged training parameters to MLflow")
         except Exception as e:
             print(f"Warning: Could not log training parameters to MLflow: {e}")
             traceback.print_exc()
 
-        # Log dataset metadata
+        # Log dataset metadata via shared util
         try:
-            # Create metadata summary DataFrame
-            metadata_summary = pd.DataFrame(
-                [
-                    {
-                        "dataset_id": data_module.get_dataset_id(),
-                        "git_commit": data_module.git_commit,
-                        "git_branch": data_module.git_branch,
-                        "timestamp": data_module.timestamp,
-                        "images_shape": str(data_module.images.shape),
-                        "firing_rates_shape": str(
-                            data_module.firing_rates.shape
-                        ),
-                        "labels_shape": str(data_module.labels.shape)
-                        if data_module.labels is not None
-                        else "None",
-                        "total_size_mb": data_module.total_size_mb,
-                        "dataset_type": data_module.dataset_type,
-                        "sta_pattern": data_module.sta_pattern,
-                        "n_neurons": data_module.n_neurons,
-                        "n_images": data_module.n_images,
-                    }
-                ]
-            )
-
-            # Create source information
-            source_info = (
-                f"{get_path('workspace/datasets/synthetic')}/"
-                f"{data_module.dataset_filename or 'unknown'}"
-            )
-
-            # Log the metadata dataset
-            dataset_id = data_module.get_dataset_id()
-            data_module.get_metadata_summary()
-            metadata_name = f"neural_data_{dataset_id}"
-
-            summary_dataset = mlflow.data.from_pandas(
-                metadata_summary,
-                source=source_info,
-                name=metadata_name,
-            )
-
-            mlflow.log_input(summary_dataset, context="training_data")
-
-            # Also log as parameters for backward compatibility
-            dataset_params = data_module.get_mlflow_parameters()
-            mlflow.log_params(dataset_params)
-
-            print("Logged neural dataset metadata to MLflow:")
-            print(f"  Dataset ID: {dataset_id}")
-            print(f"  Git Commit: {data_module.git_commit}")
-            print(f"  Git Branch: {data_module.git_branch}")
-            print(f"  Training Timestamp: {data_module.timestamp}")
-            print(f"  Images: {data_module.images.shape}")
-            print(f"  Firing Rates: {data_module.firing_rates.shape}")
-            labels_shape = (
-                data_module.labels.shape
-                if data_module.labels is not None
-                else "None"
-            )
-            print(f"  Labels: {labels_shape}")
-            print(f"  Total Size: {data_module.total_size_mb:.2f} MB")
-
+            log_dataset_input_and_params(data_module)
+            print("Logged neural dataset metadata to MLflow")
         except Exception as e:
             print(f"Warning: Could not log dataset metadata to MLflow: {e}")
             traceback.print_exc()
@@ -502,6 +443,7 @@ def _train_single_model(
         deterministic=False,  # set to true for reproducibility (pseudorandom)
         enable_checkpointing=enable_checkpointing,
         precision="16-mixed" if enable_mixed_precision else "32",
+        num_sanity_val_steps=0,
     )
 
     # Train the model
@@ -530,13 +472,59 @@ def _train_single_model(
                 )
 
             # Log metrics (only numeric values)
-            mlflow.log_metrics(training_info)
+            # Filter out None values for mypy compatibility
+            numeric_training_info = {
+                k: v for k, v in training_info.items() if v is not None
+            }
+            log_training_metrics(numeric_training_info)
 
             # Log checkpoint path as parameter (not metric)
             if enable_checkpointing and checkpoint_callback.best_model_path:
                 mlflow.log_param(
                     "best_checkpoint_path", checkpoint_callback.best_model_path
                 )
+
+            # Log the trained model
+            try:
+                from neurodecoders.mlflow_utils.utils import (
+                    log_model_artifacts,
+                )
+
+                # Create dataset info for model logging
+                dataset_info = {
+                    "n_images": data_module.n_images,
+                    "n_neurons": data_module.n_neurons,
+                    "image_shape": str(data_module.images.shape[1:]),
+                    "dataset_type": getattr(
+                        data_module, "dataset_type", "unknown"
+                    ),
+                    "sta_pattern": getattr(
+                        data_module, "sta_pattern", "unknown"
+                    ),
+                }
+
+                # Create training info for model logging
+                training_info = {
+                    "epochs": epochs,
+                    "learning_rate": learning_rate,
+                    "batch_size": data_module.batch_size,
+                    "final_train_loss": training_info.get("final_train_loss"),
+                    "final_val_loss": training_info.get("final_val_loss"),
+                    "final_test_loss": training_info.get("final_test_loss"),
+                }
+
+                log_model_artifacts(
+                    model=lightning_model,
+                    model_name="encoder_model",
+                    model_type="encoder",
+                    dataset_info=dataset_info,
+                    training_info=training_info,
+                )
+                print("Logged encoder model to MLflow")
+
+            except Exception as e:
+                print(f"Warning: Could not log model to MLflow: {e}")
+                traceback.print_exc()
 
         except Exception as e:
             print(f"Warning: Could not log final metrics to MLflow: {e}")
@@ -660,8 +648,10 @@ def train_encoder(
         if enable_mlflow:
             configured_mlflow_dir = get_mlflow_path()
             tracking_uri = f"file:{configured_mlflow_dir}"
-            mlflow.set_tracking_uri(tracking_uri)
-            mlflow.set_experiment(mlflow_experiment_name)
+            setup_mlflow_experiment(
+                experiment_name=mlflow_experiment_name,
+                tracking_uri=tracking_uri,
+            )
 
         # Use the data module as-is (with existing train/val splits)
         fold_model = _clone_model(model)
@@ -699,8 +689,9 @@ def train_encoder(
     if enable_mlflow:
         configured_mlflow_dir = get_mlflow_path()
         tracking_uri = f"file:{configured_mlflow_dir}"
-        mlflow.set_tracking_uri(tracking_uri)
-        mlflow.set_experiment(mlflow_experiment_name)
+        setup_mlflow_experiment(
+            experiment_name=mlflow_experiment_name, tracking_uri=tracking_uri
+        )
 
         # Start main CV run to log aggregated results
         cv_run_name = (
@@ -811,7 +802,7 @@ def train_encoder(
     if enable_mlflow:
         with mlflow.start_run(run_name=cv_run_name, nested=True):
             # Log CV parameters
-            mlflow.log_params(
+            log_training_config(
                 {
                     "cv_folds": n_folds,
                     "learning_rate": learning_rate,
@@ -821,68 +812,57 @@ def train_encoder(
                 }
             )
 
-            # Calculate and log aggregated metrics
+            # Calculate and log aggregated metrics via shared util
+            cv_results = {}
             if fold_metrics["train_losses"]:
-                avg_train_loss = np.mean(fold_metrics["train_losses"])
-                std_train_loss = np.std(fold_metrics["train_losses"])
-                mlflow.log_metric("cv_avg_train_loss", avg_train_loss)
-                mlflow.log_metric("cv_std_train_loss", std_train_loss)
-
+                cv_results["train_losses"] = fold_metrics["train_losses"]
             if fold_metrics["val_losses"]:
-                avg_val_loss = np.mean(fold_metrics["val_losses"])
-                std_val_loss = np.std(fold_metrics["val_losses"])
-                mlflow.log_metric("cv_avg_val_loss", avg_val_loss)
-                mlflow.log_metric("cv_std_val_loss", std_val_loss)
-
+                cv_results["val_losses"] = fold_metrics["val_losses"]
             if fold_metrics["test_losses"]:
-                avg_test_loss = np.mean(fold_metrics["test_losses"])
-                std_test_loss = np.std(fold_metrics["test_losses"])
-                mlflow.log_metric("cv_avg_test_loss", avg_test_loss)
-                mlflow.log_metric("cv_std_test_loss", std_test_loss)
-
+                cv_results["test_losses"] = fold_metrics["test_losses"]
             if fold_metrics["test_correlations"]:
-                avg_correlation = np.mean(fold_metrics["test_correlations"])
-                std_correlation = np.std(fold_metrics["test_correlations"])
-                mlflow.log_metric("cv_avg_test_correlation", avg_correlation)
-                mlflow.log_metric("cv_std_test_correlation", std_correlation)
+                cv_results["test_correlations"] = fold_metrics[
+                    "test_correlations"
+                ]
+
+            if cv_results:
+                log_cross_validation_metrics(cv_results)
 
             # Log individual fold results
             for fold in range(n_folds):
-                mlflow.log_metric(
-                    f"fold_{fold + 1}_train_loss",
-                    fold_metrics["train_losses"][fold]
-                    if fold < len(fold_metrics["train_losses"])
-                    else 0,
-                )
-                mlflow.log_metric(
-                    f"fold_{fold + 1}_val_loss",
-                    fold_metrics["val_losses"][fold]
-                    if fold < len(fold_metrics["val_losses"])
-                    else 0,
-                )
-                mlflow.log_metric(
-                    f"fold_{fold + 1}_test_loss",
-                    fold_metrics["test_losses"][fold]
-                    if fold < len(fold_metrics["test_losses"])
-                    else 0,
-                )
-                mlflow.log_metric(
-                    f"fold_{fold + 1}_test_correlation",
-                    fold_metrics["test_correlations"][fold]
-                    if fold < len(fold_metrics["test_correlations"])
-                    else 0,
-                )
+                if fold < len(fold_metrics["train_losses"]):
+                    mlflow.log_metric(
+                        f"fold_{fold + 1}_train_loss",
+                        fold_metrics["train_losses"][fold],
+                    )
+                if fold < len(fold_metrics["val_losses"]):
+                    mlflow.log_metric(
+                        f"fold_{fold + 1}_val_loss",
+                        fold_metrics["val_losses"][fold],
+                    )
+                if fold < len(fold_metrics["test_losses"]):
+                    mlflow.log_metric(
+                        f"fold_{fold + 1}_test_loss",
+                        fold_metrics["test_losses"][fold],
+                    )
+                if fold < len(fold_metrics["test_correlations"]):
+                    mlflow.log_metric(
+                        f"fold_{fold + 1}_test_correlation",
+                        fold_metrics["test_correlations"][fold],
+                    )
 
             print("\n=== Cross-Validation Summary ===")
             if fold_metrics["test_losses"]:
                 print(
-                    f"Average Test Loss: {avg_test_loss:.4f} ± "
-                    f"{std_test_loss:.4f}"
+                    f"Average Test Loss: "
+                    f"{np.mean(fold_metrics['test_losses']):.4f} ± "
+                    f"{np.std(fold_metrics['test_losses']):.4f}"
                 )
             if fold_metrics["test_correlations"]:
                 print(
-                    f"Average Test Correlation: {avg_correlation:.4f} ± "
-                    f"{std_correlation:.4f}"
+                    f"Average Test Correlation: "
+                    f"{np.mean(fold_metrics['test_correlations']):.4f} ± "
+                    f"{np.std(fold_metrics['test_correlations']):.4f}"
                 )
             print(f"Results logged to MLflow run: {cv_run_name}")
 

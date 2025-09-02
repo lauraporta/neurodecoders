@@ -1,31 +1,35 @@
 """
-MLflow utilities for neural encoder experiment tracking.
+Enhanced MLflow experiment tracker for neurodecoders.
 
-This module provides MLflow integration for tracking experiments,
-hyperparameters, metrics, and model artifacts during encoder training.
+This module provides a unified interface for tracking experiments,
+logging hyperparameters, metrics, and model artifacts for both
+encoder and decoder training.
 """
 
 import json
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import mlflow
 import mlflow.pytorch
-import pandas as pd
+import torch.nn as nn
 from pytorch_lightning import LightningModule
+
+from .utils import get_experiment_comparison as _utils_get_exp_cmp
 
 
 class MLflowExperimentTracker:
     """
-    MLflow experiment tracker for neural encoder training.
+    Enhanced MLflow experiment tracker for neurodecoders training.
 
     This class provides a unified interface for tracking experiments,
-    logging hyperparameters, metrics, and model artifacts.
+    logging hyperparameters, metrics, and model artifacts for both
+    encoder and decoder training.
     """
 
     def __init__(
         self,
-        experiment_name: str = "neural_encoder",
+        experiment_name: str = "neurodecoders",
         tracking_uri: Optional[str] = None,
         artifact_location: Optional[str] = None,
     ):
@@ -109,23 +113,31 @@ class MLflowExperimentTracker:
 
     def log_model(
         self,
-        model: LightningModule,
-        model_name: str = "encoder_model",
+        model: Union[LightningModule, nn.Module],
+        model_name: str = "model",
         registered_model_name: Optional[str] = None,
     ):
         """
-        Log a PyTorch Lightning model.
+        Log a PyTorch model (Lightning or regular).
 
         Args:
-            model: The Lightning module to log
+            model: The model to log (LightningModule or nn.Module)
             model_name: Name for the model artifact
             registered_model_name: Name for model registry (optional)
         """
-        mlflow.pytorch.log_model(
-            model,
-            artifact_path=model_name,
-            registered_model_name=registered_model_name,
-        )
+        if isinstance(model, LightningModule):
+            mlflow.pytorch.log_model(
+                model,
+                artifact_path=model_name,
+                registered_model_name=registered_model_name,
+            )
+        else:
+            # For regular nn.Module
+            mlflow.pytorch.log_model(
+                model,
+                artifact_path=model_name,
+                registered_model_name=registered_model_name,
+            )
 
     def log_artifacts(
         self, local_dir: str, artifact_path: Optional[str] = None
@@ -151,8 +163,7 @@ class MLflowExperimentTracker:
 
         Args:
             model_path: Path to the saved model
-            model_type: Type of model (e.g., 'simple_encoder',
-            'resnet_encoder')
+            model_type: Type of model (e.g., 'encoder', 'decoder')
             dataset_info: Information about the dataset used
             training_info: Information about the training process
         """
@@ -180,7 +191,7 @@ class MLflowExperimentTracker:
         mlflow.end_run()
 
 
-def get_experiment_comparison(experiment_name: str = "neural_encoder"):
+def get_experiment_comparison(experiment_name: str = "neurodecoders"):
     """
     Get a comparison of all runs in an experiment.
 
@@ -190,13 +201,4 @@ def get_experiment_comparison(experiment_name: str = "neural_encoder"):
     Returns:
         DataFrame with run comparisons
     """
-
-    experiment = mlflow.get_experiment_by_name(experiment_name)
-    if experiment is None:
-        return pd.DataFrame()
-
-    runs = mlflow.search_runs(
-        experiment_ids=[experiment.experiment_id], output_format="pandas"
-    )
-
-    return runs
+    return _utils_get_exp_cmp(experiment_name)
