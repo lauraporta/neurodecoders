@@ -9,12 +9,11 @@ experiments with MLflow.
 
 import os
 import sys
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 # Add the encoder directory to the path
 sys.path.append(os.path.dirname(__file__))
 
-import numpy as np
 import torch
 
 from neurodecoders.data import NeuralDataModule
@@ -31,27 +30,6 @@ from neurodecoders.mlflow_utils.argument_parsers import (
     create_encoder_parser,
     parse_encoder_args,
 )
-
-
-# Configuration validation functions
-def validate_config(config):
-    """Simple config validation - removed complex logic"""
-    pass
-
-
-# Deprecated in favor of neurodecoders.data.loading.parse_dataset_metadata
-# def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
-#     ...
-
-
-def load_synthetic_data_from_workspace(
-    config: Dict[str, Any],
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
-    """
-    Load synthetic data from workspace/datasets/synthetic/train based on
-    configuration. Delegates to shared loader.
-    """
-    return load_synthetic_split_data(config)
 
 
 # get_model remains encoder-specific
@@ -118,9 +96,7 @@ def train_with_config(config: Dict[str, Any]):
     print(f"Checkpointing: {config['enable_checkpointing']}")
 
     # Load data
-    images, firing_rates, labels, metadata = (
-        load_synthetic_data_from_workspace(config)
-    )
+    images, firing_rates, labels, metadata = load_synthetic_split_data(config)
 
     # Infer out_neurons from dataset if not specified
     if config.get("out_neurons") is None:
@@ -191,9 +167,6 @@ def main():
 
     # Use shared encoder args parser to build config
     config = parse_encoder_args(args)
-
-    # Validate config
-    validate_config(config)
 
     trainer, model, _ = train_with_config(config)
 

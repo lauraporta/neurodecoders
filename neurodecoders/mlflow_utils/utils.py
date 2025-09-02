@@ -315,55 +315,6 @@ def _calculate_linear_regression(x, y):
         return 0.0, 0.0
 
 
-def log_validation_metrics(
-    metrics: Dict[str, float],
-    step: Optional[int] = None,
-) -> None:
-    """
-    Log validation metrics to MLflow.
-
-    Args:
-        metrics: Dictionary of validation metrics to log
-        step: Step number for the metrics
-    """
-    log_training_metrics(metrics, step=step, prefix="val")
-
-
-def log_test_metrics(
-    metrics: Dict[str, float],
-) -> None:
-    """
-    Log test metrics to MLflow.
-
-    Args:
-        metrics: Dictionary of test metrics to log
-    """
-    log_training_metrics(metrics, prefix="test")
-
-
-def get_experiment_comparison(experiment_name: str = "neurodecoders"):
-    """
-    Get a comparison of all runs in an experiment.
-
-    Args:
-        experiment_name: Name of the experiment
-
-    Returns:
-        DataFrame with run comparisons
-    """
-    import pandas as pd
-
-    experiment = mlflow.get_experiment_by_name(experiment_name)
-    if experiment is None:
-        return pd.DataFrame()
-
-    runs = mlflow.search_runs(
-        experiment_ids=[experiment.experiment_id], output_format="pandas"
-    )
-
-    return runs
-
-
 def log_artifacts_from_directory(
     local_dir: str,
     artifact_path: Optional[str] = None,

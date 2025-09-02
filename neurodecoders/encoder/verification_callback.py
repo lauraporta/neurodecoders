@@ -293,12 +293,3 @@ class EncoderVerificationCallback(Callback):
             print(f"Error during verification analysis: {e}")
             traceback.print_exc()
             return None
-
-    def _log_verification_to_mlflow(
-        self, verification_results: Dict[str, Any]
-    ):
-        """Deprecated: kept for backward compatibility, no-op."""
-        try:
-            log_encoder_verification_metrics(verification_results)
-        except Exception:
-            pass

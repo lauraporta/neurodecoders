@@ -457,19 +457,17 @@ def _train_single_model(
         try:
             # Log final training info
             training_info = {
-                "final_train_loss": lightning_model.train_losses[-1]
+                "train_loss": lightning_model.train_losses[-1]
                 if lightning_model.train_losses
                 else None,
-                "final_val_loss": lightning_model.val_losses[-1]
+                "val_loss": lightning_model.val_losses[-1]
                 if lightning_model.val_losses
                 else None,
             }
 
             # Add final test loss if available
             if test_results:
-                training_info["final_test_loss"] = test_results[0].get(
-                    "test_loss"
-                )
+                training_info["test_loss"] = test_results[0].get("test_loss")
 
             # Log metrics (only numeric values)
             # Filter out None values for mypy compatibility
@@ -508,9 +506,9 @@ def _train_single_model(
                     "epochs": epochs,
                     "learning_rate": learning_rate,
                     "batch_size": data_module.batch_size,
-                    "final_train_loss": training_info.get("final_train_loss"),
-                    "final_val_loss": training_info.get("final_val_loss"),
-                    "final_test_loss": training_info.get("final_test_loss"),
+                    "train_loss": training_info.get("train_loss"),
+                    "val_loss": training_info.get("val_loss"),
+                    "test_loss": training_info.get("test_loss"),
                 }
 
                 log_model_artifacts(

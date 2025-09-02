@@ -15,8 +15,6 @@ import mlflow.pytorch
 import torch.nn as nn
 from pytorch_lightning import LightningModule
 
-from .utils import get_experiment_comparison as _utils_get_exp_cmp
-
 
 class MLflowExperimentTracker:
     """
@@ -90,27 +88,6 @@ class MLflowExperimentTracker:
             run_name=run_name, tags=tags, log_system_metrics=True
         )
 
-    def log_hyperparameters(self, hyperparams: Dict[str, Any]):
-        """
-        Log hyperparameters for the current run.
-
-        Args:
-            hyperparams: Dictionary of hyperparameters to log
-        """
-        mlflow.log_params(hyperparams)
-
-    def log_metrics(
-        self, metrics: Dict[str, float], step: Optional[int] = None
-    ):
-        """
-        Log metrics for the current run.
-
-        Args:
-            metrics: Dictionary of metrics to log
-            step: Step number for the metrics
-        """
-        mlflow.log_metrics(metrics, step=step)
-
     def log_model(
         self,
         model: Union[LightningModule, nn.Module],
@@ -138,18 +115,6 @@ class MLflowExperimentTracker:
                 artifact_path=model_name,
                 registered_model_name=registered_model_name,
             )
-
-    def log_artifacts(
-        self, local_dir: str, artifact_path: Optional[str] = None
-    ):
-        """
-        Log artifacts from a local directory.
-
-        Args:
-            local_dir: Local directory containing artifacts
-            artifact_path: Path within the run's artifact directory
-        """
-        mlflow.log_artifacts(local_dir, artifact_path)
 
     def log_model_metadata(
         self,
@@ -189,16 +154,3 @@ class MLflowExperimentTracker:
     def end_run(self):
         """End the current MLflow run."""
         mlflow.end_run()
-
-
-def get_experiment_comparison(experiment_name: str = "neurodecoders"):
-    """
-    Get a comparison of all runs in an experiment.
-
-    Args:
-        experiment_name: Name of the experiment
-
-    Returns:
-        DataFrame with run comparisons
-    """
-    return _utils_get_exp_cmp(experiment_name)

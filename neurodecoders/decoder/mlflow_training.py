@@ -19,10 +19,8 @@ from neurodecoders.mlflow_utils.argument_parsers import (
 from neurodecoders.mlflow_utils.utils import (
     log_dataset_input_and_params,
     log_model_artifacts,
-    log_test_metrics,
     log_training_config,
     log_training_metrics,
-    log_validation_metrics,
     setup_mlflow_experiment,
 )
 from neurodecoders.paths import get_path
@@ -100,7 +98,7 @@ def main(config: Dict[str, Any]):
         if test_result and isinstance(test_result, list) and test_result[0]:
             final_test_loss = test_result[0].get("test_loss")
             if final_test_loss is not None:
-                log_test_metrics({"loss": float(final_test_loss)})
+                log_training_metrics({"test_loss": float(final_test_loss)})
 
         # Save final model weights path as artifact and metadata
         model_dir = get_path("workspace/models/decoders")
@@ -121,11 +119,11 @@ def main(config: Dict[str, Any]):
         )
         final_val = float(model.val_losses[-1]) if model.val_losses else None
         if final_train is not None:
-            log_training_metrics({"final_train_loss": final_train})
+            log_training_metrics({"train_loss": final_train})
         if final_val is not None:
-            log_validation_metrics({"final_val_loss": final_val})
+            log_training_metrics({"val_loss": final_val})
         if final_test_loss is not None:
-            log_test_metrics({"final_test_loss": float(final_test_loss)})
+            log_training_metrics({"test_loss": float(final_test_loss)})
 
         log_model_artifacts(
             model=model,
@@ -142,9 +140,9 @@ def main(config: Dict[str, Any]):
                 "epochs": config["epochs"],
                 "learning_rate": config["learning_rate"],
                 "batch_size": config["batch_size"],
-                "final_train_loss": final_train,
-                "final_val_loss": final_val,
-                "final_test_loss": float(final_test_loss)
+                "train_loss": final_train,
+                "val_loss": final_val,
+                "test_loss": float(final_test_loss)
                 if final_test_loss is not None
                 else None,
             },
