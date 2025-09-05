@@ -8,6 +8,7 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 from pytorch_lightning.callbacks import (
+    Callback,
     EarlyStopping,
     LearningRateMonitor,
     ModelCheckpoint,
@@ -19,6 +20,50 @@ from neurodecoders.decoder.models import SimpleDecoder
 # MLflow utilities are no longer needed in this module
 # They are handled by the calling script (mlflow_training.py)
 from neurodecoders.paths import get_path
+
+
+class MLflowMetricsCallback(Callback):
+    """Custom callback to log metrics to MLflow during training."""
+
+    def __init__(self):
+        self.current_epoch = 0
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Log training metrics at the end of each epoch."""
+        try:
+            import mlflow
+
+            # Get the current epoch
+            self.current_epoch = trainer.current_epoch
+
+            # Get training loss from callback metrics
+            train_loss = trainer.callback_metrics.get("train_loss")
+            if train_loss is not None:
+                if isinstance(train_loss, torch.Tensor):
+                    train_loss = train_loss.item()
+                mlflow.log_metric(
+                    "train_loss", float(train_loss), step=self.current_epoch
+                )
+
+        except Exception as e:
+            print(f"Warning: Could not log training metrics to MLflow: {e}")
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        """Log validation metrics at the end of each epoch."""
+        try:
+            import mlflow
+
+            # Get validation loss from callback metrics
+            val_loss = trainer.callback_metrics.get("val_loss")
+            if val_loss is not None:
+                if isinstance(val_loss, torch.Tensor):
+                    val_loss = val_loss.item()
+                mlflow.log_metric(
+                    "val_loss", float(val_loss), step=self.current_epoch
+                )
+
+        except Exception as e:
+            print(f"Warning: Could not log validation metrics to MLflow: {e}")
 
 
 class DecoderLightningModule(pl.LightningModule):
@@ -148,7 +193,8 @@ def train_decoder(
     )
 
     callbacks: List[pl.Callback] = [
-        LearningRateMonitor(logging_interval="epoch")
+        LearningRateMonitor(logging_interval="epoch"),
+        MLflowMetricsCallback(),
     ]
     if enable_early_stopping:
         callbacks.append(
