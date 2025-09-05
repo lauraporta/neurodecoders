@@ -6,21 +6,43 @@ Start from transformations from images to firing rates and viceversa.
 
 ### Notation key
 Original natural images, as from a dataset like cifar: $I$
-It is a matrix of shape (width, height, channels).
+It is a matrix of shape (n_images, $w_i$, $h_i$).
+The images are grayscale, so only one channel, and their pixel values are normalized between -1 and 1.
 
-Real firing rates: $r$
-As calculated from a recording session.
+Real firing rates: $R$
+As calculated from a recording session. It's a matrix of shape (n_neurons, n_timepoints). Every timepoint corresponds to the presentation of an image frame.
 
-Synthetic firing rates: $r_s$
+Synthetic firing rates: $R_s$
 
-Preferred response filter of a neuron: $g$
-It can be a gabor for instance, 2d matrix (width, height).
+Preferred response filter of a neuron: $G$
+It can be a Gabor for instance, 2d squared matrix of shape ($g$ x $g$).
+They can have values between -1 and 1.
 
 ## Steps
 
 ### Synthetic dataset generation ✅
 From images to firing rates.
 
+First, we select a patch of size ($g$ x $g$) from the image $I$. The patch is selected randomly for each neuron, and it is defined by its top-left corner coordinates $(x_j, y_j)$ for neuron $j$.
+
+Patches and filters are then flattened to vectors of size $g * g$.
+
+The dot product between the patch and the filter is computed, resulting in a scalar value $d_j$ for neuron $j$. This value is bound between $-g^2$ and $g^2$. E.g. for a 11x11 filter, the dot product is between -121 and 121.
+
+Then a non-linearity (ELU) is applied to the dot product, and the result is scaled to the maximum firing rate, set to 100Hz by default to simulate realistic firing rates.
+
+Finally, Gaussian noise is added to the firing rate, with a configurable noise level.
+
+Valuels lower than 0 are set to 0.
+
+Here a summary of the equations:
+$$
+d_j = I_{x_j:x_j+g, y_j:y_j+g} \cdot G_j
+$$
+
+$$
+R_{s,j} = \frac{\text{ELU}(d_j)}{\max(\text{ELU}(d_j))} \times \text{max\_firing\_rate} + \mathcal{N}(0, \sigma^2)
+$$
 
 ### Train an encoder ✅
 From images to firing rates.

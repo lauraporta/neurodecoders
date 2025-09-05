@@ -26,8 +26,8 @@ Generate synthetic neural responses with configurable parameters:
 
 ```bash
 python neurodecoders/synthetic/create_simulated_neural_responses.py \
-    --n_images 100 \
-    --n_neurons 50 \
+    --n_images 10000 \
+    --n_neurons 100 \
     --dataset_type cifar10 \
     --sta_type perlin_noise_patterns,11,11
 ```
