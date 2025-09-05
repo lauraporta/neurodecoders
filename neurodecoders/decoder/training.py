@@ -15,11 +15,9 @@ from pytorch_lightning.callbacks import (
 
 from neurodecoders.data import NeuralDataModule
 from neurodecoders.decoder.models import SimpleDecoder
-from neurodecoders.mlflow_utils.utils import (
-    log_training_config,
-    log_training_metrics,
-    setup_mlflow_experiment,
-)
+
+# MLflow utilities are no longer needed in this module
+# They are handled by the calling script (mlflow_training.py)
 from neurodecoders.paths import get_path
 
 
@@ -86,9 +84,6 @@ class DecoderLightningModule(pl.LightningModule):
             loss = loss.item()
         if loss is not None:
             self.train_losses.append(loss)
-            log_training_metrics(
-                {"train_loss": float(loss)}, step=self.current_epoch
-            )
 
     def on_validation_epoch_end(self):
         loss = self.trainer.callback_metrics.get("val_loss")
@@ -96,9 +91,6 @@ class DecoderLightningModule(pl.LightningModule):
             loss = loss.item()
         if loss is not None:
             self.val_losses.append(loss)
-            log_training_metrics(
-                {"val_loss": float(loss)}, step=self.current_epoch
-            )
 
     def configure_optimizers(self):
         if self.optimizer_type == "adam":
@@ -177,20 +169,8 @@ def train_decoder(
             )
         )
 
-    setup_mlflow_experiment(experiment_name=mlflow_experiment_name)
-    if mlflow_run_name:
-        import mlflow
-
-        mlflow.start_run(run_name=mlflow_run_name, log_system_metrics=True)
-        log_training_config(
-            {
-                "epochs": epochs,
-                "learning_rate": learning_rate,
-                "batch_size": batch_size,
-                "optimizer_type": optimizer,
-                "loss_function": loss_fn,
-            }
-        )
+    # MLflow setup is handled by the calling script (mlflow_training.py)
+    # No need to set up experiments or start runs here
 
     trainer = pl.Trainer(
         max_epochs=epochs,
