@@ -27,6 +27,8 @@ class MLflowMetricsCallback(Callback):
 
     def __init__(self):
         self.current_epoch = 0
+        self.logged_train_epochs = set()
+        self.logged_val_epochs = set()
 
     def on_train_epoch_end(self, trainer, pl_module):
         """Log training metrics at the end of each epoch."""
@@ -34,7 +36,17 @@ class MLflowMetricsCallback(Callback):
             import mlflow
 
             # Get the current epoch
-            self.current_epoch = trainer.current_epoch
+            current_epoch = trainer.current_epoch
+
+            # Only log during training phase, not during test
+            if trainer.state.fn != "fit":
+                return
+
+            # Only log once per epoch
+            if current_epoch in self.logged_train_epochs:
+                return
+
+            self.logged_train_epochs.add(current_epoch)
 
             # Get training loss from callback metrics
             train_loss = trainer.callback_metrics.get("train_loss")
@@ -42,7 +54,7 @@ class MLflowMetricsCallback(Callback):
                 if isinstance(train_loss, torch.Tensor):
                     train_loss = train_loss.item()
                 mlflow.log_metric(
-                    "train_loss", float(train_loss), step=self.current_epoch
+                    "train_loss", float(train_loss), step=current_epoch
                 )
 
         except Exception as e:
@@ -53,13 +65,26 @@ class MLflowMetricsCallback(Callback):
         try:
             import mlflow
 
+            # Get the current epoch
+            current_epoch = trainer.current_epoch
+
+            # Only log during training phase, not during test
+            if trainer.state.fn != "fit":
+                return
+
+            # Only log once per epoch
+            if current_epoch in self.logged_val_epochs:
+                return
+
+            self.logged_val_epochs.add(current_epoch)
+
             # Get validation loss from callback metrics
             val_loss = trainer.callback_metrics.get("val_loss")
             if val_loss is not None:
                 if isinstance(val_loss, torch.Tensor):
                     val_loss = val_loss.item()
                 mlflow.log_metric(
-                    "val_loss", float(val_loss), step=self.current_epoch
+                    "val_loss", float(val_loss), step=current_epoch
                 )
 
         except Exception as e:
