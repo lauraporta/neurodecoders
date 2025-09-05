@@ -78,7 +78,7 @@ class SimulateResponse:
         return suggested_batch_size
 
     def simulate_neural_responses_vectorized(
-        self, noise_level=0.1, batch_size=100
+        self, noise_level=1, batch_size=100
     ):
         """
         Memory-efficient version of neural response simulation using batch
@@ -86,30 +86,13 @@ class SimulateResponse:
         """
         print("Preparing data for batch computation...")
 
-        # Generate neuron-specific parameters with physiological constraints
-        # Baseline rates: mostly very low (0.1-2 Hz), some higher
-        baselines = (
-            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.01)
-            * 0.01
-        )
-
-        # Thresholds: log-normal distribution for more realistic,
-        # skewed thresholds
-        thresholds = (
-            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3)
-            * 0.3
-        )
-
-        # Maximum firing rates: respecting physiological limits
-        # Most neurons max out at 100-200 Hz, with some exceptions
-        max_rates = (
-            torch.exp(torch.randn(self.n_neurons, device=self.device) * 0.3)
-            * 100
-        )
+        # max firing rate is 100Hz with no variability
+        max_firing_rate = 100
 
         # Pre-allocate output tensors on CPU (will be moved to GPU in batches)
         firing_rates = np.zeros((self.n_images, self.n_neurons))
         dot_products = np.zeros((self.n_images, self.n_neurons))
+        noises = np.zeros((self.n_images, self.n_neurons))
 
         # Process images in batches to avoid memory overflow
         n_batches = (self.n_images + batch_size - 1) // batch_size
@@ -149,11 +132,7 @@ class SimulateResponse:
                         0, y : y + self.rf_size, x : x + self.rf_size
                     ]
 
-            # Reshape patches and STAs for batch dot product computation
-            # patches: (batch_size, n_neurons, 1, rf_size, rf_size)
-            # -> (batch_size, n_neurons, rf_size^2)
             patches_flat = patches.view(batch_size_actual, self.n_neurons, -1)
-            # stas: (n_neurons, rf_size, rf_size) -> (n_neurons, rf_size^2)
             stas_flat = self.stas_tensor.view(self.n_neurons, -1)
 
             print(
@@ -161,34 +140,21 @@ class SimulateResponse:
                 f"{n_batches}..."
             )
             for i in range(batch_size_actual):
-                # Compute all dot products for this image at once
-                # patches_flat[i]: (n_neurons, rf_size^2)
-                # stas_flat: (n_neurons, rf_size^2)
-                # dot: (n_neurons,)
-                dot = torch.mean(patches_flat[i] * stas_flat, dim=1)
+                dot = torch.sum(patches_flat[i] * stas_flat, dim=1)
                 dot_products[start_idx + i] = dot.cpu().numpy()
+                response = F.elu(dot)
 
-                # Use a steeper non-linearity for more sparsity
-                response = F.elu(dot - thresholds) + 1
-                response = max_rates * response
+                #  normalise to max firing rate
+                response = response / (response.max() + 1e-6) * max_firing_rate
 
-                # Add noise if specified
-                if noise_level > 0:
-                    noise_factor = 1.0 + 0.2 * noise_level * torch.rand(
-                        self.n_neurons, device=self.device
-                    )
-                    response = response * noise_factor
+                gaussian_noise = torch.randn(
+                    self.n_neurons, device=self.device
+                )
+                noise = gaussian_noise * noise_level
+                noises[start_idx + i] = noise.cpu().numpy()
+                response += noise
 
-                # Add baseline firing rate
-                response = response + baselines
-
-                # Final firing rate with physiological limits
-                firing_rate = torch.clamp(
-                    response, min=0.0
-                )  # First clamp to 0
-                firing_rate = torch.minimum(
-                    firing_rate, max_rates
-                )  # Then clamp to max_rates
+                firing_rate = torch.clamp(response, min=0.0)
 
                 firing_rates[start_idx + i] = firing_rate.cpu().numpy()
 
@@ -196,4 +162,4 @@ class SimulateResponse:
             del patches, patches_flat
             torch.cuda.empty_cache()
 
-        return firing_rates, dot_products, np.zeros_like(firing_rates)
+        return firing_rates, dot_products, noises
