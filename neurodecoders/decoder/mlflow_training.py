@@ -119,11 +119,17 @@ def main(config: Dict[str, Any]):
         )
         final_val = float(model.val_losses[-1]) if model.val_losses else None
         if final_train is not None:
-            log_training_metrics({"train_loss": final_train})
+            log_training_metrics(
+                {"train_loss": final_train}, step=config["epochs"]
+            )
         if final_val is not None:
-            log_training_metrics({"val_loss": final_val})
+            log_training_metrics(
+                {"val_loss": final_val}, step=config["epochs"]
+            )
         if final_test_loss is not None:
-            log_training_metrics({"test_loss": float(final_test_loss)})
+            log_training_metrics(
+                {"test_loss": float(final_test_loss)}, step=config["epochs"]
+            )
 
         log_model_artifacts(
             model=model,

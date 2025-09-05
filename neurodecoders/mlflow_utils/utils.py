@@ -132,6 +132,12 @@ def log_training_metrics(
         step: Step number for the metrics
         prefix: Prefix to add to metric names
     """
+    if step is None:
+        print(
+            "Warning: log_training_metrics called without step parameter. "
+            "This will log at step 0. Consider providing a step number."
+        )
+
     if prefix:
         prefixed_metrics = {f"{prefix}_{k}": v for k, v in metrics.items()}
     else:

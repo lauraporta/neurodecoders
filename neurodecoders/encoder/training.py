@@ -43,12 +43,17 @@ class MLflowHistoryCallback(Callback):
     def __init__(self):
         super().__init__()
         self.current_epoch = 0
+        self.logged_epochs = set()  # Track which epochs we've already logged
 
     def on_train_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ):
         """Log training metrics to MLflow at the end of each training epoch."""
         self.current_epoch = trainer.current_epoch
+
+        # Skip if we've already logged this epoch
+        if self.current_epoch in self.logged_epochs:
+            return
 
         # Get training loss from logged metrics
         if trainer.logged_metrics:
@@ -65,6 +70,9 @@ class MLflowHistoryCallback(Callback):
                 if not hasattr(pl_module, "train_losses"):
                     pl_module.train_losses = []
                 pl_module.train_losses.append(train_loss)
+
+        # Mark this epoch as logged
+        self.logged_epochs.add(self.current_epoch)
 
         # Log learning rate if available
         if hasattr(pl_module, "optimizers") and pl_module.optimizers():
@@ -84,6 +92,10 @@ class MLflowHistoryCallback(Callback):
         """
         self.current_epoch = trainer.current_epoch
 
+        # Skip if we've already logged this epoch
+        if self.current_epoch in self.logged_epochs:
+            return
+
         # Get validation loss from logged metrics
         if trainer.logged_metrics:
             val_loss = trainer.logged_metrics.get("val_loss")
@@ -98,6 +110,9 @@ class MLflowHistoryCallback(Callback):
                 if not hasattr(pl_module, "val_losses"):
                     pl_module.val_losses = []
                 pl_module.val_losses.append(val_loss)
+
+        # Mark this epoch as logged
+        self.logged_epochs.add(self.current_epoch)
 
 
 class EncoderLightningModule(pl.LightningModule):
@@ -455,26 +470,14 @@ def _train_single_model(
     # Log final metrics to MLflow if enabled
     if enable_mlflow:
         try:
-            # Log final training info
-            training_info = {
-                "train_loss": lightning_model.train_losses[-1]
-                if lightning_model.train_losses
-                else None,
-                "val_loss": lightning_model.val_losses[-1]
-                if lightning_model.val_losses
-                else None,
-            }
-
-            # Add final test loss if available
+            # Log final test loss if available (train_loss and val_loss
+            # are already logged by MLflowHistoryCallback)
             if test_results:
-                training_info["test_loss"] = test_results[0].get("test_loss")
-
-            # Log metrics (only numeric values)
-            # Filter out None values for mypy compatibility
-            numeric_training_info = {
-                k: v for k, v in training_info.items() if v is not None
-            }
-            log_training_metrics(numeric_training_info)
+                test_loss = test_results[0].get("test_loss")
+                if test_loss is not None:
+                    log_training_metrics(
+                        {"test_loss": float(test_loss)}, step=epochs
+                    )
 
             # Log checkpoint path as parameter (not metric)
             if enable_checkpointing and checkpoint_callback.best_model_path:
@@ -502,13 +505,19 @@ def _train_single_model(
                 }
 
                 # Create training info for model logging
-                training_info = {
+                model_training_info = {
                     "epochs": epochs,
                     "learning_rate": learning_rate,
                     "batch_size": data_module.batch_size,
-                    "train_loss": training_info.get("train_loss"),
-                    "val_loss": training_info.get("val_loss"),
-                    "test_loss": training_info.get("test_loss"),
+                    "train_loss": lightning_model.train_losses[-1]
+                    if lightning_model.train_losses
+                    else None,
+                    "val_loss": lightning_model.val_losses[-1]
+                    if lightning_model.val_losses
+                    else None,
+                    "test_loss": test_results[0].get("test_loss")
+                    if test_results
+                    else None,
                 }
 
                 log_model_artifacts(
@@ -516,7 +525,7 @@ def _train_single_model(
                     model_name="encoder_model",
                     model_type="encoder",
                     dataset_info=dataset_info,
-                    training_info=training_info,
+                    training_info=model_training_info,
                 )
                 print("Logged encoder model to MLflow")
 
