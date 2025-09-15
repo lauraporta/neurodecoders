@@ -1,8 +1,13 @@
 # Step 1 notes
 Overal goal: improve video reconstruction from naural data (calcium imaging, ephys).
-
-# Synthetic dataset playground
 Start from transformations from images to firing rates and viceversa.
+
+1. train a neural encoder (image to neurons)
+2. use that to train a decoder in 1 of two ways: 
+    - **in autoencoder mode**: an image to image autoencoder using the pretrained neural encoder
+    - **in neural prediction mode**: neural data goes through decoder to produce an image, the image is then put through the neural encoder and the loss is the orignal neural data and the output activity of the decoder + encoder.
+
+## Steps
 
 ### Notation key
 Original natural images, as from a dataset like cifar: $I$
@@ -18,7 +23,6 @@ Preferred response filter of a neuron: $G$
 It can be a Gabor for instance, 2d squared matrix of shape ($g$ x $g$).
 They can have values between -1 and 1.
 
-## Steps
 
 ### Synthetic dataset generation ✅
 From images to firing rates.
@@ -41,11 +45,13 @@ d_j = I_{x_j:x_j+g, y_j:y_j+g} \cdot G_j
 $$
 
 $$
-R_{s,j} = \frac{\text{ELU}(d_j)}{\max(\text{ELU}(d_j))} \times \text{max\_firing\_rate} + \mathcal{N}(0, \sigma^2)
+R_{s_j} = \frac{\text{ELU}(d_j)}{\max(\text{ELU}(d_j))} \times \text{max\_firing\_rate} + \mathcal{N}(0, \sigma^2)
 $$
 
 ### Train an encoder ✅
 From images to firing rates.
+
+The encoder is a CNN that takes images as input and outputs predicted firing rates for each neuron. We can call it $E(I) = \hat{R_s}$.
 
 ### Train a decoder
 1. From synthetic firing rates to images.
