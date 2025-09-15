@@ -5,7 +5,7 @@
 #SBATCH --mem=8G
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
-#SBATCH -t 00:10:00
+#SBATCH -t 00:01:00
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -29,13 +29,13 @@ export CUDA_VISIBLE_DEVICES=0
 echo "[INFO] Launching training with user-specified command"
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
   --model-type resnet \
-  --epochs 3 \
+  --epochs 25 \
   --dataset-type cifar10 \
   --sta-type periodic_patterns,70,70 \
   --n-neurons 100 \
-  --n-images 10000 \
+  --n-images 8000 \
   --cv-folds 1 \
-  --experiment-name with_history \
-  --run-name test1
+  --experiment-name test_after_refactor \
+  --run-name commit_$(git rev-parse --short HEAD)_test_run \
 
 echo "[INFO] End time: $(date)"

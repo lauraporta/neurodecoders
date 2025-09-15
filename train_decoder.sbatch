@@ -5,8 +5,8 @@
 #SBATCH --mem=32G
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
-#SBATCH -t 00-06:00 # time (D-HH:MM)
-#SBATCH --array=0-2%3
+#SBATCH -t 00-01:00 # time (D-HH:MM)
+#SBATCH --array=0-7
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/decoder_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/decoder_%j.err.txt
 
@@ -36,26 +36,31 @@ LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
 MODEL_TYPES=("enhanced")
 OPTIMIZERS=("adam")
-LOSS_FUNCTIONS=("mse")
-SCHEDULERS=("none")
-DATASETS=("perlin_noise_patterns,70,70" "gabor,70,70" "periodic_patterns,70,70")
+LOSS_FUNCTIONS=("mse" "l1")
+SCHEDULERS=("none" "plateau")
+DATASETS=("gabor,100,100" "periodic_patterns,100,100")
 
 # Calculate indices from array task ID
-# For this simple case, we're just sweeping over datasets
-DATASET_IDX=$SLURM_ARRAY_TASK_ID
+# We have 2 loss functions × 2 schedulers × 2 datasets = 8 combinations
+# Array task IDs: 0, 1, 2, 3, 4, 5, 6, 7
+LOSS_IDX=$((SLURM_ARRAY_TASK_ID % 2))           # 0 or 1
+SCHED_IDX=$(((SLURM_ARRAY_TASK_ID / 2) % 2))    # 0 or 1  
+DATASET_IDX=$((SLURM_ARRAY_TASK_ID / 4))        # 0 or 1
 
 # Extract values
 MODEL_TYPE=${MODEL_TYPES[0]}
 LEARNING_RATE=${LEARNING_RATES[0]}
 BATCH_SIZE=${BATCH_SIZES[0]}
 OPTIMIZER=${OPTIMIZERS[0]}
-LOSS_FUNCTION=${LOSS_FUNCTIONS[0]}
-SCHEDULER=${SCHEDULERS[0]}
+LOSS_FUNCTION=${LOSS_FUNCTIONS[$LOSS_IDX]}
+SCHEDULER=${SCHEDULERS[$SCHED_IDX]}
 DATASET=${DATASETS[$DATASET_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="dataset=${DATASET}_model=${MODEL_TYPE}_lr=${LEARNING_RATE}_loss=${LOSS_FUNCTION}"
-EXPERIMENT_NAME="decoder_dataset_sweep"
+# Extract dataset type from the dataset string (e.g., "gabor,100,100" -> "gabor")
+DATASET_TYPE=$(echo "$DATASET" | cut -d',' -f1)
+RUN_NAME="simplified_simulated_dataset_${DATASET_TYPE}_loss=${LOSS_FUNCTION}_sched=${SCHEDULER}"
+EXPERIMENT_NAME="troubleshooting_overfitting2"
 
 echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, loss=$LOSS_FUNCTION, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET"
 
