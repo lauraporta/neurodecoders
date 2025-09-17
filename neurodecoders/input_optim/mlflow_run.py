@@ -31,6 +31,107 @@ from neurodecoders.paths import get_path
 DEFAULT_MODEL_ID = "m-553e4f38555b44a6a026362915f9431c"
 
 
+def _infer_target_rates_from_model(
+    model_id: str, sample_index: int
+) -> np.ndarray:
+    """Infer a target firing-rate vector from the model's training dataset.
+
+    Uses MLflow's model registry to locate the model's originating run,
+    reads dataset parameters logged during training (including
+    dataset_filename), loads the synthetic train .npz, and returns the
+    firing-rate vector at the requested sample index.
+    """
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient()
+
+    params = None
+    # First try model registry
+    try:
+        versions = client.search_model_versions(f"name='{model_id}'")
+    except Exception:
+        versions = []
+    if versions:
+        preferred = None
+        for mv in versions:
+            if getattr(mv, "current_stage", "") == "Production":
+                preferred = mv
+                break
+        if preferred is None:
+            preferred = sorted(
+                versions,
+                key=lambda v: int(getattr(v, "version", 0)),
+                reverse=True,
+            )[0]
+        run_id = preferred.run_id
+        run = client.get_run(run_id)
+        params = run.data.params
+    else:
+        # Fallback: latest run with dataset params using fluent API
+        try:
+            df = mlflow.search_runs(
+                order_by=["attributes.start_time DESC"], max_results=200
+            )
+        except Exception:
+            df = None
+        if df is not None and not df.empty:
+            for _, row in df.iterrows():
+                ds = row.get("params.dataset_dataset_filename")
+                if isinstance(ds, str) and ds:
+                    params = {
+                        "dataset_dataset_filename": ds,
+                    }
+                    break
+        if params is None:
+            # Fallback: pick the most recent synthetic train dataset file
+            train_dir = os.path.join(
+                get_path("workspace/datasets/synthetic"), "train"
+            )
+            if not os.path.exists(train_dir):
+                raise FileNotFoundError(
+                    f"No train dir found at {train_dir} and no MLflow "
+                    "runs with dataset params."
+                )
+            cand = [f for f in os.listdir(train_dir) if f.endswith(".npz")]
+            if not cand:
+                raise FileNotFoundError(
+                    "No .npz datasets in synthetic/train and no MLflow "
+                    "runs with dataset params."
+                )
+            latest = max(
+                cand,
+                key=lambda fn: os.path.getmtime(os.path.join(train_dir, fn)),
+            )
+            params = {"dataset_dataset_filename": latest}
+
+    # Dataset parameters were logged with 'dataset_*' keys
+    ds_filename = params.get("dataset_dataset_filename")
+    if not ds_filename:
+        raise RuntimeError(
+            "dataset_filename not found in run params. Cannot infer dataset."
+        )
+
+    ds_path = os.path.join(
+        get_path("workspace/datasets/synthetic"), "train", ds_filename
+    )
+    if not os.path.exists(ds_path):
+        raise FileNotFoundError(
+            f"Dataset file not found on this machine: {ds_path}. "
+            "Sync datasets or provide a mirrored path."
+        )
+
+    _, firing = load_npz_dataset(ds_path)
+    if sample_index < 0 or sample_index >= firing.shape[0]:
+        raise IndexError(
+            f"sample_index {sample_index} out of range "
+            f"(0..{firing.shape[0] - 1})"
+        )
+    vec = firing[sample_index]
+    if vec.ndim != 1:
+        raise ValueError("Loaded firing rates sample is not a 1D vector")
+    return vec.astype(np.float32)
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Input optimization with MLflow tracking",
@@ -148,6 +249,10 @@ def main(args: argparse.Namespace) -> None:
         out_img = os.path.join(out_dir, "reconstruction.png")
         optim_runner.save_image(out_img)
         log_single_artifact(out_img, artifact_path="images")
+        try:
+            art_uri = mlflow.get_artifact_uri("images/reconstruction.png")
+        except Exception:
+            art_uri = None
 
         # Log final metrics
         if metrics:
@@ -159,75 +264,11 @@ def main(args: argparse.Namespace) -> None:
         log_single_artifact(out_npy, artifact_path="arrays")
 
         print("Optimization complete. Artifacts logged to MLflow.")
+        print(f"Saved image: {out_img}")
+        if art_uri:
+            print(f"MLflow artifact: {art_uri}")
 
 
 if __name__ == "__main__":
     parser = build_parser()
     main(parser.parse_args())
-
-
-def _infer_target_rates_from_model(
-    model_id: str, sample_index: int
-) -> np.ndarray:
-    """Infer a target firing-rate vector from the model's training dataset.
-
-    Uses MLflow's model registry to locate the model's originating run,
-    reads dataset parameters logged during training (including
-    dataset_filename), loads the synthetic train .npz, and returns the
-    firing-rate vector at the requested sample index.
-    """
-    from mlflow.tracking import MlflowClient
-
-    client = MlflowClient()
-
-    # Resolve a model version for this registered model name
-    versions = client.search_model_versions(f"name='{model_id}'")
-    if not versions:
-        raise RuntimeError(
-            "Could not resolve model in MLflow registry. "
-            "Ensure model-id is a registered model name."
-        )
-
-    # Prefer Production, else latest numerically
-    preferred = None
-    for mv in versions:
-        if getattr(mv, "current_stage", "") == "Production":
-            preferred = mv
-            break
-    if preferred is None:
-        preferred = sorted(
-            versions,
-            key=lambda v: int(getattr(v, "version", 0)),
-            reverse=True,
-        )[0]
-
-    run_id = preferred.run_id
-    run = client.get_run(run_id)
-    params = run.data.params
-
-    # Dataset parameters were logged with 'dataset_*' keys
-    ds_filename = params.get("dataset_dataset_filename")
-    if not ds_filename:
-        raise RuntimeError(
-            "dataset_filename not found in run params. Cannot infer dataset."
-        )
-
-    ds_path = os.path.join(
-        get_path("workspace/datasets/synthetic"), "train", ds_filename
-    )
-    if not os.path.exists(ds_path):
-        raise FileNotFoundError(
-            f"Dataset file not found on this machine: {ds_path}. "
-            "Sync datasets or provide --target-rates-npy."
-        )
-
-    _, firing = load_npz_dataset(ds_path)
-    if sample_index < 0 or sample_index >= firing.shape[0]:
-        raise IndexError(
-            f"sample_index {sample_index} out of range "
-            f"(0..{firing.shape[0] - 1})"
-        )
-    vec = firing[sample_index]
-    if vec.ndim != 1:
-        raise ValueError("Loaded firing rates sample is not a 1D vector")
-    return vec.astype(np.float32)

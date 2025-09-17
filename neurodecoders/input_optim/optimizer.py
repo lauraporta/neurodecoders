@@ -8,6 +8,7 @@ Poisson loss. The encoder is used in eval mode.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 
@@ -17,6 +18,10 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision.utils import save_image
+
+# Local imports
+from neurodecoders.extract_mei.mei import load_encoder_model
+from neurodecoders.paths import get_path
 
 
 def _to_device() -> torch.device:
@@ -86,7 +91,6 @@ class ImageOptimizer:
             torch.manual_seed(self.cfg.seed)
             np.random.seed(self.cfg.seed)
 
-        # Initialize optimizable image
         init = (
             torch.randn(
                 1, self.cfg.channels, self.cfg.image_size, self.cfg.image_size
@@ -106,7 +110,6 @@ class ImageOptimizer:
         opt.zero_grad(set_to_none=True)
 
         pred = self.encoder(self.image)
-        # Ensure shape compatibility (B, N)
         if pred.ndim == 2 and pred.shape[0] == 1:
             pred = pred[0]
         elif pred.ndim != 1:
@@ -165,7 +168,7 @@ class ImageOptimizer:
 def load_encoder_from_mlflow(model_id: str) -> nn.Module:
     """Load a PyTorch encoder from MLflow given a model identifier.
 
-    Tries common URIs. The caller should ensure MLflow tracking URI is set.
+    Tries common registry URIs; falls back to latest run's encoder_model.
     """
     tried = []
     uris = [
@@ -178,8 +181,49 @@ def load_encoder_from_mlflow(model_id: str) -> nn.Module:
         try:
             model = mlflow.pytorch.load_model(uri)
             return model
-        except Exception as e:  # noqa: F841
+        except Exception:
             tried.append(uri)
+
+    # Fallback: attempt to load the most recent run's encoder_model artifact
+    try:
+        from mlflow.tracking import MlflowClient
+
+        client = MlflowClient()
+        exps = client.list_experiments()
+        exp_ids = [e.experiment_id for e in exps]
+        if exp_ids:
+            runs = client.search_runs(
+                experiment_ids=exp_ids,
+                order_by=["attributes.start_time DESC"],
+                max_results=50,
+            )
+            for r in runs:
+                run_id = r.info.run_id
+                for art_name in ("encoder_model", "model"):
+                    try:
+                        uri = f"runs:/{run_id}/{art_name}"
+                        model = mlflow.pytorch.load_model(uri)
+                        return model
+                    except Exception:
+                        continue
+    except Exception:
+        pass
+
+    # Local fallback: load most recent encoder weights from workspace
+    try:
+        models_dir = get_path("workspace/models/encoders")
+        if os.path.exists(models_dir):
+            cand = [
+                os.path.join(models_dir, f)
+                for f in os.listdir(models_dir)
+                if f.endswith(".pth") or f.endswith(".ckpt")
+            ]
+            if cand:
+                latest = max(cand, key=os.path.getmtime)
+                device = _to_device()
+                return load_encoder_model(latest, device)
+    except Exception:
+        pass
 
     raise RuntimeError(
         "Could not load encoder from MLflow. Tried URIs: " + ", ".join(tried)
