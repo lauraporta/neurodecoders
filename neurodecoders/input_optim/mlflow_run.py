@@ -16,6 +16,7 @@ from datetime import datetime
 import mlflow
 import numpy as np
 
+from neurodecoders.data.loading import load_npz_dataset
 from neurodecoders.input_optim.optimizer import (
     ImageOptimizer,
     OptimConfig,
@@ -54,8 +55,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--target-rates-npy",
-        required=True,
-        help="Path to a NumPy .npy file with target rates, shape (N,)",
+        help=(
+            "Path to a NumPy .npy file with target rates, shape (N,). "
+            "If omitted, will try to infer from the MLflow model's "
+            "training dataset metadata."
+        ),
+    )
+    p.add_argument(
+        "--sample-index",
+        type=int,
+        default=0,
+        help="Index of sample to use when inferring target rates",
     )
     p.add_argument("--steps", type=int, default=2000, help="Steps to run")
     p.add_argument("--lr", type=float, default=0.05, help="Learning rate")
@@ -109,12 +119,20 @@ def main(args: argparse.Namespace) -> None:
             }
         )
 
-        # Load target rates
-        if not os.path.exists(args.target_rates_npy):
-            raise FileNotFoundError(args.target_rates_npy)
-        target = np.load(args.target_rates_npy)
-        if target.ndim != 1:
-            raise ValueError("target_rates must be 1D (N,)")
+        # Load target rates: from file or infer from MLflow model's dataset
+        target: np.ndarray
+        if args.target_rates_npy:
+            if not os.path.exists(args.target_rates_npy):
+                raise FileNotFoundError(args.target_rates_npy)
+            target = np.load(args.target_rates_npy)
+            if target.ndim != 1:
+                raise ValueError("target_rates must be 1D (N,)")
+            mlflow.log_param("target_source", "file")
+        else:
+            target = _infer_target_rates_from_model(
+                model_id=args.model_id, sample_index=args.sample_index
+            )
+            mlflow.log_param("target_source", "mlflow_dataset")
         mlflow.log_param("n_neurons", int(target.shape[0]))
 
         # Load encoder
@@ -163,3 +181,70 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = build_parser()
     main(parser.parse_args())
+
+
+def _infer_target_rates_from_model(
+    model_id: str, sample_index: int
+) -> np.ndarray:
+    """Infer a target firing-rate vector from the model's training dataset.
+
+    Uses MLflow's model registry to locate the model's originating run,
+    reads dataset parameters logged during training (including
+    dataset_filename), loads the synthetic train .npz, and returns the
+    firing-rate vector at the requested sample index.
+    """
+    from mlflow.tracking import MlflowClient
+
+    client = MlflowClient()
+
+    # Resolve a model version for this registered model name
+    versions = client.search_model_versions(f"name='{model_id}'")
+    if not versions:
+        raise RuntimeError(
+            "Could not resolve model in MLflow registry. "
+            "Ensure model-id is a registered model name."
+        )
+
+    # Prefer Production, else latest numerically
+    preferred = None
+    for mv in versions:
+        if getattr(mv, "current_stage", "") == "Production":
+            preferred = mv
+            break
+    if preferred is None:
+        preferred = sorted(
+            versions,
+            key=lambda v: int(getattr(v, "version", 0)),
+            reverse=True,
+        )[0]
+
+    run_id = preferred.run_id
+    run = client.get_run(run_id)
+    params = run.data.params
+
+    # Dataset parameters were logged with 'dataset_*' keys
+    ds_filename = params.get("dataset_dataset_filename")
+    if not ds_filename:
+        raise RuntimeError(
+            "dataset_filename not found in run params. Cannot infer dataset."
+        )
+
+    ds_path = os.path.join(
+        get_path("workspace/datasets/synthetic"), "train", ds_filename
+    )
+    if not os.path.exists(ds_path):
+        raise FileNotFoundError(
+            f"Dataset file not found on this machine: {ds_path}. "
+            "Sync datasets or provide --target-rates-npy."
+        )
+
+    _, firing = load_npz_dataset(ds_path)
+    if sample_index < 0 or sample_index >= firing.shape[0]:
+        raise IndexError(
+            f"sample_index {sample_index} out of range "
+            f"(0..{firing.shape[0] - 1})"
+        )
+    vec = firing[sample_index]
+    if vec.ndim != 1:
+        raise ValueError("Loaded firing rates sample is not a 1D vector")
+    return vec.astype(np.float32)
