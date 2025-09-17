@@ -1,0 +1,72 @@
+#!/bin/bash
+#
+#SBATCH -p gpu # partition (queue)
+#SBATCH -J input_optim
+#SBATCH --mem=16G
+#SBATCH --gres=gpu:1
+#SBATCH -n 1
+#SBATCH -t 00-01:00 # time (D-HH:MM)
+#SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.out.txt
+#SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.err.txt
+
+echo "[INFO] Input optimization run"
+echo "[INFO] SLURM_JOB_ID=$SLURM_JOB_ID"
+echo "[INFO] Host: $(hostname)"
+echo "[INFO] Start time: $(date)"
+
+# Load modules and activate conda environment
+source /etc/profile.d/modules.sh
+module load miniconda
+conda activate /nfs/nhome/live/lporta/.conda/envs/decoders
+which python
+
+export MLFLOW_TRACKING_URI=/ceph/margrie/laura/neurodecoders/mlruns
+mkdir -p "$MLFLOW_TRACKING_URI"
+
+export CUDA_VISIBLE_DEVICES=0
+
+# Required input
+if [[ -z "$TARGET_RATES_NPY" ]]; then
+  echo "[ERROR] Set TARGET_RATES_NPY to a .npy file with target rates" >&2
+  exit 1
+fi
+
+# Optional overrides
+MODEL_ID=${MODEL_ID:-m-553e4f38555b44a6a026362915f9431c}
+EXPERIMENT_NAME=${EXPERIMENT_NAME:-input_optimization}
+RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}}
+STEPS=${STEPS:-2000}
+LR=${LR:-0.05}
+IMAGE_SIZE=${IMAGE_SIZE:-64}
+CHANNELS=${CHANNELS:-3}
+TV_WEIGHT=${TV_WEIGHT:-1e-4}
+L2_WEIGHT=${L2_WEIGHT:-1e-6}
+LOG_EVERY=${LOG_EVERY:-50}
+SEED=${SEED:-42}
+OUTPUT_DIR=${OUTPUT_DIR:-}
+
+echo "[INFO] MODEL_ID=$MODEL_ID"
+echo "[INFO] TARGET_RATES_NPY=$TARGET_RATES_NPY"
+echo "[INFO] EXPERIMENT_NAME=$EXPERIMENT_NAME"
+echo "[INFO] RUN_NAME=$RUN_NAME"
+
+/nfs/nhome/live/lporta/.conda/envs/decoders/bin/python \
+  neurodecoders/input_optim/mlflow_run.py \
+  --model-id "$MODEL_ID" \
+  --target-rates-npy "$TARGET_RATES_NPY" \
+  --tracking-uri "file:$MLFLOW_TRACKING_URI" \
+  --experiment-name "$EXPERIMENT_NAME" \
+  --run-name "$RUN_NAME" \
+  --steps "$STEPS" \
+  --lr "$LR" \
+  --image-size "$IMAGE_SIZE" \
+  --channels "$CHANNELS" \
+  --tv-weight "$TV_WEIGHT" \
+  --l2-weight "$L2_WEIGHT" \
+  --log-every "$LOG_EVERY" \
+  --seed "$SEED" \
+  ${OUTPUT_DIR:+--output-dir "$OUTPUT_DIR"}
+
+echo "[INFO] Input optimization completed"
+echo "[INFO] MLflow path: ${MLFLOW_TRACKING_URI}"
+echo "[INFO] End time: $(date)"
