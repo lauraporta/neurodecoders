@@ -31,6 +31,84 @@ from neurodecoders.paths import get_path
 DEFAULT_MODEL_ID = "m-553e4f38555b44a6a026362915f9431c"
 
 
+def _log_model_source_info(model_id: str) -> None:
+    """Log run/experiment info for the model from MLflow registry.
+
+    Logs the following (when available):
+    - model_source_run_id
+    - model_source_run_name
+    - model_source_experiment_id
+    - model_source_experiment_name
+    """
+    try:
+        from mlflow.tracking import MlflowClient
+
+        client = MlflowClient()
+        run_id = None
+
+        try:
+            versions = client.search_model_versions(f"name='{model_id}'")
+        except Exception:
+            versions = []
+
+        if versions:
+            preferred = None
+            for mv in versions:
+                if getattr(mv, "current_stage", "") == "Production":
+                    preferred = mv
+                    break
+            if preferred is None:
+                preferred = sorted(
+                    versions,
+                    key=lambda v: int(getattr(v, "version", 0)),
+                    reverse=True,
+                )[0]
+            run_id = preferred.run_id
+
+        if run_id is None:
+            # Fallback: recent run that logged model artifacts
+            try:
+                df = mlflow.search_runs(
+                    order_by=["attributes.start_time DESC"],
+                    max_results=200,
+                )
+            except Exception:
+                df = None
+            if df is not None and not df.empty:
+                for _, row in df.iterrows():
+                    # Heuristic: keep the most recent run; stop at first
+                    run_id = row.get("run_id") or row.get("info.run_id")
+                    if run_id:
+                        break
+
+        if run_id is None:
+            mlflow.log_param("model_source_info", "unavailable")
+            return
+
+        run = client.get_run(run_id)
+        exp_id = run.info.experiment_id
+        run_name = (
+            run.data.tags.get("mlflow.runName")
+            if run.data and run.data.tags
+            else None
+        )
+        exp = client.get_experiment(exp_id)
+        exp_name = exp.name if exp is not None else None
+
+        mlflow.log_params(
+            {
+                "model_source_run_id": run_id,
+                "model_source_run_name": run_name or "unknown",
+                "model_source_experiment_id": exp_id,
+                "model_source_experiment_name": exp_name or "unknown",
+            }
+        )
+    except Exception as e:
+        mlflow.log_param(
+            "model_source_info_error", f"failed_to_log ({str(e)[:50]})"
+        )
+
+
 def _infer_target_rates_from_model(
     model_id: str, sample_index: int
 ) -> np.ndarray:
@@ -168,7 +246,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=64,
         help="Square image size",
     )
-    p.add_argument("--channels", type=int, default=3, help="Num channels")
+    p.add_argument("--channels", type=int, default=1, help="Num channels")
     p.add_argument(
         "--tv-weight",
         type=float,
@@ -197,6 +275,9 @@ def main(args: argparse.Namespace) -> None:
         run_name = f"input_optim_{args.model_id}_{ts}"
 
     with mlflow.start_run(run_name=run_name, log_system_metrics=True):
+        # Log info about the source model's MLflow run/experiment
+        _log_model_source_info(args.model_id)
+
         # Log params
         mlflow.log_params(
             {

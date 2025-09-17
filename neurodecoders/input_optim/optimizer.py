@@ -46,7 +46,7 @@ def _total_variation(img: torch.Tensor) -> torch.Tensor:
 @dataclass
 class OptimConfig:
     image_size: int = 64
-    channels: int = 3
+    channels: int = 1
     steps: int = 2000
     lr: float = 0.05
     tv_weight: float = 1e-4
@@ -91,15 +91,34 @@ class ImageOptimizer:
             torch.manual_seed(self.cfg.seed)
             np.random.seed(self.cfg.seed)
 
-        init = (
-            torch.randn(
-                1, self.cfg.channels, self.cfg.image_size, self.cfg.image_size
-            )
-            * self.cfg.init_std
-            + self.cfg.init_mean
+        # Initialize from a gray image (all zeros in [0, 1] range)
+        init = torch.zeros(
+            1, self.cfg.channels, self.cfg.image_size, self.cfg.image_size
         )
         init = init.clamp(self.cfg.clamp_min, self.cfg.clamp_max)
         self.image = nn.Parameter(init.to(self.device))
+
+        # Validate encoder compatibility (channels/size and output dims)
+        try:
+            with torch.no_grad():
+                test_out = self.encoder(self.image)
+            if test_out.ndim == 2 and test_out.shape[0] == 1:
+                test_out = test_out[0]
+            if test_out.ndim != 1:
+                raise ValueError("Encoder output must be shape (1, N) or (N,)")
+            if test_out.shape[0] != self.target.shape[0]:
+                raise ValueError(
+                    "Target length does not match encoder output: "
+                    f"got {test_out.shape[0]}, "
+                    f"expected {self.target.shape[0]}"
+                )
+        except Exception as e:
+            raise ValueError(
+                "Encoder is incompatible with the provided image shape."
+                f" Image shape: (1, {self.cfg.channels}, "
+                f"{self.cfg.image_size},"
+                f" {self.cfg.image_size}). Original error: {e}"
+            ) from e
 
         self.poisson = nn.PoissonNLLLoss(log_input=False, reduction="mean")
         self.softplus = nn.Softplus()
