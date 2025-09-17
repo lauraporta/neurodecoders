@@ -48,12 +48,12 @@ class OptimConfig:
     image_size: int = 64
     channels: int = 1
     steps: int = 2000
-    lr: float = 0.05
+    lr: float = 0.001
     tv_weight: float = 1e-4
-    l2_weight: float = 1e-6
+    l2_weight: float = 1e-8
     log_every: int = 50
     init_mean: float = 0.5
-    init_std: float = 0.01
+    init_std: float = 0.1
     clamp_min: float = 0.0
     clamp_max: float = 1.0
     seed: Optional[int] = 42
@@ -86,14 +86,22 @@ class ImageOptimizer:
             raise ValueError("target_rates must be a 1D array of shape (N,)")
 
         self.cfg = config
+        if self.cfg.channels != 1:
+            raise ValueError(
+                "Only grayscale images are supported. Set channels=1."
+            )
 
         if self.cfg.seed is not None:
             torch.manual_seed(self.cfg.seed)
             np.random.seed(self.cfg.seed)
 
-        # Initialize from a gray image (all zeros in [0, 1] range)
-        init = torch.zeros(
-            1, self.cfg.channels, self.cfg.image_size, self.cfg.image_size
+        # Initialize from random noise in [0, 1] range
+        init = (
+            torch.randn(
+                1, self.cfg.channels, self.cfg.image_size, self.cfg.image_size
+            )
+            * self.cfg.init_std
+            + self.cfg.init_mean
         )
         init = init.clamp(self.cfg.clamp_min, self.cfg.clamp_max)
         self.image = nn.Parameter(init.to(self.device))
@@ -138,7 +146,12 @@ class ImageOptimizer:
         loss_data = self.poisson(rate, self.target)
 
         tv = _total_variation(self.image) if self.cfg.tv_weight > 0 else 0.0
-        l2 = (self.image**2).mean() if self.cfg.l2_weight > 0 else 0.0
+        # L2 regularization around mean instead of zero to avoid black bias
+        l2 = (
+            ((self.image - self.cfg.init_mean) ** 2).mean()
+            if self.cfg.l2_weight > 0
+            else 0.0
+        )
 
         total = (
             loss_data
@@ -160,6 +173,10 @@ class ImageOptimizer:
             "l2": float(l2.detach().cpu().item())
             if isinstance(l2, torch.Tensor)
             else 0.0,
+            "image_mean": float(self.image.mean().detach().cpu().item()),
+            "image_std": float(self.image.std().detach().cpu().item()),
+            "rate_mean": float(rate.mean().detach().cpu().item()),
+            "target_mean": float(self.target.mean().detach().cpu().item()),
         }
         return self.image.detach(), metrics
 

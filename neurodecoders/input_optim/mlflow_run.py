@@ -246,7 +246,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=64,
         help="Square image size",
     )
-    p.add_argument("--channels", type=int, default=1, help="Num channels")
+    p.add_argument(
+        "--channels",
+        type=int,
+        default=1,
+        help="Num channels (only 1 supported; grayscale)",
+    )
     p.add_argument(
         "--tv-weight",
         type=float,
@@ -292,6 +297,13 @@ def main(args: argparse.Namespace) -> None:
                 "seed": args.seed,
             }
         )
+
+        # Enforce grayscale only
+        if args.channels != 1:
+            raise ValueError(
+                "Only grayscale is supported for input optimization. "
+                "Please set --channels 1."
+            )
 
         # Load target rates inferred from MLflow model's dataset
         target: np.ndarray = _infer_target_rates_from_model(
