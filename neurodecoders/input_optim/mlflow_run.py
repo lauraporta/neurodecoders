@@ -54,14 +54,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional MLflow run name",
     )
     p.add_argument(
-        "--target-rates-npy",
-        help=(
-            "Path to a NumPy .npy file with target rates, shape (N,). "
-            "If omitted, will try to infer from the MLflow model's "
-            "training dataset metadata."
-        ),
-    )
-    p.add_argument(
         "--sample-index",
         type=int,
         default=0,
@@ -119,20 +111,11 @@ def main(args: argparse.Namespace) -> None:
             }
         )
 
-        # Load target rates: from file or infer from MLflow model's dataset
-        target: np.ndarray
-        if args.target_rates_npy:
-            if not os.path.exists(args.target_rates_npy):
-                raise FileNotFoundError(args.target_rates_npy)
-            target = np.load(args.target_rates_npy)
-            if target.ndim != 1:
-                raise ValueError("target_rates must be 1D (N,)")
-            mlflow.log_param("target_source", "file")
-        else:
-            target = _infer_target_rates_from_model(
-                model_id=args.model_id, sample_index=args.sample_index
-            )
-            mlflow.log_param("target_source", "mlflow_dataset")
+        # Load target rates inferred from MLflow model's dataset
+        target: np.ndarray = _infer_target_rates_from_model(
+            model_id=args.model_id, sample_index=args.sample_index
+        )
+        mlflow.log_param("target_source", "mlflow_dataset")
         mlflow.log_param("n_neurons", int(target.shape[0]))
 
         # Load encoder

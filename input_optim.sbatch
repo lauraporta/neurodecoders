@@ -25,12 +25,6 @@ mkdir -p "$MLFLOW_TRACKING_URI"
 
 export CUDA_VISIBLE_DEVICES=0
 
-# Required input
-if [[ -z "$TARGET_RATES_NPY" ]]; then
-  echo "[ERROR] Set TARGET_RATES_NPY to a .npy file with target rates" >&2
-  exit 1
-fi
-
 # Optional overrides
 MODEL_ID=${MODEL_ID:-m-553e4f38555b44a6a026362915f9431c}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-input_optimization}
@@ -44,16 +38,21 @@ L2_WEIGHT=${L2_WEIGHT:-1e-6}
 LOG_EVERY=${LOG_EVERY:-50}
 SEED=${SEED:-42}
 OUTPUT_DIR=${OUTPUT_DIR:-}
+SAMPLE_INDEX=${SAMPLE_INDEX:-0}
 
 echo "[INFO] MODEL_ID=$MODEL_ID"
-echo "[INFO] TARGET_RATES_NPY=$TARGET_RATES_NPY"
+if [[ -n "$TARGET_RATES_NPY" ]]; then
+  echo "[INFO] TARGET_RATES_NPY=$TARGET_RATES_NPY"
+else
+  echo "[INFO] TARGET_RATES_NPY not set; will infer from MLflow dataset"
+  echo "[INFO] SAMPLE_INDEX=$SAMPLE_INDEX"
+fi
 echo "[INFO] EXPERIMENT_NAME=$EXPERIMENT_NAME"
 echo "[INFO] RUN_NAME=$RUN_NAME"
 
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python \
   neurodecoders/input_optim/mlflow_run.py \
   --model-id "$MODEL_ID" \
-  --target-rates-npy "$TARGET_RATES_NPY" \
   --tracking-uri "file:$MLFLOW_TRACKING_URI" \
   --experiment-name "$EXPERIMENT_NAME" \
   --run-name "$RUN_NAME" \
@@ -65,6 +64,7 @@ echo "[INFO] RUN_NAME=$RUN_NAME"
   --l2-weight "$L2_WEIGHT" \
   --log-every "$LOG_EVERY" \
   --seed "$SEED" \
+  --sample-index "$SAMPLE_INDEX" \
   ${OUTPUT_DIR:+--output-dir "$OUTPUT_DIR"}
 
 echo "[INFO] Input optimization completed"
