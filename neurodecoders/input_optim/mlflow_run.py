@@ -458,26 +458,51 @@ def main(args: argparse.Namespace) -> None:
         os.makedirs(out_dir, exist_ok=True)
 
         if len(image_ids) == 1:
-            # Single image reconstruction (original behavior)
+            # Single image reconstruction with comparison plot
             target: np.ndarray = _infer_target_rates_from_model(
                 model_id=args.model_id, sample_index=image_ids[0]
             )
             mlflow.log_param("target_source", "mlflow_dataset")
             mlflow.log_param("n_neurons", int(target.shape[0]))
 
+            # Try to load original image for comparison
+            try:
+                print(f"[DEBUG] Loading original image for ID: {image_ids[0]}")
+                original_images = _load_original_images_from_dataset(
+                    model_id=args.model_id, image_ids=[image_ids[0]]
+                )
+                print("[DEBUG] Successfully loaded original image")
+                mlflow.log_param("original_image_loaded", True)
+            except Exception as e:
+                print(f"Warning: Could not load original image: {e}")
+                original_images = None
+                mlflow.log_param("original_image_loaded", False)
+
             optim_runner = ImageOptimizer(
                 encoder=encoder, target_rates=target, config=cfg
             )
             img_np, metrics = optim_runner.optimize()
 
-            # Save image and log artifact
-            out_img = os.path.join(out_dir, "reconstruction.png")
-            optim_runner.save_image(out_img)
-            log_single_artifact(out_img, artifact_path="images")
-            try:
-                art_uri = mlflow.get_artifact_uri("images/reconstruction.png")
-            except Exception:
-                art_uri = None
+            # Create comparison plot using the new format
+            from neurodecoders.input_optim.optimizer import (
+                create_comparison_plots,
+            )
+
+            comparison_path = os.path.join(out_dir, "comparison_plot.png")
+            if original_images:
+                create_comparison_plots(
+                    original_images=original_images,
+                    reconstructed_images=[img_np],
+                    image_ids=image_ids,
+                    output_path=comparison_path,
+                )
+                print(f"Single image comparison plot saved: {comparison_path}")
+                log_single_artifact(comparison_path, artifact_path="images")
+            else:
+                # Fallback: save individual reconstruction
+                out_img = os.path.join(out_dir, "reconstruction.png")
+                optim_runner.save_image(out_img)
+                log_single_artifact(out_img, artifact_path="images")
 
             # Log final metrics
             if metrics:
@@ -489,9 +514,10 @@ def main(args: argparse.Namespace) -> None:
             log_single_artifact(out_npy, artifact_path="arrays")
 
             print("Optimization complete. Artifacts logged to MLflow.")
-            print(f"Saved image: {out_img}")
-            if art_uri:
-                print(f"MLflow artifact: {art_uri}")
+            if original_images:
+                print(f"Comparison plot: {comparison_path}")
+            else:
+                print(f"Saved image: {out_img}")
         else:
             # Multiple image reconstruction
             target_rates_list = []
