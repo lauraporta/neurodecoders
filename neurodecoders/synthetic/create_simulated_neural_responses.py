@@ -312,24 +312,8 @@ def main():
     os.makedirs("output", exist_ok=True)
 
     print("Saving dataset...")
-    sta_avg_correlations = calculate_sta_vs_zscore_correlations(
-        images, firing_rates, simulator.selected_stas, simulator.rf_coords
-    )
-
-    # Print correlation statistics
-    print("\n=== STA vs Z-score Average Image Correlations ===")
-    print(f"Mean correlation: {np.mean(sta_avg_correlations):.4f}")
-    print(f"Std correlation: {np.std(sta_avg_correlations):.4f}")
-    print(f"Min correlation: {np.min(sta_avg_correlations):.4f}")
-    print(f"Max correlation: {np.max(sta_avg_correlations):.4f}")
-    print(
-        f"Number of neurons with correlation > 0.5: "
-        f"{np.sum(sta_avg_correlations > 0.5)}/{len(sta_avg_correlations)}"
-    )
-    print(
-        f"Number of neurons with correlation > 0.7: "
-        f"{np.sum(sta_avg_correlations > 0.7)}/{len(sta_avg_correlations)}"
-    )
+    # Skip STA vs z-score correlation calculation for speed
+    sta_avg_correlations = None
 
     save_output(
         images,
