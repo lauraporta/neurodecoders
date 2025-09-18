@@ -21,6 +21,7 @@ from pytorch_lightning.callbacks import Callback
 sys.path.append(os.path.dirname(__file__))
 
 from neurodecoders.mlflow_utils.utils import (
+    create_firing_rate_scatterplot,
     log_encoder_verification_metrics,
     log_single_artifact,
 )
@@ -143,6 +144,16 @@ class EncoderVerificationCallback(Callback):
                     print(f"Logged trained model to MLflow: {model_path}")
                 except Exception as e:
                     print(f"Error logging trained model artifact: {e}")
+                    traceback.print_exc()
+
+            # Log firing rate plot artifact if available
+            plot_path = verification_results.get("firing_rate_plot_path")
+            if plot_path and os.path.exists(plot_path):
+                try:
+                    log_single_artifact(plot_path, "firing_rate_analysis_plot")
+                    print(f"Logged firing rate plot to MLflow: {plot_path}")
+                except Exception as e:
+                    print(f"Error logging firing rate plot artifact: {e}")
                     traceback.print_exc()
 
         print("=== VERIFICATION ANALYSIS COMPLETE ===")
@@ -270,6 +281,14 @@ class EncoderVerificationCallback(Callback):
                 verifier.analyze_firing_rate_distributions()
             )
 
+            # Generate scatterplot visualization
+            print("Generating firing rate scatterplot...")
+            plot_path = self._generate_firing_rate_plot(
+                results["firing_rates"], model_path
+            )
+            if plot_path:
+                results["firing_rate_plot_path"] = plot_path
+
             # Classification test (if labels are available)
             if (
                 hasattr(verifier, "image_labels")
@@ -291,5 +310,56 @@ class EncoderVerificationCallback(Callback):
 
         except Exception as e:
             print(f"Error during verification analysis: {e}")
+            traceback.print_exc()
+            return None
+
+    def _generate_firing_rate_plot(
+        self, firing_results: Dict[str, Any], model_path: Optional[str]
+    ) -> Optional[str]:
+        """Generate and save firing rate scatterplot visualization."""
+        try:
+            # Extract firing rate data
+            true_mean = firing_results.get("true_mean")
+            pred_mean = firing_results.get("pred_mean")
+            true_std = firing_results.get("true_std")
+            pred_std = firing_results.get("pred_std")
+
+            if (
+                true_mean is None
+                or pred_mean is None
+                or true_std is None
+                or pred_std is None
+            ):
+                print("Missing firing rate data for plot generation")
+                return None
+
+            # Create plots directory
+            plots_dir = get_path("workspace/plots")
+            ensure_dir(plots_dir)
+
+            # Generate timestamp for unique filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            plot_filename = f"firing_rate_analysis_{timestamp}.png"
+            plot_path = os.path.join(plots_dir, plot_filename)
+
+            # Create the scatterplot
+            plot_path = create_firing_rate_scatterplot(
+                true_mean=true_mean,
+                pred_mean=pred_mean,
+                true_std=true_std,
+                pred_std=pred_std,
+                save_path=plot_path,
+                title=f"Firing Rate Analysis - {timestamp}",
+            )
+
+            if plot_path and os.path.exists(plot_path):
+                print(f"Firing rate scatterplot saved to: {plot_path}")
+                return plot_path
+            else:
+                print("Failed to generate firing rate scatterplot")
+                return None
+
+        except Exception as e:
+            print(f"Error generating firing rate plot: {e}")
             traceback.print_exc()
             return None

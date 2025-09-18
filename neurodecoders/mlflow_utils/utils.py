@@ -441,3 +441,120 @@ def log_dataset_input_and_params(data_module) -> None:
             ),
         }
         mlflow.log_params(fallback)
+
+
+def create_firing_rate_scatterplot(
+    true_mean: np.ndarray,
+    pred_mean: np.ndarray,
+    true_std: np.ndarray,
+    pred_std: np.ndarray,
+    save_path: str,
+    title: str = "Firing Rate Analysis: Predicted vs True",
+) -> str:
+    """
+    Create a scatterplot visualization of mean firing rates with standard
+    deviation and fit line.
+
+    Args:
+        true_mean: True mean firing rates
+        pred_mean: Predicted mean firing rates
+        true_std: True standard deviation of firing rates
+        pred_std: Predicted standard deviation of firing rates
+        save_path: Path to save the plot
+        title: Title for the plot
+
+    Returns:
+        str: Path to the saved plot file
+    """
+    try:
+        import matplotlib.pyplot as plt
+        from sklearn.linear_model import LinearRegression
+        from sklearn.metrics import r2_score
+
+        # Create figure with subplots
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+        # Plot 1: Mean firing rates
+        ax1.scatter(true_mean, pred_mean, alpha=0.6, s=30)
+
+        # Add fit line for mean firing rates
+        if len(true_mean) > 1:
+            reg_mean = LinearRegression()
+            X_mean = true_mean.reshape(-1, 1)
+            reg_mean.fit(X_mean, pred_mean)
+            pred_line_mean = reg_mean.predict(X_mean)
+            r2_mean = r2_score(pred_mean, pred_line_mean)
+
+            # Plot fit line
+            ax1.plot(
+                true_mean,
+                pred_line_mean,
+                "r-",
+                label=f"Fit (R²={r2_mean:.3f})",
+            )
+            ax1.legend()
+
+        ax1.set_xlabel("True Mean Firing Rate")
+        ax1.set_ylabel("Predicted Mean Firing Rate")
+        ax1.set_title("Mean Firing Rates")
+        ax1.grid(True, alpha=0.3)
+
+        # Add diagonal line for perfect prediction
+        min_val = min(true_mean.min(), pred_mean.min())
+        max_val = max(true_mean.max(), pred_mean.max())
+        ax1.plot(
+            [min_val, max_val],
+            [min_val, max_val],
+            "k--",
+            alpha=0.5,
+            label="Perfect Prediction",
+        )
+        ax1.legend()
+
+        # Plot 2: Standard deviation of firing rates
+        ax2.scatter(true_std, pred_std, alpha=0.6, s=30, color="orange")
+
+        # Add fit line for std firing rates
+        if len(true_std) > 1:
+            reg_std = LinearRegression()
+            X_std = true_std.reshape(-1, 1)
+            reg_std.fit(X_std, pred_std)
+            pred_line_std = reg_std.predict(X_std)
+            r2_std = r2_score(pred_std, pred_line_std)
+
+            # Plot fit line
+            ax2.plot(
+                true_std, pred_line_std, "r-", label=f"Fit (R²={r2_std:.3f})"
+            )
+            ax2.legend()
+
+        ax2.set_xlabel("True Std Firing Rate")
+        ax2.set_ylabel("Predicted Std Firing Rate")
+        ax2.set_title("Standard Deviation of Firing Rates")
+        ax2.grid(True, alpha=0.3)
+
+        # Add diagonal line for perfect prediction
+        min_std = min(true_std.min(), pred_std.min())
+        max_std = max(true_std.max(), pred_std.max())
+        ax2.plot(
+            [min_std, max_std],
+            [min_std, max_std],
+            "k--",
+            alpha=0.5,
+            label="Perfect Prediction",
+        )
+        ax2.legend()
+
+        # Overall title
+        fig.suptitle(title, fontsize=14, fontweight="bold")
+
+        # Adjust layout and save
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        return save_path
+
+    except Exception as e:
+        print(f"Error creating firing rate scatterplot: {e}")
+        return ""
