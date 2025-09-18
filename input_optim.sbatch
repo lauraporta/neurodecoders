@@ -32,20 +32,25 @@ RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}}
 STEPS=${STEPS:-2000}
 LR=${LR:-0.05}
 IMAGE_SIZE=${IMAGE_SIZE:-64}
-CHANNELS=${CHANNELS:-3}
+CHANNELS=${CHANNELS:-1}
 TV_WEIGHT=${TV_WEIGHT:-1e-4}
 L2_WEIGHT=${L2_WEIGHT:-1e-6}
 LOG_EVERY=${LOG_EVERY:-50}
 SEED=${SEED:-42}
 OUTPUT_DIR=${OUTPUT_DIR:-}
 SAMPLE_INDEX=${SAMPLE_INDEX:-0}
+IMAGE_IDS=${IMAGE_IDS:-}
 
 echo "[INFO] MODEL_ID=$MODEL_ID"
 if [[ -n "$TARGET_RATES_NPY" ]]; then
   echo "[INFO] TARGET_RATES_NPY=$TARGET_RATES_NPY"
 else
   echo "[INFO] TARGET_RATES_NPY not set; will infer from MLflow dataset"
-  echo "[INFO] SAMPLE_INDEX=$SAMPLE_INDEX"
+  if [[ -n "$IMAGE_IDS" ]]; then
+    echo "[INFO] IMAGE_IDS=$IMAGE_IDS (multiple image reconstruction)"
+  else
+    echo "[INFO] SAMPLE_INDEX=$SAMPLE_INDEX (single image reconstruction)"
+  fi
 fi
 echo "[INFO] EXPERIMENT_NAME=$EXPERIMENT_NAME"
 echo "[INFO] RUN_NAME=$RUN_NAME"
@@ -64,7 +69,8 @@ echo "[INFO] RUN_NAME=$RUN_NAME"
   --l2-weight "$L2_WEIGHT" \
   --log-every "$LOG_EVERY" \
   --seed "$SEED" \
-  --sample-index "$SAMPLE_INDEX" \
+  ${IMAGE_IDS:+--image-ids $IMAGE_IDS} \
+  ${IMAGE_IDS:---sample-index "$SAMPLE_INDEX"} \
   ${OUTPUT_DIR:+--output-dir "$OUTPUT_DIR"}
 
 echo "[INFO] Input optimization completed"

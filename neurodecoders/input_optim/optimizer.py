@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
+import matplotlib.pyplot as plt
 import mlflow
 import numpy as np
 import torch
@@ -43,20 +44,81 @@ def _total_variation(img: torch.Tensor) -> torch.Tensor:
     return dh + dw
 
 
+def create_comparison_plots(
+    original_images: List[np.ndarray],
+    reconstructed_images: List[np.ndarray],
+    image_ids: List[int],
+    output_path: str,
+    figsize: Tuple[int, int] = (15, 10),
+) -> None:
+    """Create comprehensive comparison plots with original,
+    reconstructed, and difference images.
+
+    Args:
+        original_images: List of original images as numpy arrays
+        reconstructed_images: List of reconstructed images as numpy arrays
+        image_ids: List of image IDs for labeling
+        output_path: Path to save the comparison plot
+        figsize: Figure size tuple (width, height)
+    """
+    n_images = len(original_images)
+    if n_images == 0:
+        return
+
+    # Create subplots: 3 rows
+    # (original, reconstructed, difference) x n_images cols
+    fig, axes = plt.subplots(3, n_images, figsize=figsize)
+    if n_images == 1:
+        axes = axes.reshape(3, 1)
+
+    for i, (orig, recon, img_id) in enumerate(
+        zip(original_images, reconstructed_images, image_ids)
+    ):
+        # Ensure images are in [0, 1] range
+        orig = np.clip(orig, 0, 1)
+        recon = np.clip(recon, 0, 1)
+
+        # Calculate difference
+        diff = np.abs(orig - recon)
+
+        # Original image
+        axes[0, i].imshow(orig.squeeze(), cmap="gray", vmin=0, vmax=1)
+        axes[0, i].set_title(f"Original {img_id}", fontsize=12)
+        axes[0, i].axis("off")
+
+        # Reconstructed image
+        axes[1, i].imshow(recon.squeeze(), cmap="gray", vmin=0, vmax=1)
+        axes[1, i].set_title(f"Reconstructed {img_id}", fontsize=12)
+        axes[1, i].axis("off")
+
+        # Difference image
+        im = axes[2, i].imshow(diff.squeeze(), cmap="hot", vmin=0, vmax=1)
+        axes[2, i].set_title(f"Difference {img_id}", fontsize=12)
+        axes[2, i].axis("off")
+
+        # Add colorbar for difference
+        plt.colorbar(im, ax=axes[2, i], fraction=0.046, pad=0.04)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
 @dataclass
 class OptimConfig:
     image_size: int = 64
     channels: int = 1
     steps: int = 2000
-    lr: float = 0.001
+    lr: float = 0.05
     tv_weight: float = 1e-4
-    l2_weight: float = 1e-8
+    l2_weight: float = 1e-6
     log_every: int = 50
     init_mean: float = 0.5
-    init_std: float = 0.1
+    init_std: float = 0.01
     clamp_min: float = 0.0
     clamp_max: float = 1.0
     seed: Optional[int] = 42
+    image_ids: Optional[list] = None
 
 
 class ImageOptimizer:
@@ -95,13 +157,9 @@ class ImageOptimizer:
             torch.manual_seed(self.cfg.seed)
             np.random.seed(self.cfg.seed)
 
-        # Initialize from random noise in [0, 1] range
-        init = (
-            torch.randn(
-                1, self.cfg.channels, self.cfg.image_size, self.cfg.image_size
-            )
-            * self.cfg.init_std
-            + self.cfg.init_mean
+        # Initialize from a gray image (all zeros in [0, 1] range)
+        init = torch.zeros(
+            1, self.cfg.channels, self.cfg.image_size, self.cfg.image_size
         )
         init = init.clamp(self.cfg.clamp_min, self.cfg.clamp_max)
         self.image = nn.Parameter(init.to(self.device))
@@ -146,12 +204,7 @@ class ImageOptimizer:
         loss_data = self.poisson(rate, self.target)
 
         tv = _total_variation(self.image) if self.cfg.tv_weight > 0 else 0.0
-        # L2 regularization around mean instead of zero to avoid black bias
-        l2 = (
-            ((self.image - self.cfg.init_mean) ** 2).mean()
-            if self.cfg.l2_weight > 0
-            else 0.0
-        )
+        l2 = (self.image**2).mean() if self.cfg.l2_weight > 0 else 0.0
 
         total = (
             loss_data
@@ -173,10 +226,6 @@ class ImageOptimizer:
             "l2": float(l2.detach().cpu().item())
             if isinstance(l2, torch.Tensor)
             else 0.0,
-            "image_mean": float(self.image.mean().detach().cpu().item()),
-            "image_std": float(self.image.std().detach().cpu().item()),
-            "rate_mean": float(rate.mean().detach().cpu().item()),
-            "target_mean": float(self.target.mean().detach().cpu().item()),
         }
         return self.image.detach(), metrics
 
@@ -199,6 +248,71 @@ class ImageOptimizer:
     def save_image(self, path: str) -> None:
         with torch.no_grad():
             save_image(self.image.clamp(0, 1), path)
+
+    def reconstruct_multiple_images(
+        self,
+        target_rates_list: List[np.ndarray],
+        image_ids: List[int],
+        output_dir: str,
+        original_images: Optional[List[np.ndarray]] = None,
+    ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+        """Reconstruct multiple images and create comparison plots.
+
+        Args:
+            target_rates_list: List of target firing rate arrays
+            image_ids: List of image IDs for labeling
+            output_dir: Directory to save outputs
+            original_images: Optional list of original images for comparison
+
+        Returns:
+            Tuple of (original_images, reconstructed_images) lists
+        """
+        reconstructed_images = []
+
+        for i, (target_rates, img_id) in enumerate(
+            zip(target_rates_list, image_ids)
+        ):
+            # Create new optimizer instance for each image
+            optimizer = ImageOptimizer(
+                encoder=self.encoder,
+                target_rates=target_rates,
+                config=self.cfg,
+            )
+
+            # Optimize the image
+            reconstructed_img, metrics = optimizer.optimize()
+            reconstructed_images.append(reconstructed_img)
+
+            # Save individual reconstruction
+            individual_path = os.path.join(
+                output_dir, f"reconstruction_{img_id}.png"
+            )
+            optimizer.save_image(individual_path)
+
+            # Save numpy array
+            npy_path = os.path.join(output_dir, f"reconstruction_{img_id}.npy")
+            np.save(npy_path, reconstructed_img)
+
+            print(
+                f"Reconstructed image {img_id} - "
+                f"Loss: {metrics.get('loss_total', 'N/A'):.4f}"
+            )
+
+        # Create comparison plot if we have multiple images
+        if len(reconstructed_images) > 1:
+            comparison_path = os.path.join(output_dir, "comparison_plot.png")
+            create_comparison_plots(
+                original_images=original_images
+                or [np.zeros_like(img) for img in reconstructed_images],
+                reconstructed_images=reconstructed_images,
+                image_ids=image_ids,
+                output_path=comparison_path,
+            )
+            print(f"Comparison plot saved: {comparison_path}")
+
+        return original_images or [
+            np.zeros_like(img) for img in reconstructed_images
+        ], reconstructed_images
 
 
 def load_encoder_from_mlflow(model_id: str) -> nn.Module:
