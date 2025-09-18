@@ -78,6 +78,69 @@ def create_comparison_plots(
         orig = np.clip(orig, 0, 1)
         recon = np.clip(recon, 0, 1)
 
+        # Resize original image to match reconstructed image dimensions
+        if orig.shape != recon.shape:
+            try:
+                # Try PIL first (most common and reliable)
+                from PIL import Image
+
+                # Convert to PIL Image
+                if len(orig.shape) == 3:
+                    pil_img = Image.fromarray(
+                        (orig.squeeze() * 255).astype(np.uint8)
+                    )
+                else:
+                    pil_img = Image.fromarray((orig * 255).astype(np.uint8))
+
+                # Resize to match reconstructed image
+                target_size = (
+                    recon.shape[1],
+                    recon.shape[0],
+                )  # PIL uses (width, height)
+                pil_img = pil_img.resize(target_size, Image.LANCZOS)
+
+                # Convert back to numpy
+                orig = np.array(pil_img) / 255.0
+                if len(recon.shape) == 3:
+                    orig = orig.reshape(recon.shape)
+                print(f"[DEBUG] PIL resized original image to {orig.shape}")
+            except ImportError:
+                try:
+                    # Try scipy as fallback
+                    from scipy.ndimage import zoom
+
+                    zoom_factors = [
+                        recon.shape[j] / orig.shape[j]
+                        for j in range(len(orig.shape))
+                    ]
+                    orig = zoom(orig, zoom_factors, order=1)
+                    print(
+                        f"[DEBUG] Scipy resized original image to {orig.shape}"
+                    )
+                except ImportError:
+                    # Final fallback: simple numpy resizing using interpolation
+                    # Create coordinate arrays for interpolation
+                    orig_h, orig_w = orig.shape[:2]
+                    recon_h, recon_w = recon.shape[:2]
+
+                    # Create coordinate grids
+                    y_coords = np.linspace(0, orig_h - 1, recon_h)
+                    x_coords = np.linspace(0, orig_w - 1, recon_w)
+
+                    # Simple nearest neighbor interpolation
+                    y_indices = np.round(y_coords).astype(int)
+                    x_indices = np.round(x_coords).astype(int)
+
+                    # Ensure indices are within bounds
+                    y_indices = np.clip(y_indices, 0, orig_h - 1)
+                    x_indices = np.clip(x_indices, 0, orig_w - 1)
+
+                    # Resize using advanced indexing
+                    if len(orig.shape) == 3:
+                        orig = orig[y_indices[:, None], x_indices[None, :]]
+                    else:
+                        orig = orig[y_indices[:, None], x_indices[None, :]]
+
         # Calculate difference
         diff = np.abs(orig - recon)
 
