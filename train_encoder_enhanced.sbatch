@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-#SBATCH -p gpu # partition (queue)
+#SBATCH -p gpu_lowp,gpu,a100 # partition (queue)
 #SBATCH -J encoder_enhanced_training
-#SBATCH --mem=32G
+#SBATCH --mem=16G
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
-#SBATCH -t 00-06:00 # time (D-HH:MM)
-#SBATCH --array=0-2%3
+#SBATCH -t 00-01:00 # time (D-HH:MM)
+#SBATCH --array=0-15%5
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -34,17 +34,19 @@ EPOCHS=100
 # Define hyperparameter arrays
 LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
-MODEL_TYPES=("resnet")
+MODEL_TYPES=("simple" "skip" "resnet")
 OPTIMIZERS=("adam")
 SCHEDULERS=("none")
-DATASETS=("perlin_noise_patterns,70,70" "gabor,70,70" "periodic_patterns,70,70")
+DATASETS=("gabor,70,70" "perlin_noise_patterns,100,100" "perlin_noise_patterns,70,70" "periodic_patterns,100,100" "periodic_patterns,70,70")
 
 # Calculate indices from array task ID
 # For this simple case, we're just sweeping over datasets
-DATASET_IDX=$SLURM_ARRAY_TASK_ID
+# DATASET_IDX=$SLURM_ARRAY_TASK_ID
+MODEL_TYPE_IDX=$((SLURM_ARRAY_TASK_ID % 3))
+DATASET_IDX=$((SLURM_ARRAY_TASK_ID / 3))
 
 # Extract values
-MODEL_TYPE=${MODEL_TYPES[0]}
+MODEL_TYPE=${MODEL_TYPES[$MODEL_TYPE_IDX]}
 LEARNING_RATE=${LEARNING_RATES[0]}
 BATCH_SIZE=${BATCH_SIZES[0]}
 OPTIMIZER=${OPTIMIZERS[0]}
@@ -52,8 +54,8 @@ SCHEDULER=${SCHEDULERS[0]}
 DATASET=${DATASETS[$DATASET_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="dataset=${DATASET}"
-EXPERIMENT_NAME="dataset_sweep2"
+RUN_NAME="model_${MODEL_TYPE}_Dataset_${DATASET}"
+EXPERIMENT_NAME="new_datasets_sweep"
 
 echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET"
 

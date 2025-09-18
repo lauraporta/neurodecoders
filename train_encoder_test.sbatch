@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#SBATCH -p gpu
+#SBATCH -p gpu_lowp,gpu,a100 # partition (queue)
 #SBATCH -J encoder_test
 #SBATCH --mem=8G
 #SBATCH --gres=gpu:1
@@ -28,14 +28,14 @@ export CUDA_VISIBLE_DEVICES=0
 
 echo "[INFO] Launching training with user-specified command"
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
-  --model-type resnet \
-  --epochs 25 \
+  --model-type simple \
+  --epochs 100 \
   --dataset-type cifar10 \
-  --sta-type periodic_patterns,70,70 \
+  --sta-type gabor,100,100 \
   --n-neurons 100 \
   --n-images 8000 \
   --cv-folds 1 \
-  --experiment-name test_after_refactor \
+  --experiment-name with_plots \
   --run-name commit_$(git rev-parse --short HEAD)_test_run \
 
 echo "[INFO] End time: $(date)"

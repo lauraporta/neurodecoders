@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-#SBATCH -p gpu # partition (queue)
+#SBATCH -p gpu_lowp,gpu,a100 # partition (queue)
 #SBATCH -J input_optim
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
@@ -26,12 +26,12 @@ mkdir -p "$MLFLOW_TRACKING_URI"
 export CUDA_VISIBLE_DEVICES=0
 
 # Optional overrides
-MODEL_ID=${MODEL_ID:-m-553e4f38555b44a6a026362915f9431c}
+MODEL_ID=${MODEL_ID:-m-55fdb61b173e4a6181fc6c92abebfab6}
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-input_optimization}
-RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}}
-STEPS=${STEPS:-2000}
-LR=${LR:-0.05}
+STEPS=${STEPS:-3000}
+LR=${LR:-0.001}
 IMAGE_SIZE=${IMAGE_SIZE:-64}
+CHANNELS=${CHANNELS:-1}
 CHANNELS=${CHANNELS:-1}
 TV_WEIGHT=${TV_WEIGHT:-1e-4}
 L2_WEIGHT=${L2_WEIGHT:-1e-6}
@@ -40,7 +40,8 @@ SEED=${SEED:-42}
 OUTPUT_DIR=${OUTPUT_DIR:-}
 SAMPLE_INDEX=${SAMPLE_INDEX:-0}
 IMAGE_IDS=${IMAGE_IDS:-}
-
+# include the parameters used (lr, steps, tv_weight, l2_weight) in the run name
+RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}_imageIDs_${IMAGE_IDS:-sample_${SAMPLE_INDEX}}_modelID_${MODEL_ID}}
 echo "[INFO] MODEL_ID=$MODEL_ID"
 if [[ -n "$TARGET_RATES_NPY" ]]; then
   echo "[INFO] TARGET_RATES_NPY=$TARGET_RATES_NPY"
