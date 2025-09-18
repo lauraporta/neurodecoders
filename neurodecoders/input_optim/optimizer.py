@@ -309,6 +309,20 @@ class ImageOptimizer:
                 output_path=comparison_path,
             )
             print(f"Comparison plot saved: {comparison_path}")
+        elif len(reconstructed_images) == 1:
+            # Even for single image,
+            # create a comparison plot if we have original
+            if original_images and len(original_images) == 1:
+                comparison_path = os.path.join(
+                    output_dir, "comparison_plot.png"
+                )
+                create_comparison_plots(
+                    original_images=original_images,
+                    reconstructed_images=reconstructed_images,
+                    image_ids=image_ids,
+                    output_path=comparison_path,
+                )
+                print(f"Single image comparison plot saved: {comparison_path}")
 
         return original_images or [
             np.zeros_like(img) for img in reconstructed_images

@@ -421,9 +421,17 @@ def main(args: argparse.Namespace) -> None:
         if args.image_ids:
             image_ids = args.image_ids
             mlflow.log_param("image_ids", image_ids)
+            print(
+                f"[DEBUG] Using multiple image reconstruction with IDs: "
+                f"{image_ids}"
+            )
         else:
             image_ids = [args.sample_index]
             mlflow.log_param("image_ids", image_ids)
+            print(
+                f"[DEBUG] Using single image reconstruction with ID: "
+                f"{image_ids[0]}"
+            )
 
         # Load encoder
         encoder = load_encoder_from_mlflow(args.model_id)
@@ -495,8 +503,13 @@ def main(args: argparse.Namespace) -> None:
 
             # Load original images for comparison
             try:
+                print(f"[DEBUG] Loading original images for IDs: {image_ids}")
                 original_images = _load_original_images_from_dataset(
                     model_id=args.model_id, image_ids=image_ids
+                )
+                print(
+                    f"[DEBUG] Successfully loaded "
+                    f"{len(original_images)} original images"
                 )
                 mlflow.log_param("original_images_loaded", True)
             except Exception as e:

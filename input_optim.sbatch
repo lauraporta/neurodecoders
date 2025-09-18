@@ -32,7 +32,6 @@ STEPS=${STEPS:-3000}
 LR=${LR:-0.001}
 IMAGE_SIZE=${IMAGE_SIZE:-64}
 CHANNELS=${CHANNELS:-1}
-CHANNELS=${CHANNELS:-1}
 TV_WEIGHT=${TV_WEIGHT:-1e-4}
 L2_WEIGHT=${L2_WEIGHT:-1e-6}
 LOG_EVERY=${LOG_EVERY:-50}
@@ -41,7 +40,11 @@ OUTPUT_DIR=${OUTPUT_DIR:-}
 SAMPLE_INDEX=${SAMPLE_INDEX:-0}
 IMAGE_IDS=${IMAGE_IDS:-}
 # include the parameters used (lr, steps, tv_weight, l2_weight) in the run name
-RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}_imageIDs_${IMAGE_IDS:-sample_${SAMPLE_INDEX}}_modelID_${MODEL_ID}}
+if [[ -n "$IMAGE_IDS" ]]; then
+  RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}_imageIDs_${IMAGE_IDS// /_}_modelID_${MODEL_ID}}
+else
+  RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}_sample_${SAMPLE_INDEX}_modelID_${MODEL_ID}}
+fi
 echo "[INFO] MODEL_ID=$MODEL_ID"
 if [[ -n "$TARGET_RATES_NPY" ]]; then
   echo "[INFO] TARGET_RATES_NPY=$TARGET_RATES_NPY"
@@ -56,23 +59,43 @@ fi
 echo "[INFO] EXPERIMENT_NAME=$EXPERIMENT_NAME"
 echo "[INFO] RUN_NAME=$RUN_NAME"
 
+# Build command arguments
+CMD_ARGS=(
+  --model-id "$MODEL_ID"
+  --tracking-uri "file:$MLFLOW_TRACKING_URI"
+  --experiment-name "$EXPERIMENT_NAME"
+  --run-name "$RUN_NAME"
+  --steps "$STEPS"
+  --lr "$LR"
+  --image-size "$IMAGE_SIZE"
+  --channels "$CHANNELS"
+  --tv-weight "$TV_WEIGHT"
+  --l2-weight "$L2_WEIGHT"
+  --log-every "$LOG_EVERY"
+  --seed "$SEED"
+)
+
+# Add image specification
+if [[ -n "$IMAGE_IDS" ]]; then
+  echo "[INFO] Using multiple image reconstruction with IMAGE_IDS: $IMAGE_IDS"
+  # Convert space-separated string to array and add to command
+  IFS=' ' read -ra IMAGE_ARRAY <<< "$IMAGE_IDS"
+  CMD_ARGS+=(--image-ids)
+  CMD_ARGS+=("${IMAGE_ARRAY[@]}")
+else
+  echo "[INFO] Using single image reconstruction with SAMPLE_INDEX: $SAMPLE_INDEX"
+  CMD_ARGS+=(--sample-index "$SAMPLE_INDEX")
+fi
+
+# Add output directory if specified
+if [[ -n "$OUTPUT_DIR" ]]; then
+  CMD_ARGS+=(--output-dir "$OUTPUT_DIR")
+fi
+
+# Execute the command
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python \
   neurodecoders/input_optim/mlflow_run.py \
-  --model-id "$MODEL_ID" \
-  --tracking-uri "file:$MLFLOW_TRACKING_URI" \
-  --experiment-name "$EXPERIMENT_NAME" \
-  --run-name "$RUN_NAME" \
-  --steps "$STEPS" \
-  --lr "$LR" \
-  --image-size "$IMAGE_SIZE" \
-  --channels "$CHANNELS" \
-  --tv-weight "$TV_WEIGHT" \
-  --l2-weight "$L2_WEIGHT" \
-  --log-every "$LOG_EVERY" \
-  --seed "$SEED" \
-  ${IMAGE_IDS:+--image-ids $IMAGE_IDS} \
-  ${IMAGE_IDS:---sample-index "$SAMPLE_INDEX"} \
-  ${OUTPUT_DIR:+--output-dir "$OUTPUT_DIR"}
+  "${CMD_ARGS[@]}"
 
 echo "[INFO] Input optimization completed"
 echo "[INFO] MLflow path: ${MLFLOW_TRACKING_URI}"
