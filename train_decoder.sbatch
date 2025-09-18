@@ -34,21 +34,22 @@ EPOCHS=100
 # Define hyperparameter arrays
 LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
-MODEL_TYPES=("enhanced")
+MODEL_TYPES=("enhanced" "mirror_simple")
 OPTIMIZERS=("adam")
 LOSS_FUNCTIONS=("mse" "l1")
 SCHEDULERS=("none" "plateau")
 DATASETS=("gabor,100,100" "periodic_patterns,100,100")
 
 # Calculate indices from array task ID
-# We have 2 loss functions × 2 schedulers × 2 datasets = 8 combinations
-# Array task IDs: 0, 1, 2, 3, 4, 5, 6, 7
-LOSS_IDX=$((SLURM_ARRAY_TASK_ID % 2))           # 0 or 1
-SCHED_IDX=$(((SLURM_ARRAY_TASK_ID / 2) % 2))    # 0 or 1  
-DATASET_IDX=$((SLURM_ARRAY_TASK_ID / 4))        # 0 or 1
+# We have 2 model types × 2 loss × 2 sched × 2 datasets = 16 combos
+# Update array range accordingly at top if needed (currently 0-7)
+LOSS_IDX=$((SLURM_ARRAY_TASK_ID % 2))                 # 0 or 1
+SCHED_IDX=$(((SLURM_ARRAY_TASK_ID / 2) % 2))          # 0 or 1
+DATASET_IDX=$(((SLURM_ARRAY_TASK_ID / 4) % 2))        # 0 or 1
+MODEL_IDX=$(((SLURM_ARRAY_TASK_ID / 8) % 2))          # 0 or 1
 
 # Extract values
-MODEL_TYPE=${MODEL_TYPES[0]}
+MODEL_TYPE=${MODEL_TYPES[$MODEL_IDX]}
 LEARNING_RATE=${LEARNING_RATES[0]}
 BATCH_SIZE=${BATCH_SIZES[0]}
 OPTIMIZER=${OPTIMIZERS[0]}
@@ -59,7 +60,7 @@ DATASET=${DATASETS[$DATASET_IDX]}
 # Create run name with all hyperparameters
 # Extract dataset type from the dataset string (e.g., "gabor,100,100" -> "gabor")
 DATASET_TYPE=$(echo "$DATASET" | cut -d',' -f1)
-RUN_NAME="simplified_simulated_dataset_${DATASET_TYPE}_loss=${LOSS_FUNCTION}_sched=${SCHEDULER}"
+RUN_NAME="simplified_simulated_dataset_${DATASET_TYPE}_model=${MODEL_TYPE}_loss=${LOSS_FUNCTION}_sched=${SCHEDULER}"
 EXPERIMENT_NAME="troubleshooting_overfitting2"
 
 echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, loss=$LOSS_FUNCTION, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET"

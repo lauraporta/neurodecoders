@@ -80,6 +80,7 @@ def main(config: Dict[str, Any]):
             learning_rate=config["learning_rate"],
             optimizer=config["optimizer"],
             loss_fn=config["loss_function"],
+            model_type=config["model_type"],
             num_workers=config["num_workers"],
             pin_memory=config["pin_memory"],
             enable_mixed_precision=config["enable_mixed_precision"],

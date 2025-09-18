@@ -15,7 +15,10 @@ from pytorch_lightning.callbacks import (
 )
 
 from neurodecoders.data import NeuralDataModule
-from neurodecoders.decoder.models import SimpleDecoder
+from neurodecoders.decoder.models import (
+    MirrorSimpleEncoderDecoder,
+    SimpleDecoder,
+)
 
 # MLflow utilities are no longer needed in this module
 # They are handled by the calling script (mlflow_training.py)
@@ -101,10 +104,15 @@ class DecoderLightningModule(pl.LightningModule):
         learning_rate: float = 1e-4,
         loss_fn: str = "mse",
         optimizer_type: str = "adam",
+        model_type: str = "simple",
     ):
         super().__init__()
         self.save_hyperparameters()
-        self.model = SimpleDecoder(in_neurons, image_size)
+        if model_type == "mirror_simple":
+            self.model = MirrorSimpleEncoderDecoder(in_neurons, image_size)
+        else:
+            # Default and legacy types map to SimpleDecoder
+            self.model = SimpleDecoder(in_neurons, image_size)
         self.learning_rate = learning_rate
         self.optimizer_type = optimizer_type
 
@@ -184,6 +192,7 @@ def train_decoder(
     learning_rate: float = 1e-4,
     optimizer: str = "adam",
     loss_fn: str = "mse",
+    model_type: str = "simple",
     num_workers: int = 0,
     pin_memory: bool = True,
     enable_mixed_precision: bool = True,
@@ -215,6 +224,7 @@ def train_decoder(
         learning_rate=learning_rate,
         loss_fn=loss_fn,
         optimizer_type=optimizer,
+        model_type=model_type,
     )
 
     callbacks: List[pl.Callback] = [

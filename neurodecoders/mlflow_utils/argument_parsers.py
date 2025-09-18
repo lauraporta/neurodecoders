@@ -269,7 +269,7 @@ def create_decoder_parser() -> argparse.ArgumentParser:
     # Model configuration
     parser.add_argument(
         "--model-type",
-        choices=["simple", "enhanced"],
+        choices=["simple", "enhanced", "mirror_simple"],
         default="simple",
         help="Type of decoder model",
     )
