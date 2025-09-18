@@ -38,26 +38,27 @@ LOG_EVERY=${LOG_EVERY:-50}
 SEED=${SEED:-42}
 OUTPUT_DIR=${OUTPUT_DIR:-}
 SAMPLE_INDEX=${SAMPLE_INDEX:-0}
-IMAGE_IDS=${IMAGE_IDS:-}
-# include the parameters used (lr, steps, tv_weight, l2_weight) in the run name
+
+# Image IDs for multiple reconstruction (set to empty for single image)
+# Examples: IMAGE_IDS="0 1 2 10" or IMAGE_IDS="5 15 25" or IMAGE_IDS=""
+IMAGE_IDS=${IMAGE_IDS:-"0 1 2 10"}
+
+# Generate run name
 if [[ -n "$IMAGE_IDS" ]]; then
   RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}_imageIDs_${IMAGE_IDS// /_}_modelID_${MODEL_ID}}
 else
   RUN_NAME=${RUN_NAME:-input_optim_${SLURM_JOB_ID}_sample_${SAMPLE_INDEX}_modelID_${MODEL_ID}}
 fi
+
+# Log configuration
 echo "[INFO] MODEL_ID=$MODEL_ID"
-if [[ -n "$TARGET_RATES_NPY" ]]; then
-  echo "[INFO] TARGET_RATES_NPY=$TARGET_RATES_NPY"
-else
-  echo "[INFO] TARGET_RATES_NPY not set; will infer from MLflow dataset"
-  if [[ -n "$IMAGE_IDS" ]]; then
-    echo "[INFO] IMAGE_IDS=$IMAGE_IDS (multiple image reconstruction)"
-  else
-    echo "[INFO] SAMPLE_INDEX=$SAMPLE_INDEX (single image reconstruction)"
-  fi
-fi
 echo "[INFO] EXPERIMENT_NAME=$EXPERIMENT_NAME"
 echo "[INFO] RUN_NAME=$RUN_NAME"
+if [[ -n "$IMAGE_IDS" ]]; then
+  echo "[INFO] IMAGE_IDS=$IMAGE_IDS (multiple image reconstruction)"
+else
+  echo "[INFO] SAMPLE_INDEX=$SAMPLE_INDEX (single image reconstruction)"
+fi
 
 # Build command arguments
 CMD_ARGS=(
@@ -77,13 +78,11 @@ CMD_ARGS=(
 
 # Add image specification
 if [[ -n "$IMAGE_IDS" ]]; then
-  echo "[INFO] Using multiple image reconstruction with IMAGE_IDS: $IMAGE_IDS"
   # Convert space-separated string to array and add to command
   IFS=' ' read -ra IMAGE_ARRAY <<< "$IMAGE_IDS"
   CMD_ARGS+=(--image-ids)
   CMD_ARGS+=("${IMAGE_ARRAY[@]}")
 else
-  echo "[INFO] Using single image reconstruction with SAMPLE_INDEX: $SAMPLE_INDEX"
   CMD_ARGS+=(--sample-index "$SAMPLE_INDEX")
 fi
 
