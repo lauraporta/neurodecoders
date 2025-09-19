@@ -5,8 +5,37 @@ This module contains different neural network architectures for encoding
 images to neural firing rates.
 """
 
+import torch
 import torch.nn as nn
 import torchvision.models as models
+
+
+class ResNetMixin:
+    """
+    Mixin class providing common functionality for ResNet-based encoders.
+    """
+
+    def unfreeze_backbone(self, num_layers=None):
+        """
+        Unfreeze the last num_layers of the backbone for fine-tuning.
+        If num_layers is None, unfreezes all layers.
+        """
+        if num_layers is None:
+            # Unfreeze all backbone parameters
+            for param in self.backbone.parameters():
+                param.requires_grad = True
+            print("Unfroze all backbone layers")
+        else:
+            # Unfreeze only the last num_layers
+            backbone_children = list(self.backbone.children())
+            layers_to_unfreeze = backbone_children[-num_layers:]
+
+            for layer in layers_to_unfreeze:
+                for param in layer.parameters():
+                    param.requires_grad = True
+
+        layers_msg = num_layers if num_layers else "all"
+        print(f"Unfroze {layers_msg} backbone layers")
 
 
 class SimpleEncoder(nn.Module):
@@ -54,29 +83,18 @@ class SimpleEncoder(nn.Module):
         return x + 1
 
 
-class ResNetEncoder(nn.Module):
+class ResNetEncoder(nn.Module, ResNetMixin):
     """
-    Neural encoder using ResNet backbone for predicting firing rates.
-    Uses transfer learning with a pre-trained ResNet model.
+    Neural encoder using ResNet18 backbone for predicting firing rates.
+    Uses transfer learning with a pre-trained ResNet18 model.
     """
 
-    def __init__(
-        self, out_neurons, resnet_type="resnet18", freeze_backbone=True
-    ):
+    def __init__(self, out_neurons, freeze_backbone=True):
         super().__init__()
 
-        # Load pre-trained ResNet
-        if resnet_type == "resnet18":
-            self.backbone = models.resnet18(pretrained=True)
-            feature_dim = 512
-        elif resnet_type == "resnet34":
-            self.backbone = models.resnet34(pretrained=True)
-            feature_dim = 512
-        elif resnet_type == "resnet50":
-            self.backbone = models.resnet50(pretrained=True)
-            feature_dim = 2048
-        else:
-            raise ValueError(f"Unsupported ResNet type: {resnet_type}")
+        # Load pre-trained ResNet18
+        self.backbone = models.resnet18(pretrained=True)
+        feature_dim = 512
 
         # Remove the final classification layer
         self.backbone = nn.Sequential(*list(self.backbone.children())[:-1])
@@ -97,7 +115,6 @@ class ResNetEncoder(nn.Module):
             nn.Linear(512, out_neurons),
         )
 
-        self.resnet_type = resnet_type
         self.feature_dim = feature_dim
 
     def forward(self, x):
@@ -112,27 +129,110 @@ class ResNetEncoder(nn.Module):
         firing_rates = self.firing_head(features)
         return firing_rates + 1  # Ensure positive firing rates
 
-    def unfreeze_backbone(self, num_layers=None):
-        """
-        Unfreeze the last num_layers of the backbone for fine-tuning.
-        If num_layers is None, unfreezes all layers.
-        """
-        if num_layers is None:
-            # Unfreeze all backbone parameters
+
+class ResNetFromScratch(nn.Module, ResNetMixin):
+    """
+    ResNet18 encoder trained from scratch (no pre-trained weights).
+    Uses the same architecture as ResNetEncoder but with random initialization.
+    """
+
+    def __init__(self, out_neurons, freeze_backbone=False):
+        super().__init__()
+
+        # Load ResNet18 architecture without pre-trained weights
+        self.backbone = models.resnet18(pretrained=False)
+        feature_dim = 512
+
+        # Remove the final classification layer
+        self.backbone = nn.Sequential(*list(self.backbone.children())[:-1])
+
+        # Freeze backbone if requested (though typically not used for from-scratch)
+        if freeze_backbone:
             for param in self.backbone.parameters():
-                param.requires_grad = True
-            print("Unfroze all backbone layers")
-        else:
-            # Unfreeze only the last num_layers
-            backbone_children = list(self.backbone.children())
-            layers_to_unfreeze = backbone_children[-num_layers:]
+                param.requires_grad = False
 
-            for layer in layers_to_unfreeze:
-                for param in layer.parameters():
-                    param.requires_grad = True
+        # Add firing rate prediction head
+        self.firing_head = nn.Sequential(
+            nn.Linear(feature_dim, 1024),
+            nn.ELU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 512),
+            nn.ELU(),
+            nn.Dropout(0.2),
+            nn.Linear(512, out_neurons),
+        )
 
-        layers_msg = num_layers if num_layers else "all"
-        print(f"Unfroze {layers_msg} backbone layers")
+        self.feature_dim = feature_dim
+
+    def forward(self, x):
+        # ResNet expects 3 channels, ensure input is correct
+        if x.shape[1] == 1:  # If grayscale, repeat to make RGB
+            x = x.repeat(1, 3, 1, 1)
+        elif x.shape[1] != 3:
+            raise ValueError(f"Expected 1 or 3 channels, got {x.shape[1]}")
+
+        # Extract features
+        features = self.backbone(x).squeeze(-1).squeeze(-1)
+        firing_rates = self.firing_head(features)
+        return firing_rates + 1  # Ensure positive firing rates
+
+
+class ResNetConvOnly(nn.Module, ResNetMixin):
+    """
+    ResNet18 encoder using only pre-trained convolutional layers.
+    Uses pre-trained ResNet18 conv layers but replaces the fully connected
+    layers with a custom firing rate prediction head.
+    """
+
+    def __init__(self, out_neurons, freeze_backbone=True):
+        super().__init__()
+
+        # Load pre-trained ResNet18
+        self.backbone = models.resnet18(pretrained=True)
+        feature_dim = 512
+
+        # Extract only the convolutional layers (remove avgpool and fc)
+        # This gives us the pure conv feature extractor
+        conv_layers = []
+        for name, module in self.backbone.named_children():
+            if name != "fc" and name != "avgpool":
+                conv_layers.append(module)
+
+        self.backbone = nn.Sequential(*conv_layers)
+
+        # Freeze backbone if requested
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+
+        # Add firing rate prediction head
+        self.firing_head = nn.Sequential(
+            nn.Linear(feature_dim, 1024),
+            nn.ELU(),
+            nn.Dropout(0.3),
+            nn.Linear(1024, 512),
+            nn.ELU(),
+            nn.Dropout(0.2),
+            nn.Linear(512, out_neurons),
+        )
+
+        self.feature_dim = feature_dim
+
+    def forward(self, x):
+        # ResNet expects 3 channels, ensure input is correct
+        if x.shape[1] == 1:  # If grayscale, repeat to make RGB
+            x = x.repeat(1, 3, 1, 1)
+        elif x.shape[1] != 3:
+            raise ValueError(f"Expected 1 or 3 channels, got {x.shape[1]}")
+
+        # Extract features using conv layers only
+        features = self.backbone(x)
+        # Global average pooling to get fixed-size features
+        features = torch.nn.functional.adaptive_avg_pool2d(features, (1, 1))
+        features = features.squeeze(-1).squeeze(-1)
+
+        firing_rates = self.firing_head(features)
+        return firing_rates + 1  # Ensure positive firing rates
 
 
 class SimpleEncoderWithSkipConnection(nn.Module):

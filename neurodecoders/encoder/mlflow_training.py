@@ -21,7 +21,9 @@ from neurodecoders.data.loading import (
     load_synthetic_split_data,
 )
 from neurodecoders.encoder.models import (
+    ResNetConvOnly,
     ResNetEncoder,
+    ResNetFromScratch,
     SimpleEncoder,
     SimpleEncoderWithSkipConnection,
 )
@@ -57,11 +59,21 @@ def get_model(config: Dict[str, Any]) -> torch.nn.Module:
     elif model_type == "skip":
         return SimpleEncoderWithSkipConnection(out_neurons=out_neurons)
     elif model_type == "resnet":
-        resnet_type = config["resnet_type"]
         freeze_backbone = config["freeze_backbone"]
         return ResNetEncoder(
             out_neurons=out_neurons,
-            resnet_type=resnet_type,
+            freeze_backbone=freeze_backbone,
+        )
+    elif model_type == "resnet_scratch":
+        freeze_backbone = config["freeze_backbone"]
+        return ResNetFromScratch(
+            out_neurons=out_neurons,
+            freeze_backbone=freeze_backbone,
+        )
+    elif model_type == "resnet_conv_only":
+        freeze_backbone = config["freeze_backbone"]
+        return ResNetConvOnly(
+            out_neurons=out_neurons,
             freeze_backbone=freeze_backbone,
         )
     else:

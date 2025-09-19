@@ -72,21 +72,21 @@ def create_encoder_parser() -> argparse.ArgumentParser:
     # Model configuration
     parser.add_argument(
         "--model-type",
-        choices=["simple", "skip", "resnet"],
+        choices=[
+            "simple",
+            "skip",
+            "resnet",
+            "resnet_scratch",
+            "resnet_conv_only",
+        ],
         default="simple",
         help="Type of encoder model",
-    )
-    parser.add_argument(
-        "--resnet-type",
-        choices=["resnet18", "resnet34", "resnet50"],
-        default="resnet18",
-        help="ResNet type (only for resnet model)",
     )
     parser.add_argument(
         "--freeze-backbone",
         action="store_true",
         default=True,
-        help="Freeze ResNet backbone (only for resnet model)",
+        help="Freeze ResNet18 backbone (only for resnet models)",
     )
     parser.add_argument(
         "--unfreeze-backbone",
@@ -391,7 +391,6 @@ def parse_encoder_args(args: argparse.Namespace) -> Dict[str, Any]:
     config = {
         "model_type": args.model_type,
         "out_neurons": None,  # Will be inferred from dataset
-        "resnet_type": args.resnet_type,
         "freeze_backbone": freeze_backbone,
         "learning_rate": args.learning_rate,
         "epochs": args.epochs,

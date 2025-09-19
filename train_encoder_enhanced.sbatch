@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-01:00 # time (D-HH:MM)
-#SBATCH --array=0-15%5
+#SBATCH --array=0-24%5
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -34,16 +34,16 @@ EPOCHS=100
 # Define hyperparameter arrays
 LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
-MODEL_TYPES=("simple" "skip" "resnet")
+MODEL_TYPES=("simple" "skip" "resnet" "resnet_scratch" "resnet_conv_only")
 OPTIMIZERS=("adam")
 SCHEDULERS=("none")
 DATASETS=("gabor,70,70" "perlin_noise_patterns,100,100" "perlin_noise_patterns,70,70" "periodic_patterns,100,100" "periodic_patterns,70,70")
 
 # Calculate indices from array task ID
-# For this simple case, we're just sweeping over datasets
-# DATASET_IDX=$SLURM_ARRAY_TASK_ID
-MODEL_TYPE_IDX=$((SLURM_ARRAY_TASK_ID % 3))
-DATASET_IDX=$((SLURM_ARRAY_TASK_ID / 3))
+# We have 5 model types × 5 datasets = 25 combinations
+# Update array range to 0-24 (25 tasks total)
+MODEL_TYPE_IDX=$((SLURM_ARRAY_TASK_ID % 5))
+DATASET_IDX=$((SLURM_ARRAY_TASK_ID / 5))
 
 # Extract values
 MODEL_TYPE=${MODEL_TYPES[$MODEL_TYPE_IDX]}

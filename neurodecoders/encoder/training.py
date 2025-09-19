@@ -279,8 +279,13 @@ class UnfreezeCallback(pl.Callback):
     def on_train_epoch_start(self, trainer, pl_module):
         if trainer.current_epoch == self.unfreeze_epoch:
             print(f"Unfreezing backbone at epoch {self.unfreeze_epoch}")
-            for param in pl_module.model.backbone.parameters():
-                param.requires_grad = True
+            # Use the model's unfreeze_backbone method if available
+            if hasattr(pl_module.model, "unfreeze_backbone"):
+                pl_module.model.unfreeze_backbone()
+            else:
+                # Fallback for models without the method
+                for param in pl_module.model.backbone.parameters():
+                    param.requires_grad = True
 
 
 def _train_single_model(
@@ -575,11 +580,25 @@ def _clone_model(model: nn.Module) -> nn.Module:
     elif model_class.__name__ == "ResNetEncoder":
         # Extract out_neurons from the last layer of the firing_head module
         out_neurons = model.firing_head[-1].out_features
-        resnet_type = getattr(model, "resnet_type", "resnet18")
         freeze_backbone = getattr(model, "freeze_backbone", True)
         cloned_model = model_class(
             out_neurons=out_neurons,
-            resnet_type=resnet_type,
+            freeze_backbone=freeze_backbone,
+        )
+    elif model_class.__name__ == "ResNetFromScratch":
+        # Extract out_neurons from the last layer of the firing_head module
+        out_neurons = model.firing_head[-1].out_features
+        freeze_backbone = getattr(model, "freeze_backbone", False)
+        cloned_model = model_class(
+            out_neurons=out_neurons,
+            freeze_backbone=freeze_backbone,
+        )
+    elif model_class.__name__ == "ResNetConvOnly":
+        # Extract out_neurons from the last layer of the firing_head module
+        out_neurons = model.firing_head[-1].out_features
+        freeze_backbone = getattr(model, "freeze_backbone", True)
+        cloned_model = model_class(
+            out_neurons=out_neurons,
             freeze_backbone=freeze_backbone,
         )
     else:
