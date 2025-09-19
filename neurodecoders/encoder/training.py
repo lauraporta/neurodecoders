@@ -111,6 +111,21 @@ class MLflowHistoryCallback(Callback):
                     pl_module.val_losses = []
                 pl_module.val_losses.append(val_loss)
 
+        # Get test loss from logged metrics (if available)
+        if trainer.logged_metrics:
+            test_loss = trainer.logged_metrics.get("test_loss_epoch")
+            if test_loss is not None:
+                if isinstance(test_loss, torch.Tensor):
+                    test_loss = test_loss.item()
+
+                log_training_metrics(
+                    {"test_loss": float(test_loss)}, step=self.current_epoch
+                )
+
+                if not hasattr(pl_module, "test_losses"):
+                    pl_module.test_losses = []
+                pl_module.test_losses.append(test_loss)
+
         # Mark this epoch as logged
         self.logged_epochs.add(self.current_epoch)
 
@@ -154,6 +169,7 @@ class EncoderLightningModule(pl.LightningModule):
         # Store training history for plotting
         self.train_losses: list[float] = []
         self.val_losses: list[float] = []
+        self.test_losses: list[float] = []
 
     def forward(self, x):
         return self.model(x)
@@ -269,6 +285,51 @@ class EncoderLightningModule(pl.LightningModule):
         }
 
 
+class TestEvaluationCallback(pl.Callback):
+    """Callback to evaluate test set during training epochs."""
+    
+    def __init__(self, test_dataloader):
+        self.test_dataloader = test_dataloader
+        self.test_losses = []
+    
+    def on_train_epoch_end(self, trainer, pl_module):
+        """Evaluate test set at the end of each training epoch."""
+        if self.test_dataloader is None:
+            return
+            
+        # Set model to evaluation mode
+        pl_module.eval()
+        
+        test_losses = []
+        with torch.no_grad():
+            for batch in self.test_dataloader:
+                if isinstance(batch, (list, tuple)) and len(batch) == 2:
+                    x, y = batch
+                    # Move to device
+                    x = x.to(pl_module.device)
+                    y = y.to(pl_module.device)
+                    
+                    # Forward pass
+                    pred = pl_module.model(x)
+                    loss = pl_module.loss_fn(pred, y)
+                    test_losses.append(loss.item())
+        
+        if test_losses:
+            avg_test_loss = np.mean(test_losses)
+            self.test_losses.append(avg_test_loss)
+            
+            # Store in the module
+            if not hasattr(pl_module, "test_losses"):
+                pl_module.test_losses = []
+            pl_module.test_losses.append(avg_test_loss)
+            
+            # Log to PyTorch Lightning
+            pl_module.log("test_loss_epoch", avg_test_loss, on_step=False, on_epoch=True)
+        
+        # Set model back to training mode
+        pl_module.train()
+
+
 class UnfreezeCallback(pl.Callback):
     """Callback to unfreeze backbone layers at a specific epoch."""
 
@@ -354,6 +415,11 @@ def _train_single_model(
     # Add MLflow history callback if MLflow is enabled
     if enable_mlflow:
         callbacks.append(MLflowHistoryCallback())
+
+        # Add test evaluation callback to track test loss during training
+        test_dataloader = data_module.test_dataloader()
+        if test_dataloader is not None:
+            callbacks.append(TestEvaluationCallback(test_dataloader))
 
         # Add verification callback
         verification_callback = EncoderVerificationCallback(
@@ -810,6 +876,15 @@ def train_encoder(
             and lightning_model.val_losses
         ):
             fold_metrics["val_losses"].append(lightning_model.val_losses[-1])
+        
+        # Collect test loss from training epochs (if available)
+        if (
+            hasattr(lightning_model, "test_losses")
+            and lightning_model.test_losses
+        ):
+            fold_metrics["test_losses"].append(
+                lightning_model.test_losses[-1]
+            )
 
         # Get test metrics from trainer
         test_results = trainer.test(
