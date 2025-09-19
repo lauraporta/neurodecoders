@@ -7,6 +7,7 @@ import os
 from typing import Any, Dict
 
 import mlflow
+import numpy as np
 
 from neurodecoders.data.loading import (
     normalize_images_and_rates,
@@ -37,21 +38,17 @@ def main(config: Dict[str, Any]):
     ):
         log_training_config(config)
 
-        # Load synthetic data using the same method as encoder
-        from neurodecoders.data.loading import load_synthetic_split_data
-
-        # Create config for synthetic data loading
-        synthetic_config = {
-            "dataset_type": config["dataset_type"],
-            "sta_type": config["sta_type"],
-            "n_neurons": config["n_neurons"],
-            "n_images": config["n_images"],
-        }
-
-        images, firing, labels, metadata = load_synthetic_split_data(
-            synthetic_config
-        )
+        # Load existing dataset directly
+        from neurodecoders.data.loading import load_npz_dataset
+        
+        # Use existing decoder test dataset
+        dataset_path = "workspace/datasets/synthetic/train/decoder_test_data_3neurons_10images_20240901_120000.npz"
+        images, firing = load_npz_dataset(dataset_path)
         images, firing, H, W = normalize_images_and_rates(images, firing)
+        
+        print(f"Loaded dataset: {dataset_path}")
+        print(f"Images shape: {images.shape}")
+        print(f"Firing rates shape: {firing.shape}")
 
         # Create data module for dataset logging
         from neurodecoders.data import NeuralDataModule
@@ -59,9 +56,9 @@ def main(config: Dict[str, Any]):
         data_module_for_logging = NeuralDataModule(
             images=images,
             firing_rates=firing,
-            labels=labels,
+            labels=None,  # No labels for decoder training
             batch_size=config["batch_size"],
-            dataset_metadata=metadata,
+            dataset_metadata={},  # Empty metadata for now
             use_memory_mapping=False,
             chunk_size=100,
             prefetch_factor=2,
@@ -154,6 +151,82 @@ def main(config: Dict[str, Any]):
                 else None,
             },
         )
+
+        # Generate and log decoder comparison plots
+        try:
+            from neurodecoders.decoder.generate_images import (
+                create_decoder_comparison_plots,
+                generate_decoder_images,
+            )
+            import matplotlib.pyplot as plt
+            
+            # Create output directory for plots
+            plot_dir = get_path("workspace/plots/decoder_training")
+            os.makedirs(plot_dir, exist_ok=True)
+            
+            # Select a few test samples for visualization
+            n_vis_samples = min(5, len(images))
+            vis_indices = np.random.choice(len(images), n_vis_samples, replace=False)
+            vis_images = images[vis_indices]
+            vis_firing = firing[vis_indices]
+            
+            print(f"Selected {n_vis_samples} samples for visualization")
+            print(f"Original images shape: {vis_images.shape}")
+            print(f"Firing rates shape: {vis_firing.shape}")
+            print(f"Original images range: [{vis_images.min():.3f}, {vis_images.max():.3f}]")
+            print(f"Firing rates range: [{vis_firing.min():.3f}, {vis_firing.max():.3f}]")
+            
+            # Generate images using the trained decoder
+            device = torch.device("cuda" if torch.cuda.is_available() 
+                                else "mps" if torch.backends.mps.is_available() 
+                                else "cpu")
+            
+            # Extract the underlying PyTorch model from Lightning module
+            pytorch_model = model.model
+            pytorch_model.to(device)
+            pytorch_model.eval()  # Ensure eval mode
+            
+            generated_images = generate_decoder_images(pytorch_model, vis_firing, device)
+            
+            print(f"Generated images shape: {generated_images.shape}")
+            print(f"Generated images range: [{generated_images.min():.3f}, {generated_images.max():.3f}]")
+            
+            # Create comparison plot
+            comparison_path = os.path.join(plot_dir, "decoder_training_comparison.png")
+            create_decoder_comparison_plots(
+                original_images=list(vis_images),
+                generated_images=list(generated_images),
+                image_ids=vis_indices.tolist(),
+                output_path=comparison_path,
+            )
+            
+            # Log the comparison plot
+            mlflow.log_artifact(comparison_path, "decoder_training_comparison.png")
+            print(f"✅ Decoder training comparison plot logged: {comparison_path}")
+            
+            # Create and log training loss plot
+            if model.train_losses and model.val_losses:
+                loss_plot_path = os.path.join(plot_dir, "training_losses.png")
+                plt.figure(figsize=(10, 6))
+                plt.plot(model.train_losses, label='Training Loss', alpha=0.8)
+                plt.plot(model.val_losses, label='Validation Loss', alpha=0.8)
+                plt.xlabel('Epoch')
+                plt.ylabel('Loss')
+                plt.title('Decoder Training Progress')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(loss_plot_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                
+                # Log the loss plot
+                mlflow.log_artifact(loss_plot_path, "training_losses.png")
+                print(f"✅ Training loss plot logged: {loss_plot_path}")
+            
+        except Exception as e:
+            print(f"⚠️  Could not generate decoder training plots: {e}")
+            import traceback
+            traceback.print_exc()
 
     print("Training complete. View runs with: mlflow ui")
 
