@@ -519,79 +519,142 @@ def main(args: argparse.Namespace) -> None:
             else:
                 print(f"Saved image: {out_img}")
         else:
-            # Multiple image reconstruction
-            target_rates_list = []
-            for img_id in image_ids:
-                target_rates = _infer_target_rates_from_model(
-                    model_id=args.model_id, sample_index=img_id
-                )
-                target_rates_list.append(target_rates)
-
-            # Load original images for comparison
+            # Multiple image reconstruction - create separate runs for each image
+            print(f"[INFO] Creating separate MLflow runs for {len(image_ids)} images")
+            
+            # End the current run first
+            mlflow.end_run()
+            
+            for i, img_id in enumerate(image_ids):
+                print(f"[INFO] Processing image {i+1}/{len(image_ids)}: ID {img_id}")
+                
+                # Create a new run for each image
+                run_name = f"{args.run_name}_image_{img_id}" if args.run_name else f"input_optim_image_{img_id}_{args.model_id}"
+                
+                with mlflow.start_run(run_name=run_name, log_system_metrics=True):
+                    # Log info about the source model's MLflow run/experiment
+                    _log_model_source_info(args.model_id)
+                    
+                    # Log params for this specific image
+                    mlflow.log_params({
+                        "model_id": args.model_id,
+                        "steps": args.steps,
+                        "lr": args.lr,
+                        "image_size": args.image_size,
+                        "channels": args.channels,
+                        "tv_weight": args.tv_weight,
+                        "l2_weight": args.l2_weight,
+                        "log_every": args.log_every,
+                        "seed": args.seed,
+                        "image_id": img_id,
+                        "image_index": i,
+                        "total_images": len(image_ids),
+                    })
+                    
+                    # Get target rates for this specific image
+                    target_rates = _infer_target_rates_from_model(
+                        model_id=args.model_id, sample_index=img_id
+                    )
+                    mlflow.log_param("target_source", "mlflow_dataset")
+                    mlflow.log_param("n_neurons", int(target_rates.shape[0]))
+                    
+                    # Load original image for comparison
+                    try:
+                        print(f"[DEBUG] Loading original image for ID: {img_id}")
+                        original_images = _load_original_images_from_dataset(
+                            model_id=args.model_id, image_ids=[img_id]
+                        )
+                        print("[DEBUG] Successfully loaded original image")
+                        mlflow.log_param("original_image_loaded", True)
+                    except Exception as e:
+                        print(f"Warning: Could not load original image: {e}")
+                        original_images = None
+                        mlflow.log_param("original_image_loaded", False)
+                    
+                    # Create optimizer for this specific image
+                    optim_runner = ImageOptimizer(
+                        encoder=encoder, target_rates=target_rates, config=cfg
+                    )
+                    
+                    # Optimize this specific image
+                    img_np, metrics = optim_runner.optimize()
+                    
+                    # Save individual reconstruction
+                    individual_path = os.path.join(
+                        out_dir, f"reconstruction_{img_id}.png"
+                    )
+                    optim_runner.save_image(individual_path)
+                    
+                    # Save numpy array
+                    npy_path = os.path.join(out_dir, f"reconstruction_{img_id}.npy")
+                    np.save(npy_path, img_np)
+                    
+                    # Create comparison plot for this single image
+                    if original_images:
+                        comparison_path = os.path.join(out_dir, f"comparison_plot_{img_id}.png")
+                        from neurodecoders.input_optim.optimizer import (
+                            create_comparison_plots,
+                        )
+                        create_comparison_plots(
+                            original_images=original_images,
+                            reconstructed_images=[img_np],
+                            image_ids=[img_id],
+                            output_path=comparison_path,
+                        )
+                        print(f"Single image comparison plot saved: {comparison_path}")
+                        log_single_artifact(comparison_path, artifact_path="images")
+                    else:
+                        # Fallback: save individual reconstruction
+                        log_single_artifact(individual_path, artifact_path="images")
+                    
+                    # Log final metrics
+                    if metrics:
+                        mlflow.log_metrics(metrics)
+                    
+                    # Log numpy array
+                    log_single_artifact(npy_path, artifact_path="arrays")
+                    
+                    print(f"Optimization complete for image {img_id}. Artifacts logged to MLflow.")
+            
+            # Create a final comparison plot with all images
             try:
-                print(f"[DEBUG] Loading original images for IDs: {image_ids}")
-                original_images = _load_original_images_from_dataset(
+                print("[INFO] Creating final comparison plot with all images")
+                all_original_images = _load_original_images_from_dataset(
                     model_id=args.model_id, image_ids=image_ids
                 )
-                print(
-                    f"[DEBUG] Successfully loaded "
-                    f"{len(original_images)} original images"
-                )
-                mlflow.log_param("original_images_loaded", True)
+                
+                # Load all reconstructed images
+                all_reconstructed_images = []
+                for img_id in image_ids:
+                    npy_path = os.path.join(out_dir, f"reconstruction_{img_id}.npy")
+                    if os.path.exists(npy_path):
+                        reconstructed_img = np.load(npy_path)
+                        all_reconstructed_images.append(reconstructed_img)
+                
+                if all_reconstructed_images:
+                    final_comparison_path = os.path.join(out_dir, "final_comparison_plot.png")
+                    from neurodecoders.input_optim.optimizer import (
+                        create_comparison_plots,
+                    )
+                    create_comparison_plots(
+                        original_images=all_original_images,
+                        reconstructed_images=all_reconstructed_images,
+                        image_ids=image_ids,
+                        output_path=final_comparison_path,
+                    )
+                    print(f"Final comparison plot saved: {final_comparison_path}")
+                    
+                    # Log the final comparison plot in the main run
+                    log_single_artifact(
+                        final_comparison_path, 
+                        artifact_path="images/final_comparison_plot.png"
+                    )
             except Exception as e:
-                print(f"Warning: Could not load original images: {e}")
-                original_images = None
-                mlflow.log_param("original_images_loaded", False)
-
-            mlflow.log_param("target_source", "mlflow_dataset")
-            mlflow.log_param("n_neurons", int(target_rates_list[0].shape[0]))
-            mlflow.log_param("n_images", len(image_ids))
-
-            # Create optimizer instance for multiple reconstructions
-            optim_runner = ImageOptimizer(
-                encoder=encoder, target_rates=target_rates_list[0], config=cfg
-            )
-
-            # Reconstruct multiple images
-            original_images, reconstructed_images = (
-                optim_runner.reconstruct_multiple_images(
-                    target_rates_list=target_rates_list,
-                    image_ids=image_ids,
-                    output_dir=out_dir,
-                    original_images=original_images,
-                )
-            )
-
-            # Log all artifacts
-            for i, img_id in enumerate(image_ids):
-                img_path = os.path.join(
-                    out_dir, f"reconstruction_{img_id}.png"
-                )
-                npy_path = os.path.join(
-                    out_dir, f"reconstruction_{img_id}.npy"
-                )
-
-                if os.path.exists(img_path):
-                    log_single_artifact(
-                        img_path,
-                        artifact_path=f"images/reconstruction_{img_id}.png",
-                    )
-                if os.path.exists(npy_path):
-                    log_single_artifact(
-                        npy_path,
-                        artifact_path=f"arrays/reconstruction_{img_id}.npy",
-                    )
-
-            # Log comparison plot if it exists
-            comparison_path = os.path.join(out_dir, "comparison_plot.png")
-            if os.path.exists(comparison_path):
-                log_single_artifact(
-                    comparison_path, artifact_path="images/comparison_plot.png"
-                )
-
+                print(f"Warning: Could not create final comparison plot: {e}")
+            
             print(
                 f"Multiple image reconstruction complete. {len(image_ids)} "
-                "images processed."
+                "images processed with separate MLflow runs."
             )
             print(f"Output directory: {out_dir}")
 

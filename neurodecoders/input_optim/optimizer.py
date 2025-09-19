@@ -49,7 +49,7 @@ def create_comparison_plots(
     reconstructed_images: List[np.ndarray],
     image_ids: List[int],
     output_path: str,
-    figsize: Tuple[int, int] = (15, 10),
+    figsize: Tuple[int, int] = (8, 6),
 ) -> None:
     """Create comprehensive comparison plots with original,
     reconstructed, and difference images.
@@ -64,6 +64,14 @@ def create_comparison_plots(
     n_images = len(original_images)
     if n_images == 0:
         return
+
+    # Adjust figure size based on number of images
+    if n_images == 1:
+        figsize = (6, 8)  # Taller for single image
+    elif n_images <= 3:
+        figsize = (4 * n_images, 8)  # 4 units per image
+    else:
+        figsize = (12, 8)  # Cap at reasonable size for many images
 
     # Create subplots: 3 rows
     # (original, reconstructed, difference) x n_images cols
@@ -80,29 +88,49 @@ def create_comparison_plots(
 
         # Resize original image to match reconstructed image dimensions
         if orig.shape != recon.shape:
+            print(f"[DEBUG] Resizing original {orig.shape} to match reconstructed {recon.shape}")
             try:
                 # Try PIL first (most common and reliable)
                 from PIL import Image
 
-                # Convert to PIL Image
+                # Convert to PIL Image - ensure we have a 2D image
                 if len(orig.shape) == 3:
-                    pil_img = Image.fromarray(
-                        (orig.squeeze() * 255).astype(np.uint8)
-                    )
+                    # If 3D, take the first channel or squeeze
+                    if orig.shape[0] == 1:
+                        orig_2d = orig.squeeze(0)
+                    else:
+                        orig_2d = orig[0]
                 else:
-                    pil_img = Image.fromarray((orig * 255).astype(np.uint8))
+                    orig_2d = orig
+
+                pil_img = Image.fromarray(
+                    (orig_2d * 255).astype(np.uint8)
+                )
 
                 # Resize to match reconstructed image
-                target_size = (
-                    recon.shape[1],
-                    recon.shape[0],
-                )  # PIL uses (width, height)
+                if len(recon.shape) == 3:
+                    target_size = (
+                        recon.shape[2],  # width
+                        recon.shape[1],   # height
+                    )  # PIL uses (width, height)
+                else:
+                    target_size = (
+                        recon.shape[1],  # width
+                        recon.shape[0],  # height
+                    )  # PIL uses (width, height)
                 pil_img = pil_img.resize(target_size, Image.LANCZOS)
 
                 # Convert back to numpy
                 orig = np.array(pil_img) / 255.0
-                if len(recon.shape) == 3:
-                    orig = orig.reshape(recon.shape)
+                # Ensure the shape matches the reconstructed image
+                if len(recon.shape) == 3 and len(orig.shape) == 2:
+                    orig = orig.reshape(1, orig.shape[0], orig.shape[1])
+                elif len(recon.shape) == 2 and len(orig.shape) == 3:
+                    orig = orig.squeeze()
+                # Ensure we have a 2D image for display
+                if len(orig.shape) == 1:
+                    # If we somehow got a 1D array, reshape it to 2D
+                    orig = orig.reshape(int(np.sqrt(len(orig))), int(np.sqrt(len(orig))))
                 print(f"[DEBUG] PIL resized original image to {orig.shape}")
             except ImportError:
                 try:
@@ -114,6 +142,14 @@ def create_comparison_plots(
                         for j in range(len(orig.shape))
                     ]
                     orig = zoom(orig, zoom_factors, order=1)
+                    # Ensure the shape matches the reconstructed image
+                    if len(recon.shape) == 3 and len(orig.shape) == 2:
+                        orig = orig.reshape(1, orig.shape[0], orig.shape[1])
+                    elif len(recon.shape) == 2 and len(orig.shape) == 3:
+                        orig = orig.squeeze()
+                    # Ensure we have a 2D image for display
+                    if len(orig.shape) == 1:
+                        orig = orig.reshape(int(np.sqrt(len(orig))), int(np.sqrt(len(orig))))
                     print(
                         f"[DEBUG] Scipy resized original image to {orig.shape}"
                     )
@@ -140,6 +176,15 @@ def create_comparison_plots(
                         orig = orig[y_indices[:, None], x_indices[None, :]]
                     else:
                         orig = orig[y_indices[:, None], x_indices[None, :]]
+                    
+                    # Ensure the shape matches the reconstructed image
+                    if len(recon.shape) == 3 and len(orig.shape) == 2:
+                        orig = orig.reshape(1, orig.shape[0], orig.shape[1])
+                    elif len(recon.shape) == 2 and len(orig.shape) == 3:
+                        orig = orig.squeeze()
+                    # Ensure we have a 2D image for display
+                    if len(orig.shape) == 1:
+                        orig = orig.reshape(int(np.sqrt(len(orig))), int(np.sqrt(len(orig))))
 
         # Calculate difference
         diff = np.abs(orig - recon)
@@ -159,11 +204,19 @@ def create_comparison_plots(
         axes[2, i].set_title(f"Difference {img_id}", fontsize=12)
         axes[2, i].axis("off")
 
-        # Add colorbar for difference
-        plt.colorbar(im, ax=axes[2, i], fraction=0.046, pad=0.04)
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    # Add a single colorbar for all difference images
+    if n_images > 0:
+        # Create a colorbar for the difference images
+        fig.subplots_adjust(right=0.85)
+        cbar_ax = fig.add_axes([0.9, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
+        cbar = fig.colorbar(im, cax=cbar_ax)
+        cbar.set_label('Difference', rotation=270, labelpad=15)
+        # Don't use tight_layout when we have custom colorbar
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    else:
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    
     plt.close()
 
 
@@ -396,7 +449,16 @@ def load_encoder_from_mlflow(model_id: str) -> nn.Module:
     """Load a PyTorch encoder from MLflow given a model identifier.
 
     Tries common registry URIs; falls back to latest run's encoder_model.
+    Also handles local file paths.
     """
+    # Check if it's a local file path first
+    if os.path.exists(model_id):
+        try:
+            device = _to_device()
+            return load_encoder_model(model_id, device)
+        except Exception as e:
+            print(f"Warning: Could not load local model {model_id}: {e}")
+    
     tried = []
     uris = [
         f"models:/{model_id}",
