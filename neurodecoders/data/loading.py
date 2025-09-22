@@ -82,6 +82,7 @@ def _load_from_split_structure(
     )
     n_images = str(int(config["n_images"])) if "n_images" in config else None
     sta_type = config.get("sta_type", "")
+    dataset_type = config.get("dataset_type", "")
 
     candidates = []
     for fname in avail:
@@ -90,6 +91,7 @@ def _load_from_split_structure(
             (n_neurons is None or meta.get("n_neurons") == n_neurons)
             and (n_images is None or meta.get("n_images") == n_images)
             and (not sta_type or meta.get("sta_type") == sta_type)
+            and (not dataset_type or meta.get("dataset_type") == dataset_type)
         ):
             fpath = os.path.join(train_dir, fname)
             try:
@@ -101,7 +103,8 @@ def _load_from_split_structure(
     if not candidates:
         raise ValueError(
             "No train dataset matches the requested parameters. "
-            f"Requested n_neurons={n_neurons}, n_images={n_images}, "
+            f"Requested dataset_type={dataset_type or 'ANY'}, "
+            f"n_neurons={n_neurons}, n_images={n_images}, "
             f"sta_type={sta_type}."
         )
 
