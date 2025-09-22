@@ -91,35 +91,92 @@ def log_training_metrics(metrics: Dict[str, float], step: Optional[int] = None) 
     mlflow.log_metrics(metrics, step=step)
 
 
-def log_dataset_input_and_params(
-    dataset_name: str,
-    n_images: int,
-    n_neurons: int,
-    additional_params: Optional[Dict[str, Any]] = None,
-) -> None:
+def log_dataset_input_and_params(data_module) -> None:
     """
-    Log dataset-related input parameters to MLflow.
+    Log dataset metadata as MLflow Input and also as params.
 
-    Args:
-        dataset_name: Name of the dataset
-        n_images: Number of images used
-        n_neurons: Number of neurons
-        additional_params: Optional dictionary of additional parameters
+    Mirrors the encoder's dataset logging so encoder/decoder can share it.
     """
-    params = {
-        "dataset_name": dataset_name,
-        "n_images": int(n_images),
-        "n_neurons": int(n_neurons),
-    }
-    if additional_params:
-        # Ensure values are JSON/param safe
-        for k, v in additional_params.items():
-            try:
-                _ = hash(v)
-                params[k] = v
-            except Exception:
-                params[k] = str(v)
-    mlflow.log_params(params)
+    # Create metadata summary DataFrame
+    metadata_summary = pd.DataFrame(
+        [
+            {
+                "dataset_id": data_module.get_dataset_id(),
+                "git_commit": data_module.git_commit,
+                "git_branch": data_module.git_branch,
+                "timestamp": data_module.timestamp,
+                "images_shape": str(data_module.images.shape),
+                "firing_rates_shape": str(data_module.firing_rates.shape),
+                "labels_shape": (
+                    str(data_module.labels.shape)
+                    if hasattr(data_module, "labels")
+                    and data_module.labels is not None
+                    else "None"
+                ),
+                "total_size_mb": data_module.total_size_mb,
+                "dataset_type": data_module.dataset_type,
+                "sta_pattern": data_module.sta_pattern,
+                "n_neurons": data_module.n_neurons,
+                "n_images": data_module.n_images,
+            }
+        ]
+    )
+
+    # Derive a source info best-effort
+    try:
+        from neurodecoders.paths import get_path
+
+        dataset_filename = (
+            data_module.dataset_filename
+            if hasattr(data_module, "dataset_filename")
+            else "unknown"
+        )
+        source_info = (
+            f"{get_path('workspace/datasets/synthetic')}/{dataset_filename}"
+        )
+    except Exception:
+        source_info = "unknown"
+
+    # Log the metadata dataset as MLflow input
+    dataset_id = data_module.get_dataset_id()
+    try:
+        data_module.get_metadata_summary()
+    except Exception:
+        pass
+
+    metadata_name = f"neural_data_{dataset_id}"
+    summary_dataset = mlflow.data.from_pandas(
+        metadata_summary, source=source_info, name=metadata_name
+    )
+    mlflow.log_input(summary_dataset, context="training_data")
+
+    # Also log as parameters for backward compatibility
+    try:
+        dataset_params = data_module.get_mlflow_parameters()
+        mlflow.log_params(dataset_params)
+    except Exception:
+        # Fall back to flattened subset
+        images_attr = (
+            data_module.images if hasattr(data_module, "images") else None
+        )
+        firing_rates_attr = (
+            data_module.firing_rates
+            if hasattr(data_module, "firing_rates")
+            else None
+        )
+
+        fallback = {
+            "dataset_id": dataset_id,
+            "images_shape": (
+                str(images_attr.shape) if images_attr is not None else "None"
+            ),
+            "firing_rates_shape": (
+                str(firing_rates_attr.shape)
+                if firing_rates_attr is not None
+                else "None"
+            ),
+        }
+        mlflow.log_params(fallback)
 
 
 def log_model_artifacts(model: LightningModule, artifact_subdir: str = "model") -> None:
