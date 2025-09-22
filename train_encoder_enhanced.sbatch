@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-01:00 # time (D-HH:MM)
-#SBATCH --array=0-24%5
+#SBATCH --array=0-0%5
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -37,27 +37,63 @@ BATCH_SIZES=(32)
 MODEL_TYPES=("simple" "skip" "resnet" "resnet_scratch" "resnet_conv_only")
 OPTIMIZERS=("adam")
 SCHEDULERS=("none")
-DATASETS=("gabor,70,70" "perlin_noise_patterns,100,100" "perlin_noise_patterns,70,70" "periodic_patterns,100,100" "periodic_patterns,70,70")
+DATASETS=("gabor,100,100" "perlin_noise_patterns,100,100" "periodic_patterns,100,100")
 
-# Calculate indices from array task ID
-# We have 5 model types × 5 datasets = 25 combinations
-# Update array range to 0-24 (25 tasks total)
-MODEL_TYPE_IDX=$((SLURM_ARRAY_TASK_ID % 5))
-DATASET_IDX=$((SLURM_ARRAY_TASK_ID / 5))
+# ------------------------------------------
+# Compute lengths and total combinations
+# ------------------------------------------
+NUM_LR=${#LEARNING_RATES[@]}
+NUM_BS=${#BATCH_SIZES[@]}
+NUM_MODEL_TYPES=${#MODEL_TYPES[@]}
+NUM_OPTIMIZERS=${#OPTIMIZERS[@]}
+NUM_SCHEDULERS=${#SCHEDULERS[@]}
+NUM_DATASETS=${#DATASETS[@]}
+
+# Define axis order, fastest varying first to preserve prior behavior
+# Order: MODEL_TYPES -> DATASETS -> LEARNING_RATES -> BATCH_SIZES -> OPTIMIZERS -> SCHEDULERS
+STRIDE_MODEL_TYPES=1
+STRIDE_DATASETS=$((STRIDE_MODEL_TYPES * NUM_MODEL_TYPES))
+STRIDE_LR=$((STRIDE_DATASETS * NUM_DATASETS))
+STRIDE_BS=$((STRIDE_LR * NUM_LR))
+STRIDE_OPTIMIZERS=$((STRIDE_BS * NUM_BS))
+STRIDE_SCHEDULERS=$((STRIDE_OPTIMIZERS * NUM_OPTIMIZERS))
+
+TOTAL_COMBINATIONS=$((NUM_MODEL_TYPES * NUM_DATASETS * NUM_LR * NUM_BS * NUM_OPTIMIZERS * NUM_SCHEDULERS))
+
+# Helper: when run directly (not via sbatch), allow printing total combos
+if [[ "$1" == "--print-count" ]]; then
+  echo "$TOTAL_COMBINATIONS"
+  exit 0
+fi
+
+# Guard: if task id exceeds combinations, exit gracefully (supports oversize arrays)
+TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
+if [[ "$TASK_ID" -ge "$TOTAL_COMBINATIONS" ]]; then
+  echo "[INFO] SLURM_ARRAY_TASK_ID=$TASK_ID >= TOTAL_COMBINATIONS=$TOTAL_COMBINATIONS, nothing to do. Exiting."
+  exit 0
+fi
+
+# Calculate indices from array task ID using mixed-radix decomposition
+MODEL_TYPE_IDX=$(( (TASK_ID / STRIDE_MODEL_TYPES) % NUM_MODEL_TYPES ))
+DATASET_IDX=$(( (TASK_ID / STRIDE_DATASETS) % NUM_DATASETS ))
+LEARNING_RATE_IDX=$(( (TASK_ID / STRIDE_LR) % NUM_LR ))
+BATCH_SIZE_IDX=$(( (TASK_ID / STRIDE_BS) % NUM_BS ))
+OPTIMIZER_IDX=$(( (TASK_ID / STRIDE_OPTIMIZERS) % NUM_OPTIMIZERS ))
+SCHEDULER_IDX=$(( (TASK_ID / STRIDE_SCHEDULERS) % NUM_SCHEDULERS ))
 
 # Extract values
 MODEL_TYPE=${MODEL_TYPES[$MODEL_TYPE_IDX]}
-LEARNING_RATE=${LEARNING_RATES[0]}
-BATCH_SIZE=${BATCH_SIZES[0]}
-OPTIMIZER=${OPTIMIZERS[0]}
-SCHEDULER=${SCHEDULERS[0]}
+LEARNING_RATE=${LEARNING_RATES[$LEARNING_RATE_IDX]}
+BATCH_SIZE=${BATCH_SIZES[$BATCH_SIZE_IDX]}
+OPTIMIZER=${OPTIMIZERS[$OPTIMIZER_IDX]}
+SCHEDULER=${SCHEDULERS[$SCHEDULER_IDX]}
 DATASET=${DATASETS[$DATASET_IDX]}
 
 # Create run name with all hyperparameters
 RUN_NAME="model_${MODEL_TYPE}_Dataset_${DATASET}"
 EXPERIMENT_NAME="new_datasets_sweep"
 
-echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET"
+echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET"
 
 # Pass individual parameters to the Python script
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
@@ -77,5 +113,5 @@ echo "Array Task $SLURM_ARRAY_TASK_ID: model=$MODEL_TYPE, lr=$LEARNING_RATE, bat
     --experiment-name "$EXPERIMENT_NAME" \
     --run-name "$RUN_NAME"
 
-echo "Enhanced training completed for task $SLURM_ARRAY_TASK_ID"
+echo "Enhanced training completed for task $TASK_ID"
 echo "MLflow experiments should be available in: ${MLFLOW_TRACKING_URI}"
