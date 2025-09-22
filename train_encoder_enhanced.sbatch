@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-01:00 # time (D-HH:MM)
-#SBATCH --array=0-40%5
+#SBATCH --array=0-39
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -61,10 +61,14 @@ STRIDE_OPTIMIZERS=$((STRIDE_BS * NUM_BS))
 STRIDE_SCHEDULERS=$((STRIDE_OPTIMIZERS * NUM_OPTIMIZERS))
 STRIDE_DATASET_TYPES=$((STRIDE_SCHEDULERS * NUM_SCHEDULERS))
 
-TOTAL_COMBINATIONS=$((NUM_MODEL_TYPES * NUM_DATASETS * NUM_LR * NUM_BS * NUM_OPTIMIZERS * NUM_SCHEDULERS))
+TOTAL_COMBINATIONS=$((NUM_MODEL_TYPES * NUM_DATASETS * NUM_LR * NUM_BS * NUM_OPTIMIZERS * NUM_SCHEDULERS * NUM_DATASET_TYPES))
 
 # Guard: if task id exceeds combinations, exit gracefully (supports oversize arrays)
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
+if (( TASK_ID >= TOTAL_COMBINATIONS )); then
+    echo "Task ID ${TASK_ID} exceeds total combinations ${TOTAL_COMBINATIONS}. Exiting gracefully."
+    exit 0
+fi
 
 # Calculate indices from array task ID using mixed-radix decomposition
 MODEL_TYPE_IDX=$(( (TASK_ID / STRIDE_MODEL_TYPES) % NUM_MODEL_TYPES ))
@@ -85,10 +89,10 @@ DATASET=${DATASETS[$DATASET_IDX]}
 DATASET_TYPE=${DATASET_TYPES[$DATASET_TYPE_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="model_${MODEL_TYPE}_Dataset_${DATASET}"
+RUN_NAME="model_${MODEL_TYPE}_Dataset_${DATASET}_lr_${LEARNING_RATE}_sched_${SCHEDULER}_dataset_type_${DATASET_TYPE}"
 EXPERIMENT_NAME="encoder_architectures_sweep_all"
 
-echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET"
+echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET, dataset_type=$DATASET_TYPE"
 
 # Pass individual parameters to the Python script
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/encoder/mlflow_training.py \
@@ -108,7 +112,7 @@ echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNIN
     --cv-folds 1 \
     --experiment-name "$EXPERIMENT_NAME" \
     --run-name "$RUN_NAME" 
-    
+
 
 echo "Enhanced training completed for task $TASK_ID"
 echo "MLflow experiments should be available in: ${MLFLOW_TRACKING_URI}"
