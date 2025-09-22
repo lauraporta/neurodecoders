@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-01:00 # time (D-HH:MM)
-#SBATCH --array=0-0%5
+#SBATCH --array=0-40%5
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -32,12 +32,13 @@ export CUDA_VISIBLE_DEVICES=0
 EPOCHS=100
 
 # Define hyperparameter arrays
-LEARNING_RATES=(1e-3)
+LEARNING_RATES=(1e-3 1e-4)
 BATCH_SIZES=(32)
 MODEL_TYPES=("simple" "skip" "resnet" "resnet_scratch" "resnet_conv_only")
 OPTIMIZERS=("adam")
-SCHEDULERS=("none")
-DATASETS=("gabor,100,100" "perlin_noise_patterns,100,100" "periodic_patterns,100,100")
+SCHEDULERS=("none" "plateau")
+DATASETS=("gabor,100,100")
+DATASET_TYPES=("cifar10" "mnist")
 
 # ------------------------------------------
 # Compute lengths and total combinations
@@ -48,6 +49,7 @@ NUM_MODEL_TYPES=${#MODEL_TYPES[@]}
 NUM_OPTIMIZERS=${#OPTIMIZERS[@]}
 NUM_SCHEDULERS=${#SCHEDULERS[@]}
 NUM_DATASETS=${#DATASETS[@]}
+NUM_DATASET_TYPES=${#DATASET_TYPES[@]}
 
 # Define axis order, fastest varying first to preserve prior behavior
 # Order: MODEL_TYPES -> DATASETS -> LEARNING_RATES -> BATCH_SIZES -> OPTIMIZERS -> SCHEDULERS
@@ -57,21 +59,12 @@ STRIDE_LR=$((STRIDE_DATASETS * NUM_DATASETS))
 STRIDE_BS=$((STRIDE_LR * NUM_LR))
 STRIDE_OPTIMIZERS=$((STRIDE_BS * NUM_BS))
 STRIDE_SCHEDULERS=$((STRIDE_OPTIMIZERS * NUM_OPTIMIZERS))
+STRIDE_DATASET_TYPES=$((STRIDE_SCHEDULERS * NUM_SCHEDULERS))
 
 TOTAL_COMBINATIONS=$((NUM_MODEL_TYPES * NUM_DATASETS * NUM_LR * NUM_BS * NUM_OPTIMIZERS * NUM_SCHEDULERS))
 
-# Helper: when run directly (not via sbatch), allow printing total combos
-if [[ "$1" == "--print-count" ]]; then
-  echo "$TOTAL_COMBINATIONS"
-  exit 0
-fi
-
 # Guard: if task id exceeds combinations, exit gracefully (supports oversize arrays)
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
-if [[ "$TASK_ID" -ge "$TOTAL_COMBINATIONS" ]]; then
-  echo "[INFO] SLURM_ARRAY_TASK_ID=$TASK_ID >= TOTAL_COMBINATIONS=$TOTAL_COMBINATIONS, nothing to do. Exiting."
-  exit 0
-fi
 
 # Calculate indices from array task ID using mixed-radix decomposition
 MODEL_TYPE_IDX=$(( (TASK_ID / STRIDE_MODEL_TYPES) % NUM_MODEL_TYPES ))
@@ -80,6 +73,7 @@ LEARNING_RATE_IDX=$(( (TASK_ID / STRIDE_LR) % NUM_LR ))
 BATCH_SIZE_IDX=$(( (TASK_ID / STRIDE_BS) % NUM_BS ))
 OPTIMIZER_IDX=$(( (TASK_ID / STRIDE_OPTIMIZERS) % NUM_OPTIMIZERS ))
 SCHEDULER_IDX=$(( (TASK_ID / STRIDE_SCHEDULERS) % NUM_SCHEDULERS ))
+DATASET_TYPE_IDX=$(((TASK_ID / STRIDE_DATASET_TYPES) % NUM_DATASET_TYPES ))
 
 # Extract values
 MODEL_TYPE=${MODEL_TYPES[$MODEL_TYPE_IDX]}
@@ -88,10 +82,11 @@ BATCH_SIZE=${BATCH_SIZES[$BATCH_SIZE_IDX]}
 OPTIMIZER=${OPTIMIZERS[$OPTIMIZER_IDX]}
 SCHEDULER=${SCHEDULERS[$SCHEDULER_IDX]}
 DATASET=${DATASETS[$DATASET_IDX]}
+DATASET_TYPE=${DATASET_TYPES[$DATASET_TYPE_IDX]}
 
 # Create run name with all hyperparameters
 RUN_NAME="model_${MODEL_TYPE}_Dataset_${DATASET}"
-EXPERIMENT_NAME="new_datasets_sweep"
+EXPERIMENT_NAME="encoder_architectures_sweep_all"
 
 echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET"
 
@@ -107,11 +102,13 @@ echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNIN
     --no-early-stopping \
     --checkpointing \
     --sta-type "$DATASET" \
+    --dataset-type "$DATASET_TYPE" \
     --n-neurons 100 \
     --n-images 8000 \
     --cv-folds 1 \
     --experiment-name "$EXPERIMENT_NAME" \
-    --run-name "$RUN_NAME"
+    --run-name "$RUN_NAME" 
+    
 
 echo "Enhanced training completed for task $TASK_ID"
 echo "MLflow experiments should be available in: ${MLFLOW_TRACKING_URI}"
