@@ -43,21 +43,26 @@ class MLflowHistoryCallback(Callback):
     def __init__(self):
         super().__init__()
         self.current_epoch = 0
-        self.logged_epochs = set()  # Track which epochs we've already logged
+        self.logged_train_epochs = set()
+        self.logged_val_epochs = set()
 
     def on_train_epoch_end(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ):
         """Log training metrics to MLflow at the end of each training epoch."""
-        self.current_epoch = trainer.current_epoch
-
-        # Skip if we've already logged this epoch
-        if self.current_epoch in self.logged_epochs:
+        # Only log during fit, not during test
+        if getattr(trainer, "state", None) and getattr(trainer.state, "fn", None) != "fit":
             return
 
-        # Get training loss from logged metrics
-        if trainer.logged_metrics:
-            train_loss = trainer.logged_metrics.get("train_loss")
+        self.current_epoch = trainer.current_epoch
+
+        # Only log once per epoch
+        if self.current_epoch in self.logged_train_epochs:
+            return
+
+        # Get training loss from callback metrics
+        if trainer.callback_metrics:
+            train_loss = trainer.callback_metrics.get("train_loss")
             if train_loss is not None:
                 if isinstance(train_loss, torch.Tensor):
                     train_loss = train_loss.item()
@@ -71,8 +76,8 @@ class MLflowHistoryCallback(Callback):
                     pl_module.train_losses = []
                 pl_module.train_losses.append(train_loss)
 
-        # Mark this epoch as logged
-        self.logged_epochs.add(self.current_epoch)
+        # Mark this train epoch as logged
+        self.logged_train_epochs.add(self.current_epoch)
 
         # Log learning rate if available
         if hasattr(pl_module, "optimizers") and pl_module.optimizers():
@@ -90,15 +95,19 @@ class MLflowHistoryCallback(Callback):
         """
         Log validation metrics to MLflow at the end of each validation epoch.
         """
-        self.current_epoch = trainer.current_epoch
-
-        # Skip if we've already logged this epoch
-        if self.current_epoch in self.logged_epochs:
+        # Only log during fit, not during test
+        if getattr(trainer, "state", None) and getattr(trainer.state, "fn", None) != "fit":
             return
 
-        # Get validation loss from logged metrics
-        if trainer.logged_metrics:
-            val_loss = trainer.logged_metrics.get("val_loss")
+        self.current_epoch = trainer.current_epoch
+
+        # Only log once per epoch for validation
+        if self.current_epoch in self.logged_val_epochs:
+            return
+
+        # Get validation loss from callback metrics
+        if trainer.callback_metrics:
+            val_loss = trainer.callback_metrics.get("val_loss")
             if val_loss is not None:
                 if isinstance(val_loss, torch.Tensor):
                     val_loss = val_loss.item()
@@ -111,23 +120,8 @@ class MLflowHistoryCallback(Callback):
                     pl_module.val_losses = []
                 pl_module.val_losses.append(val_loss)
 
-        # Get test loss from logged metrics (if available)
-        if trainer.logged_metrics:
-            test_loss = trainer.logged_metrics.get("test_loss_epoch")
-            if test_loss is not None:
-                if isinstance(test_loss, torch.Tensor):
-                    test_loss = test_loss.item()
-
-                log_training_metrics(
-                    {"test_loss": float(test_loss)}, step=self.current_epoch
-                )
-
-                if not hasattr(pl_module, "test_losses"):
-                    pl_module.test_losses = []
-                pl_module.test_losses.append(test_loss)
-
-        # Mark this epoch as logged
-        self.logged_epochs.add(self.current_epoch)
+        # Mark this val epoch as logged
+        self.logged_val_epochs.add(self.current_epoch)
 
 
 class EncoderLightningModule(pl.LightningModule):
@@ -415,11 +409,6 @@ def _train_single_model(
     # Add MLflow history callback if MLflow is enabled
     if enable_mlflow:
         callbacks.append(MLflowHistoryCallback())
-
-        # Add test evaluation callback to track test loss during training
-        test_dataloader = data_module.test_dataloader()
-        if test_dataloader is not None:
-            callbacks.append(TestEvaluationCallback(test_dataloader))
 
         # Add verification callback
         verification_callback = EncoderVerificationCallback(
@@ -876,28 +865,17 @@ def train_encoder(
             and lightning_model.val_losses
         ):
             fold_metrics["val_losses"].append(lightning_model.val_losses[-1])
-        
-        # Collect test loss from training epochs (if available)
-        if (
-            hasattr(lightning_model, "test_losses")
-            and lightning_model.test_losses
-        ):
-            fold_metrics["test_losses"].append(
-                lightning_model.test_losses[-1]
-            )
 
-        # Get test metrics from trainer
+        # Get test metrics from trainer (single final test per fold)
         test_results = trainer.test(
             lightning_model, fold_data_module, verbose=False
         )
         if test_results:
             test_metrics = test_results[0]
-            fold_metrics["test_losses"].append(
-                test_metrics.get("test_loss", 0)
-            )
-            fold_metrics["test_correlations"].append(
-                test_metrics.get("test_correlation", 0)
-            )
+            if "test_loss" in test_metrics:
+                fold_metrics["test_losses"].append(test_metrics["test_loss"])
+            if "test_correlation" in test_metrics:
+                fold_metrics["test_correlations"].append(test_metrics["test_correlation"]) 
 
     # Log aggregated cross-validation results
     if enable_mlflow:
