@@ -45,23 +45,26 @@ class MLflowExperimentTracker:
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
 
-        # Set up experiment - handle deleted experiments gracefully
-        try:
-            mlflow.set_experiment(experiment_name)
-        except Exception as e:
-            print(
-                f"Warning: Could not set experiment '{experiment_name}': {e}"
-            )
-            print("Creating new experiment...")
+        # Resolve or create the experiment in a race-safe way
+        exp = mlflow.get_experiment_by_name(experiment_name)
+        if exp is None:
             try:
-                mlflow.create_experiment(
+                experiment_id = mlflow.create_experiment(
                     experiment_name, artifact_location=artifact_location
                 )
-                mlflow.set_experiment(experiment_name)
-            except Exception as e2:
-                print(f"Error creating experiment: {e2}")
-                # Fall back to default experiment
-                mlflow.set_experiment("Default")
+            except Exception:
+                # Another process may have created it; fetch again
+                fetched = mlflow.get_experiment_by_name(experiment_name)
+                if fetched is None:
+                    # Fall back to Default to avoid crashes
+                    mlflow.set_experiment("Default")
+                    return
+                else:
+                    experiment_id = fetched.experiment_id
+        else:
+            experiment_id = exp.experiment_id
+
+        mlflow.set_experiment(experiment_id=experiment_id)
 
     def start_run(
         self,
@@ -124,33 +127,16 @@ class MLflowExperimentTracker:
         training_info: Dict[str, Any],
     ):
         """
-        Log model metadata as a JSON artifact.
-
-        Args:
-            model_path: Path to the saved model
-            model_type: Type of model (e.g., 'encoder', 'decoder')
-            dataset_info: Information about the dataset used
-            training_info: Information about the training process
+        Log metadata about the trained model and training context.
         """
         metadata = {
-            "model_type": model_type,
             "model_path": model_path,
+            "model_type": model_type,
             "dataset_info": dataset_info,
             "training_info": training_info,
-            "timestamp": mlflow.active_run().info.start_time,
         }
-
-        # Save metadata to temporary file
-        metadata_path = "model_metadata.json"
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2, default=str)
-
-        # Log as artifact
-        mlflow.log_artifact(metadata_path)
-
-        # Clean up
-        os.remove(metadata_path)
-
-    def end_run(self):
-        """End the current MLflow run."""
-        mlflow.end_run()
+        temp_path = "model_metadata.json"
+        with open(temp_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        mlflow.log_artifact(temp_path)
+        os.remove(temp_path)

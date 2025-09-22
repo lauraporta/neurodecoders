@@ -30,28 +30,34 @@ def setup_mlflow_experiment(
     if tracking_uri:
         mlflow.set_tracking_uri(tracking_uri)
 
-    # Set up experiment - handle deleted experiments gracefully
-    try:
-        mlflow.set_experiment(experiment_name)
-    except Exception as e:
-        print(f"Warning: Could not set experiment '{experiment_name}': {e}")
-        print("Creating new experiment...")
+    # Resolve or create the experiment in a race-safe way
+    exp = mlflow.get_experiment_by_name(experiment_name)
+    if exp is None:
         try:
-            mlflow.create_experiment(
+            experiment_id = mlflow.create_experiment(
                 experiment_name, artifact_location=artifact_location
             )
-            mlflow.set_experiment(experiment_name)
-        except Exception as e2:
-            print(f"Error creating experiment: {e2}")
-            # Fall back to a non-default experiment name
-            fallback = f"{experiment_name}_fallback"
-            try:
-                mlflow.create_experiment(
-                    fallback, artifact_location=artifact_location
-                )
-            except Exception:
-                pass
-            mlflow.set_experiment(fallback)
+        except Exception as e:
+            # Another process may have created it; fetch again
+            fetched = mlflow.get_experiment_by_name(experiment_name)
+            if fetched is None:
+                # As a last resort, fall back to a deterministic name
+                fallback = f"{experiment_name}_fallback"
+                try:
+                    experiment_id = mlflow.create_experiment(
+                        fallback, artifact_location=artifact_location
+                    )
+                except Exception:
+                    # If even fallback fails, set to Default
+                    mlflow.set_experiment("Default")
+                    return
+            else:
+                experiment_id = fetched.experiment_id
+    else:
+        experiment_id = exp.experiment_id
+
+    # Set by experiment_id to avoid name/ID mismatches
+    mlflow.set_experiment(experiment_id=experiment_id)
 
 
 def log_training_config(config: Dict[str, Any]) -> None:
@@ -59,91 +65,79 @@ def log_training_config(config: Dict[str, Any]) -> None:
     Log training configuration to MLflow.
 
     Args:
-        config: Training configuration dictionary
+        config: Dictionary of training configuration parameters
     """
-    # Filter out None values and non-serializable objects
-    loggable_config = {}
-    for key, value in config.items():
-        if value is not None and isinstance(value, (str, int, float, bool)):
-            loggable_config[key] = value
-        elif value is not None:
-            # Convert other types to string
-            loggable_config[key] = str(value)
+    # Convert complex objects to string representations
+    sanitized_config: Dict[str, Any] = {}
+    for k, v in config.items():
+        try:
+            _ = hash(v)
+            sanitized_config[k] = v
+        except Exception:
+            sanitized_config[k] = str(v)
 
-    mlflow.log_params(loggable_config)
-
-
-def log_model_artifacts(
-    model: LightningModule,
-    model_name: str = "model",
-    model_type: str = "model",
-    dataset_info: Optional[Dict[str, Any]] = None,
-    training_info: Optional[Dict[str, Any]] = None,
-) -> None:
-    """
-    Log model and related artifacts to MLflow.
-
-    Args:
-        model: The model to log
-        model_name: Name for the model artifact
-        model_type: Type of model (e.g., 'encoder', 'decoder')
-        dataset_info: Information about the dataset used
-        training_info: Information about the training process
-    """
-    # Log the model
-    mlflow.pytorch.log_model(model, artifact_path=model_name)
-
-    # Log metadata if provided
-    if dataset_info or training_info:
-        metadata: Dict[str, Any] = {
-            "model_type": model_type,
-            "model_name": model_name,
-        }
-
-        if dataset_info:
-            metadata["dataset_info"] = dataset_info
-        if training_info:
-            metadata["training_info"] = training_info
-
-        # Save metadata to temporary file
-        metadata_path = "model_metadata.json"
-        import json
-
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2, default=str)
-
-        # Log as artifact
-        mlflow.log_artifact(metadata_path)
-
-        # Clean up
-        os.remove(metadata_path)
+    # Log the sanitized configuration
+    mlflow.log_params(sanitized_config)
 
 
-def log_training_metrics(
-    metrics: Dict[str, float],
-    step: Optional[int] = None,
-    prefix: str = "",
-) -> None:
+def log_training_metrics(metrics: Dict[str, float], step: Optional[int] = None) -> None:
     """
     Log training metrics to MLflow.
 
     Args:
-        metrics: Dictionary of metrics to log
-        step: Step number for the metrics
-        prefix: Prefix to add to metric names
+        metrics: Dictionary of metric name to value
+        step: Optional step number for logging
     """
-    if step is None:
-        print(
-            "Warning: log_training_metrics called without step parameter. "
-            "This will log at step 0. Consider providing a step number."
-        )
+    mlflow.log_metrics(metrics, step=step)
 
-    if prefix:
-        prefixed_metrics = {f"{prefix}_{k}": v for k, v in metrics.items()}
-    else:
-        prefixed_metrics = metrics
 
-    mlflow.log_metrics(prefixed_metrics, step=step)
+def log_dataset_input_and_params(
+    dataset_name: str,
+    n_images: int,
+    n_neurons: int,
+    additional_params: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Log dataset-related input parameters to MLflow.
+
+    Args:
+        dataset_name: Name of the dataset
+        n_images: Number of images used
+        n_neurons: Number of neurons
+        additional_params: Optional dictionary of additional parameters
+    """
+    params = {
+        "dataset_name": dataset_name,
+        "n_images": int(n_images),
+        "n_neurons": int(n_neurons),
+    }
+    if additional_params:
+        # Ensure values are JSON/param safe
+        for k, v in additional_params.items():
+            try:
+                _ = hash(v)
+                params[k] = v
+            except Exception:
+                params[k] = str(v)
+    mlflow.log_params(params)
+
+
+def log_model_artifacts(model: LightningModule, artifact_subdir: str = "model") -> None:
+    """
+    Log model artifacts to MLflow.
+
+    Args:
+        model: The model to log
+        artifact_subdir: Subdirectory name for the logged model
+    """
+    # Placeholder for richer artifact logging; keep minimal to avoid import-time
+    # heavy dependencies outside of mlflow itself.
+    try:
+        import mlflow.pytorch
+
+        mlflow.pytorch.log_model(model, artifact_path=artifact_subdir)
+    except Exception as e:
+        print(f"Warning: Could not log model artifacts: {e}")
 
 
 def log_encoder_verification_metrics(
@@ -353,94 +347,6 @@ def log_single_artifact(
         mlflow.log_artifact(local_path, artifact_path)
     else:
         print(f"Warning: File {local_path} does not exist")
-
-
-def log_dataset_input_and_params(data_module) -> None:
-    """
-    Log dataset metadata as MLflow Input and also as params.
-
-    Mirrors the encoder's dataset logging so encoder/decoder can share it.
-    """
-    # Create metadata summary DataFrame
-    metadata_summary = pd.DataFrame(
-        [
-            {
-                "dataset_id": data_module.get_dataset_id(),
-                "git_commit": data_module.git_commit,
-                "git_branch": data_module.git_branch,
-                "timestamp": data_module.timestamp,
-                "images_shape": str(data_module.images.shape),
-                "firing_rates_shape": str(data_module.firing_rates.shape),
-                "labels_shape": (
-                    str(data_module.labels.shape)
-                    if hasattr(data_module, "labels")
-                    and data_module.labels is not None
-                    else "None"
-                ),
-                "total_size_mb": data_module.total_size_mb,
-                "dataset_type": data_module.dataset_type,
-                "sta_pattern": data_module.sta_pattern,
-                "n_neurons": data_module.n_neurons,
-                "n_images": data_module.n_images,
-            }
-        ]
-    )
-
-    # Derive a source info best-effort
-    try:
-        from neurodecoders.paths import get_path
-
-        dataset_filename = (
-            data_module.dataset_filename
-            if hasattr(data_module, "dataset_filename")
-            else "unknown"
-        )
-        source_info = (
-            f"{get_path('workspace/datasets/synthetic')}/{dataset_filename}"
-        )
-    except Exception:
-        source_info = "unknown"
-
-    # Log the metadata dataset as MLflow input
-    dataset_id = data_module.get_dataset_id()
-    try:
-        data_module.get_metadata_summary()
-    except Exception:
-        pass
-
-    metadata_name = f"neural_data_{dataset_id}"
-    summary_dataset = mlflow.data.from_pandas(
-        metadata_summary, source=source_info, name=metadata_name
-    )
-    mlflow.log_input(summary_dataset, context="training_data")
-
-    # Also log as parameters for backward compatibility
-    try:
-        dataset_params = data_module.get_mlflow_parameters()
-        mlflow.log_params(dataset_params)
-    except Exception:
-        # Fall back to flattened subset
-        images_attr = (
-            data_module.images if hasattr(data_module, "images") else None
-        )
-        firing_rates_attr = (
-            data_module.firing_rates
-            if hasattr(data_module, "firing_rates")
-            else None
-        )
-
-        fallback = {
-            "dataset_id": dataset_id,
-            "images_shape": (
-                str(images_attr.shape) if images_attr is not None else "None"
-            ),
-            "firing_rates_shape": (
-                str(firing_rates_attr.shape)
-                if firing_rates_attr is not None
-                else "None"
-            ),
-        }
-        mlflow.log_params(fallback)
 
 
 def create_firing_rate_scatterplot(
