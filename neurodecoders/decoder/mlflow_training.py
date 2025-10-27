@@ -42,7 +42,7 @@ def main(config: Dict[str, Any]):
         from neurodecoders.data.loading import load_npz_dataset
         
         # Use existing decoder test dataset
-        dataset_path = "workspace/datasets/synthetic/train/decoder_test_data_3neurons_10images_20240901_120000.npz"
+        dataset_path = config 
         images, firing = load_npz_dataset(dataset_path)
         images, firing, H, W = normalize_images_and_rates(images, firing)
         
