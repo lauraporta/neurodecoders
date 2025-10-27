@@ -360,6 +360,12 @@ def main():
     # Set up MLflow
     if args.tracking_uri:
         mlflow.set_tracking_uri(args.tracking_uri)
+    else:
+        # Use tracking URI from config (supports database)
+        from neurodecoders.config import get_mlflow_tracking_uri
+        tracking_uri = get_mlflow_tracking_uri()
+        if tracking_uri:
+            mlflow.set_tracking_uri(tracking_uri)
     
     # Set up output directory
     out_dir = (args.output_dir if args.output_dir is not None 

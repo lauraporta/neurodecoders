@@ -24,11 +24,20 @@ def setup_mlflow_experiment(
 
     Args:
         experiment_name: Name of the MLflow experiment
-        tracking_uri: MLflow tracking server URI (optional)
+        tracking_uri: MLflow tracking server URI (optional, defaults to config.yaml)
         artifact_location: Location for storing artifacts (optional)
     """
     if tracking_uri:
         mlflow.set_tracking_uri(tracking_uri)
+    else:
+        # Try to load from config
+        try:
+            from neurodecoders.config import get_mlflow_tracking_uri
+            config_uri = get_mlflow_tracking_uri()
+            if config_uri:
+                mlflow.set_tracking_uri(config_uri)
+        except Exception as e:
+            print(f"Warning: Could not load tracking URI from config: {e}")
 
     # Resolve or create the experiment in a race-safe way
     exp = mlflow.get_experiment_by_name(experiment_name)
@@ -179,20 +188,57 @@ def log_dataset_input_and_params(data_module) -> None:
         mlflow.log_params(fallback)
 
 
-def log_model_artifacts(model: LightningModule, artifact_subdir: str = "model") -> None:
+def log_model_artifacts(
+    model: LightningModule,
+    artifact_subdir: str = "model",
+    model_name: Optional[str] = None,
+    model_type: Optional[str] = None,
+    dataset_info: Optional[Dict[str, Any]] = None,
+    training_info: Optional[Dict[str, Any]] = None,
+) -> None:
     """
     Log model artifacts to MLflow.
 
     Args:
         model: The model to log
         artifact_subdir: Subdirectory name for the logged model
+        model_name: Name of the model (optional)
+        model_type: Type of the model (optional)
+        dataset_info: Dataset information dictionary (optional)
+        training_info: Training information dictionary (optional)
     """
-    # Placeholder for richer artifact logging; keep minimal to avoid import-time
-    # heavy dependencies outside of mlflow itself.
     try:
         import mlflow.pytorch
 
+        # Log the PyTorch model
         mlflow.pytorch.log_model(model, artifact_path=artifact_subdir)
+        
+        # Log additional metadata as tags if provided
+        if model_name:
+            mlflow.set_tag("model_name", model_name)
+        if model_type:
+            mlflow.set_tag("model_type", model_type)
+        
+        # Log dataset info as parameters (with prefix to avoid conflicts)
+        if dataset_info:
+            for key, value in dataset_info.items():
+                if value is not None:
+                    try:
+                        mlflow.log_param(f"dataset_{key}", value)
+                    except Exception as e:
+                        print(f"Warning: Could not log dataset parameter {key}: {e}")
+        
+        # Log training info as metrics (final values)
+        if training_info:
+            for key, value in training_info.items():
+                if value is not None:
+                    try:
+                        # Only log numeric values as metrics
+                        if isinstance(value, (int, float)):
+                            mlflow.log_metric(f"final_{key}", float(value))
+                    except Exception as e:
+                        print(f"Warning: Could not log training metric {key}: {e}")
+                    
     except Exception as e:
         print(f"Warning: Could not log model artifacts: {e}")
 

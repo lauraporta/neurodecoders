@@ -29,7 +29,7 @@ from neurodecoders.mlflow_utils.utils import (
     log_training_metrics,
     setup_mlflow_experiment,
 )
-from neurodecoders.paths import get_mlflow_path, get_path
+from neurodecoders.paths import get_path
 
 
 class MLflowHistoryCallback(Callback):
@@ -424,39 +424,45 @@ def _train_single_model(
 
     # Add MLflow logger if enabled
     if enable_mlflow:
-        # Force MLflow tracking to the configured base path
-        configured_mlflow_dir = get_mlflow_path()
-        try:
-            os.makedirs(configured_mlflow_dir, exist_ok=True)
-        except OSError as e:
-            print(
-                f"Warning: Could not create MLflow directory "
-                f"{configured_mlflow_dir}: {e}"
-            )
-        tracking_uri = f"file:{configured_mlflow_dir}"
+        # Get tracking URI from config (supports both database and file system)
+        from neurodecoders.config import get_mlflow_tracking_uri
+        tracking_uri = get_mlflow_tracking_uri()
+        
+        # If using file system, ensure directory exists
+        if tracking_uri and tracking_uri.startswith("file:"):
+            configured_mlflow_dir = tracking_uri.replace("file://", "").replace("file:", "")
+            try:
+                os.makedirs(configured_mlflow_dir, exist_ok=True)
+            except OSError as e:
+                print(
+                    f"Warning: Could not create MLflow directory "
+                    f"{configured_mlflow_dir}: {e}"
+                )
+            
+            # Check directory accessibility
+            if os.path.exists(configured_mlflow_dir):
+                if os.access(configured_mlflow_dir, os.W_OK):
+                    print(
+                        f"MLflow tracking directory is ready: "
+                        f"{configured_mlflow_dir}"
+                    )
+                else:
+                    print(
+                        f"Warning: MLflow tracking directory not writable: "
+                        f"{configured_mlflow_dir}"
+                    )
+            else:
+                print(
+                    f"Warning: MLflow tracking directory still does not exist: "
+                    f"{configured_mlflow_dir}"
+                )
+        
         setup_mlflow_experiment(
             experiment_name=mlflow_experiment_name, tracking_uri=tracking_uri
         )
-        print(f"Using MLflow tracking URI from config: {tracking_uri}")
+        print(f"Using MLflow tracking URI: {tracking_uri}")
 
         print(f"Setting MLflow experiment: {mlflow_experiment_name}")
-
-        if os.path.exists(configured_mlflow_dir):
-            if os.access(configured_mlflow_dir, os.W_OK):
-                print(
-                    f"MLflow tracking directory is ready: "
-                    f"{configured_mlflow_dir}"
-                )
-            else:
-                print(
-                    f"Warning: MLflow tracking directory not writable: "
-                    f"{configured_mlflow_dir}"
-                )
-        else:
-            print(
-                f"Warning: MLflow tracking directory still does not exist: "
-                f"{configured_mlflow_dir}"
-            )
 
         if mlflow_run_name:
             mlflow.start_run(run_name=mlflow_run_name, log_system_metrics=True)
@@ -727,8 +733,8 @@ def train_encoder(
 
         # Setup MLflow for single run
         if enable_mlflow:
-            configured_mlflow_dir = get_mlflow_path()
-            tracking_uri = f"file:{configured_mlflow_dir}"
+            from neurodecoders.config import get_mlflow_tracking_uri
+            tracking_uri = get_mlflow_tracking_uri()
             setup_mlflow_experiment(
                 experiment_name=mlflow_experiment_name,
                 tracking_uri=tracking_uri,
@@ -768,8 +774,8 @@ def train_encoder(
 
     # Setup MLflow for cross-validation
     if enable_mlflow:
-        configured_mlflow_dir = get_mlflow_path()
-        tracking_uri = f"file:{configured_mlflow_dir}"
+        from neurodecoders.config import get_mlflow_tracking_uri
+        tracking_uri = get_mlflow_tracking_uri()
         setup_mlflow_experiment(
             experiment_name=mlflow_experiment_name, tracking_uri=tracking_uri
         )

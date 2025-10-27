@@ -2,6 +2,12 @@
 
 # Launch script for MLflow UI
 # This script launches MLflow UI for experiment tracking
+# Usage: ./launch_apps.sh [PORT]
+# Example: ./launch_apps.sh 5001
+# Default port: 5002
+
+# Get port from command line argument or use default
+PORT=${1:-5002}
 
 echo "🚀 Launching MLflow UI..."
 
@@ -12,25 +18,34 @@ if ! command -v mlflow &> /dev/null; then
     exit 1
 fi
 
-# Set MLflow tracking URI to local file system
-# Read base path from config.yaml
-BASE_PATH=$(python -c "import yaml; print(yaml.safe_load(open('config.yaml'))['base_path'])")
-export MLFLOW_TRACKING_URI="file:${BASE_PATH}/mlruns"
+# Load environment variables from .env file
+if [ -f .env ]; then
+    export $(cat .env | grep -v '^#' | xargs)
+fi
+
+# Construct MLflow tracking URI from environment variables
+if [ -n "$POSTGRES_USER" ] && [ -n "$POSTGRES_PASSWORD" ] && [ -n "$POSTGRES_DB" ]; then
+    POSTGRES_HOST=${POSTGRES_HOST:-localhost}
+    export MLFLOW_TRACKING_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}/${POSTGRES_DB}"
+else
+    echo "⚠️  Warning: Database credentials not found in .env file"
+    echo "    Using default tracking URI"
+fi
 
 # Get current hostname
 HOSTNAME=$(hostname)
 USERNAME=$(whoami)
 
 # Launch MLflow UI
-echo "Starting MLflow UI on port 5001..."
-echo "📊 MLflow UI will be available at: http://localhost:5001"
+echo "Starting MLflow UI on port ${PORT}..."
+echo "📊 MLflow UI will be available at: http://localhost:${PORT}"
 echo ""
 echo "🌐 For remote access, use SSH port forwarding:"
-echo "   ssh -N ${USERNAME}@${HOSTNAME} -J ${USERNAME}@ssh.swc.ucl.ac.uk,${USERNAME}@hpc-gw2 -L 5001:localhost:5001"
+echo "   ssh -N ${USERNAME}@${HOSTNAME} -J ${USERNAME}@ssh.swc.ucl.ac.uk,${USERNAME}@hpc-gw2 -L ${PORT}:localhost:${PORT}"
 echo ""
 echo "💡 To stop MLflow UI, press Ctrl+C"
 echo ""
 
 # Launch MLflow UI
-mlflow ui --host 0.0.0.0 --port 5001 --backend-store-uri file:${BASE_PATH}/mlruns  --gunicorn-opts "--timeout "3600""
+mlflow ui --host 0.0.0.0 --port ${PORT} --backend-store-uri "${MLFLOW_TRACKING_URI}" --gunicorn-opts "--timeout 3600"
 

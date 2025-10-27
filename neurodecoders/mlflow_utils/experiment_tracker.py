@@ -41,9 +41,18 @@ class MLflowExperimentTracker:
         """
         self.experiment_name = experiment_name
 
-        # Set tracking URI if provided
+        # Set tracking URI if provided, otherwise use config
         if tracking_uri:
             mlflow.set_tracking_uri(tracking_uri)
+        else:
+            # Load from config (supports both database and file system)
+            try:
+                from neurodecoders.config import get_mlflow_tracking_uri
+                config_uri = get_mlflow_tracking_uri()
+                if config_uri:
+                    mlflow.set_tracking_uri(config_uri)
+            except Exception as e:
+                print(f"Warning: Could not load tracking URI from config: {e}")
 
         # Resolve or create the experiment in a race-safe way
         exp = mlflow.get_experiment_by_name(experiment_name)

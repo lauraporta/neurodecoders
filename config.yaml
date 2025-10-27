@@ -1,4 +1,10 @@
 # Neurodecoders Configuration
 # Change this single path to point to your desired root directory
 # This directory should contain both workspace/ and mlruns/ folders
-base_path: "."
+
+# MLflow Configuration
+# Note: Database credentials should be stored in .env file
+# See .env.example for the required variables
+mlflow:
+  # tracking_uri will be automatically constructed from .env variables
+  # or you can set MLFLOW_TRACKING_URI environment variable directly
