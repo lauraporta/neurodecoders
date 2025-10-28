@@ -18,8 +18,9 @@ source_uri = "file:///ceph/margrie/laura/neurodecodersmlruns"
 pg_user = os.getenv('POSTGRES_USER')
 pg_password = os.getenv('POSTGRES_PASSWORD')
 pg_host = os.getenv('POSTGRES_HOST')
+pg_port = os.getenv('POSTGRES_PORT')
 pg_db = os.getenv('POSTGRES_DB')
-dest_uri = f"postgresql://{pg_user}:{pg_password}@{pg_host}/{pg_db}"
+dest_uri = f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
 
 source_client = MlflowClient(tracking_uri=source_uri)
 dest_client = MlflowClient(tracking_uri=dest_uri)
