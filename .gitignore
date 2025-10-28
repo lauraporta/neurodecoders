@@ -99,6 +99,9 @@ workspace/*
 # .cursor
 .cursor/
 
+# Environment variables (contains secrets)
+.env
+
 # mlflow
 mlruns/
 
