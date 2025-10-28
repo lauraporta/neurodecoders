@@ -68,6 +68,109 @@ psql -p 5433 -d mlflow -c "SELECT has_schema_privilege(current_user, 'public', '
 psql -p 5433 -d mlflow -c "SELECT version();"
 ```
 
+### Configuring Network Access (HPC Cluster)
+
+**⚠️ Important for SLURM jobs:** By default, PostgreSQL only accepts connections from localhost. To allow compute nodes to connect to your database, you need to configure network access.
+
+#### Step 1: Configure PostgreSQL to Listen on All Interfaces
+
+Edit `$PGDATA/postgresql.conf` and change the `listen_addresses`:
+
+```bash
+# Option 1: Manual edit
+nano "$PGDATA/postgresql.conf"
+# Find the line: #listen_addresses = 'localhost'
+# Change to: listen_addresses = '*'
+
+# Option 2: Using sed
+sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" "$PGDATA/postgresql.conf"
+# Or if already uncommented:
+sed -i "s/listen_addresses = 'localhost'/listen_addresses = '*'/" "$PGDATA/postgresql.conf"
+```
+
+#### Step 2: Configure Client Authentication
+
+Edit `$PGDATA/pg_hba.conf` to allow connections from your cluster network:
+
+```bash
+# Add this line to allow connections from cluster network (192.168.x.x)
+echo "host    all    all    192.168.0.0/16    md5" >> "$PGDATA/pg_hba.conf"
+
+# For a more restrictive setup, specify only the mlflow database:
+echo "host    mlflow    <your_username>    192.168.0.0/16    md5" >> "$PGDATA/pg_hba.conf"
+
+# Or for a specific subnet (e.g., 10.0.0.0/8 for 10.x.x.x addresses):
+echo "host    mlflow    <your_username>    10.0.0.0/8    md5" >> "$PGDATA/pg_hba.conf"
+```
+
+**Understanding the format:**
+```
+TYPE    DATABASE    USER    ADDRESS    METHOD
+host    mlflow      laura   192.168.0.0/16    md5
+```
+- `TYPE`: `host` for TCP/IP connections
+- `DATABASE`: database name (`all` or specific database like `mlflow`)
+- `USER`: username (`all` or specific user)
+- `ADDRESS`: network range in CIDR notation
+- `METHOD`: `md5` for password authentication, `trust` for no password (not recommended)
+
+#### Step 3: Restart PostgreSQL
+
+```bash
+# Stop PostgreSQL
+pg_ctl -D "$PGDATA" stop
+
+# Start PostgreSQL with new configuration
+pg_ctl -D "$PGDATA" -l "$HOME/postgres_logfile.log" start
+
+# Wait for server to start
+sleep 3
+```
+
+#### Step 4: Verify Network Configuration
+
+```bash
+# Check that PostgreSQL is listening on all interfaces (0.0.0.0) not just localhost (127.0.0.1)
+netstat -ln | grep 5433
+# Should show: tcp 0 0 0.0.0.0:5433 0.0.0.0:* LISTEN
+
+# Or using ss:
+ss -ln | grep 5433
+```
+
+#### Step 5: Test Connection from Compute Node
+
+From a compute node (or via an interactive job), test the connection:
+
+```bash
+# Get the hostname of your login node
+# e.g., enc1-node9, login-node-01, etc.
+LOGIN_NODE=$(hostname)  # Run this on the login node
+
+# From compute node, test connection:
+psql -h $LOGIN_NODE -p 5433 -U <your_username> -d mlflow -c "SELECT version();"
+
+# Or test with MLflow:
+export MLFLOW_TRACKING_URI="postgresql://<your_username>:<your_password>@$LOGIN_NODE:5433/mlflow"
+python -c "import mlflow; mlflow.set_tracking_uri('$MLFLOW_TRACKING_URI'); print(mlflow.list_experiments())"
+```
+
+#### Common Network Issues
+
+**Connection refused:**
+- PostgreSQL is not listening on network interfaces → Check `listen_addresses` in `postgresql.conf`
+- Firewall blocking port 5433 → Check firewall rules
+- Wrong hostname → Verify login node hostname
+
+**Authentication failed:**
+- Wrong password → Check credentials in `.env`
+- `pg_hba.conf` not configured → Add appropriate entry
+- Need to restart PostgreSQL → Run `pg_ctl restart`
+
+**Permission denied:**
+- User doesn't have access to database → Grant privileges
+- IP address not in allowed range → Check CIDR range in `pg_hba.conf`
+
 **For SLURM jobs on HPC:**
 Add this to your `.sbatch` script to start PostgreSQL:
 
