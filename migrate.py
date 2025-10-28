@@ -12,13 +12,13 @@ except ImportError:
     print("Warning: python-dotenv not installed. Using environment variables only.")
 
 # Set up source (file system) and destination (database) clients
-source_uri = "file:///Users/laura/source/github/lauraporta/neurodecoders/mlruns"
+source_uri = "file:///ceph/margrie/laura/neurodecodersmlruns"
 
 # Construct destination URI from environment variables
-pg_user = os.getenv('POSTGRES_USER', 'mlflow_user')
-pg_password = os.getenv('POSTGRES_PASSWORD', 'piscina')
-pg_host = os.getenv('POSTGRES_HOST', 'localhost')
-pg_db = os.getenv('POSTGRES_DB', 'mlflow_db')
+pg_user = os.getenv('POSTGRES_USER')
+pg_password = os.getenv('POSTGRES_PASSWORD')
+pg_host = os.getenv('POSTGRES_HOST')
+pg_db = os.getenv('POSTGRES_DB')
 dest_uri = f"postgresql://{pg_user}:{pg_password}@{pg_host}/{pg_db}"
 
 source_client = MlflowClient(tracking_uri=source_uri)

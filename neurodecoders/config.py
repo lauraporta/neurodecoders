@@ -67,27 +67,13 @@ def get_mlflow_tracking_uri() -> Optional[str]:
     # Try to construct from POSTGRES_* environment variables
     pg_user = os.getenv('POSTGRES_USER')
     pg_password = os.getenv('POSTGRES_PASSWORD')
-    pg_host = os.getenv('POSTGRES_HOST', 'localhost')
-    pg_port = os.getenv('POSTGRES_PORT', '5432')
+    pg_host = os.getenv('POSTGRES_HOST')
+    pg_port = os.getenv('POSTGRES_PORT')
     pg_db = os.getenv('POSTGRES_DB')
     
-    if pg_user and pg_password and pg_db:
-        if pg_port and pg_port != '5432':
-            return f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
-        else:
-            return f"postgresql://{pg_user}:{pg_password}@{pg_host}/{pg_db}"
-    
-    # Fall back to config.yaml
-    config = load_config()
-    if 'mlflow' in config and 'tracking_uri' in config['mlflow']:
-        return config['mlflow']['tracking_uri']
-    
-    # Last resort: file system
-    base_path = config.get('base_path', '')
-    if base_path:
-        return f"file://{base_path}/mlruns"
-    
-    return None
+    if pg_user and pg_password and pg_db and pg_host and pg_port:
+        return f"postgresql://{pg_user}:{pg_password}@{pg_host}:{pg_port}/{pg_db}"
+
 
 
 def get_base_path() -> str:

@@ -35,7 +35,7 @@ conda install -c conda-forge postgresql
 
 # Initialize a database in your user space
 # Choose a location with enough space (e.g., /ceph/scratch/youruser/)
-export PGDATA="$HOME/postgres_data"
+export PGDATA="/ceph/scratch/youruser/postgres_data"
 initdb -D "$PGDATA"
 
 # Configure PostgreSQL to use a non-privileged port
@@ -46,69 +46,7 @@ initdb -D "$PGDATA"
 sed -i "s/#port = 5432/port = 5433/" "$PGDATA/postgresql.conf"
 
 # Start PostgreSQL server
-pg_ctl -D "$PGDATA" -l "$HOME/postgres_logfile.log" start
-
-# Wait a moment for the server to start, then create your database
-createdb -p 5433 mlflow_db
-
-# Optionally create a user with password
-psql -p 5433 -d mlflow_db -c "CREATE USER mlflow_user WITH PASSWORD 'your_password';"
-psql -p 5433 -d mlflow_db -c "GRANT ALL PRIVILEGES ON DATABASE mlflow_db TO mlflow_user;"
-
-# Test the connection
-psql -p 5433 -d mlflow_db -c "SELECT version();"
-```
-
-**For SLURM jobs on HPC:**
-Add this to your `.sbatch` script to start PostgreSQL:
-
-```bash
-# Start PostgreSQL if not running
-if ! pg_ctl -D "$HOME/postgres_data" status > /dev/null 2>&1; then
-    pg_ctl -D "$HOME/postgres_data" -l "$HOME/postgres_logfile.log" start
-    sleep 3  # Wait for server to start
-fi
-
-# Now run your training script
-python neurodecoders/encoder/mlflow_training.py ...
-```
-
-**Stop PostgreSQL when done:**
-```bash
-pg_ctl -D "$HOME/postgres_data" stop
-```
-
-**Make it persistent (optional):**
-Add to your `~/.bashrc`:
-```bash
-export PGDATA="$HOME/postgres_data"
-alias pg_start='pg_ctl -D $PGDATA -l $HOME/postgres_logfile.log start'
-alias pg_stop='pg_ctl -D $PGDATA stop'
-alias pg_status='pg_ctl -D $PGDATA status'
-```
-
-#### Without Admin Access (HPC Cluster)
-
-If you don't have sudo privileges (e.g., on an HPC cluster), you can run your own PostgreSQL instance:
-
-```bash
-# Install PostgreSQL in your conda environment
-conda install -c conda-forge postgresql
-
-# Initialize a database in your user space
-# Choose a location with enough space (e.g., /ceph/scratch/youruser/)
-export PGDATA="$HOME/postgres_data"
-initdb -D "$PGDATA"
-
-# Configure PostgreSQL to use a non-privileged port
-# Edit $PGDATA/postgresql.conf and set:
-# port = 5433  # or any available port > 1024
-
-# Or do it with sed:
-sed -i "s/#port = 5432/port = 5433/" "$PGDATA/postgresql.conf"
-
-# Start PostgreSQL server
-pg_ctl -D "$PGDATA" -l "$HOME/postgres_logfile.log" start
+pg_ctl -D "$PGDATA" -l "/ceph/scratch/youruser/postgres_logfile.log" start
 
 # Wait a moment for the server to start, then create your database
 createdb -p 5433 mlflow_db
