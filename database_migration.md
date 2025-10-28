@@ -49,14 +49,23 @@ sed -i "s/#port = 5432/port = 5433/" "$PGDATA/postgresql.conf"
 pg_ctl -D "$PGDATA" -l "/ceph/scratch/youruser/postgres_logfile.log" start
 
 # Wait a moment for the server to start, then create your database
-createdb -p 5433 mlflow_db
+createdb -p 5433 mlflow
 
-# Optionally create a user with password
-psql -p 5433 -d mlflow_db -c "CREATE USER mlflow_user WITH PASSWORD 'your_password';"
-psql -p 5433 -d mlflow_db -c "GRANT ALL PRIVILEGES ON DATABASE mlflow_db TO mlflow_user;"
+# Fix schema permissions to allow table creation
+# If you get permission errors during migration, run:
+psql -p 5433 -d postgres -c "ALTER SCHEMA public OWNER TO <your_username>;"
+psql -p 5433 -d mlflow -c "ALTER SCHEMA public OWNER TO <your_username>;"
+
+# Verify you have CREATE permission
+psql -p 5433 -d mlflow -c "SELECT has_schema_privilege(current_user, 'public', 'CREATE');"
+# Should return 't' (true)
+
+# Optionally create a user with password (not needed if using your own username)
+# psql -p 5433 -d mlflow -c "CREATE USER mlflow_user WITH PASSWORD 'your_password';"
+# psql -p 5433 -d mlflow -c "GRANT ALL PRIVILEGES ON DATABASE mlflow TO mlflow_user;"
 
 # Test the connection
-psql -p 5433 -d mlflow_db -c "SELECT version();"
+psql -p 5433 -d mlflow -c "SELECT version();"
 ```
 
 **For SLURM jobs on HPC:**
@@ -95,6 +104,17 @@ alias pg_status='pg_ctl -D $PGDATA status'
    ```
 
 2. **Edit `.env` with your database credentials:**
+   
+   **For HPC cluster (using your own username):**
+   ```bash
+   POSTGRES_USER=your_username  # e.g., laura
+   POSTGRES_PASSWORD=your_password
+   POSTGRES_HOST=localhost
+   POSTGRES_PORT=5433  # Use 5433 if running your own PostgreSQL instance
+   POSTGRES_DB=mlflow
+   ```
+   
+   **For macOS (using dedicated user):**
    ```bash
    POSTGRES_USER=mlflow_user
    POSTGRES_PASSWORD=your_password
@@ -235,15 +255,32 @@ Keep the original `mlruns/` directory backed up until you verify everything migr
 
 ## Troubleshooting
 
+### Permission Denied for Schema Public
+
+If you get this error during migration:
+```
+psycopg2.errors.InsufficientPrivilege: permission denied for schema public
+```
+
+Fix the schema ownership:
+```bash
+# HPC cluster (using your own PostgreSQL)
+psql -p 5433 -d postgres -c "ALTER SCHEMA public OWNER TO your_username;"
+psql -p 5433 -d mlflow -c "ALTER SCHEMA public OWNER TO your_username;"
+
+# Or recreate the database with correct ownership
+dropdb -p 5433 mlflow
+createdb -p 5433 mlflow -O your_username
+```
+
 ### Check database connection
 ```bash
 # macOS (if using default postgres user)
 psql -U mlflow_user -d mlflow_db -c "SELECT COUNT(*) FROM experiments;"
 
-# Ubuntu (switch to postgres user first)
-sudo -u postgres psql -d mlflow_db -c "SELECT COUNT(*) FROM experiments;"
-# Or if using mlflow_user:
-psql -U mlflow_user -h localhost -d mlflow_db -c "SELECT COUNT(*) FROM experiments;"
+# HPC cluster (using your own PostgreSQL)
+psql -U your_username -p 5433 -d mlflow -c "SELECT version();"
+psql -U your_username -p 5433 -d mlflow -c "SELECT has_schema_privilege(current_user, 'public', 'CREATE');"
 ```
 
 ### View PostgreSQL logs
@@ -251,8 +288,9 @@ psql -U mlflow_user -h localhost -d mlflow_db -c "SELECT COUNT(*) FROM experimen
 # macOS (Homebrew)
 tail -f /opt/homebrew/var/log/postgresql@14.log
 
-# Ubuntu
-sudo tail -f /var/log/postgresql/postgresql-*-main.log
+# HPC cluster (your own PostgreSQL)
+tail -f ~/postgres_logfile.log
+# Or wherever you specified with -l flag
 ```
 
 ### Reset database (if needed)
@@ -262,10 +300,10 @@ dropdb mlflow_db
 createdb mlflow_db
 psql -d mlflow_db -c "GRANT ALL PRIVILEGES ON DATABASE mlflow_db TO mlflow_user;"
 
-# Ubuntu
-sudo -u postgres dropdb mlflow_db
-sudo -u postgres createdb mlflow_db
-sudo -u postgres psql -d mlflow_db -c "GRANT ALL PRIVILEGES ON DATABASE mlflow_db TO mlflow_user;"
+# HPC cluster (your own PostgreSQL)
+dropdb -p 5433 mlflow
+createdb -p 5433 mlflow -O your_username
+psql -p 5433 -d mlflow -c "ALTER SCHEMA public OWNER TO your_username;"
 
 # Then re-run migration
 python migrate.py
