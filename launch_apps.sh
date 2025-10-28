@@ -20,13 +20,16 @@ fi
 
 # Load environment variables from .env file
 if [ -f .env ]; then
-    export $(cat .env | grep -v '^#' | xargs)
+    set -a  # automatically export all variables
+    source .env
+    set +a
 fi
 
 # Construct MLflow tracking URI from environment variables
 if [ -n "$POSTGRES_USER" ] && [ -n "$POSTGRES_PASSWORD" ] && [ -n "$POSTGRES_DB" ]; then
     POSTGRES_HOST=${POSTGRES_HOST:-localhost}
-    export MLFLOW_TRACKING_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}/${POSTGRES_DB}"
+    POSTGRES_PORT=${POSTGRES_PORT:-5432}
+    export MLFLOW_TRACKING_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
 else
     echo "⚠️  Warning: Database credentials not found in .env file"
     echo "    Using default tracking URI"
