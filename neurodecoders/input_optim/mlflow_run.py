@@ -29,7 +29,7 @@ from neurodecoders.mlflow_utils.utils import (
 )
 from neurodecoders.paths import get_path
 
-DEFAULT_MODEL_ID = "m-553e4f38555b44a6a026362915f9431c"
+DEFAULT_MODEL_ID = "04d2e41a86d948acb30f0e8c3dad75cc"  # Run ID for CIFAR10 model
 
 
 def _log_model_source_info(model_id: str) -> None:
@@ -110,85 +110,95 @@ def _log_model_source_info(model_id: str) -> None:
         )
 
 
+def _get_dataset_params_from_model(model_id: str) -> dict:
+    """Get dataset parameters from a model ID or run ID.
+    
+    Args:
+        model_id: Either a model registry ID (m-xxx) or a run ID
+        
+    Returns:
+        Dictionary of parameters from the run
+    """
+    from mlflow.tracking import MlflowClient
+    
+    client = MlflowClient()
+    params = None
+    run_id = None
+    
+    # Check if it's a run ID (32 char hex string without m- prefix)
+    if len(model_id) == 32 and not model_id.startswith('m-'):
+        print(f"[INFO] Input looks like a run ID, trying direct lookup: {model_id}")
+        try:
+            run = client.get_run(model_id)
+            params = run.data.params
+            run_id = model_id
+            print(f"[INFO] Successfully retrieved run {run_id}")
+        except Exception as e:
+            print(f"[WARNING] Failed to get run directly: {e}")
+    
+    # If not found yet, try model registry
+    if params is None:
+        try:
+            versions = client.search_model_versions(f"name='{model_id}'")
+        except Exception as e:
+            print(f"[WARNING] Failed to search model versions: {e}")
+            versions = []
+        
+        if versions:
+            preferred = None
+            for mv in versions:
+                if getattr(mv, "current_stage", "") == "Production":
+                    preferred = mv
+                    break
+            if preferred is None:
+                preferred = sorted(
+                    versions,
+                    key=lambda v: int(getattr(v, "version", 0)),
+                    reverse=True,
+                )[0]
+            run_id = preferred.run_id
+            print(f"[INFO] Found model version with run_id: {run_id}")
+            
+            run = client.get_run(run_id)
+            params = run.data.params
+    
+    if params is None:
+        raise RuntimeError(
+            f"Could not retrieve parameters for model/run {model_id}. "
+            "Please provide a valid model ID or run ID."
+        )
+    
+    # Log all dataset-related parameters for debugging
+    dataset_params = {k: v for k, v in params.items() if 'dataset' in k.lower()}
+    if dataset_params:
+        print(f"[INFO] Dataset parameters found: {list(dataset_params.keys())}")
+    else:
+        print("[WARNING] No dataset parameters found in run!")
+    
+    return params
+
+
 def _load_original_images_from_dataset(
     model_id: str, image_ids: List[int]
 ) -> List[np.ndarray]:
     """Load original images from the model's training dataset.
 
     Args:
-        model_id: MLflow model ID
+        model_id: MLflow model ID or run ID
         image_ids: List of image indices to load
 
     Returns:
         List of original images as numpy arrays
     """
-    from mlflow.tracking import MlflowClient
-
-    client = MlflowClient()
-
-    # Get dataset path from model's training run
-    params = None
-    try:
-        versions = client.search_model_versions(f"name='{model_id}'")
-    except Exception:
-        versions = []
-    if versions:
-        preferred = None
-        for mv in versions:
-            if getattr(mv, "current_stage", "") == "Production":
-                preferred = mv
-                break
-        if preferred is None:
-            preferred = sorted(
-                versions,
-                key=lambda v: int(getattr(v, "version", 0)),
-                reverse=True,
-            )[0]
-        run_id = preferred.run_id
-        run = client.get_run(run_id)
-        params = run.data.params
-    else:
-        # Fallback: latest run with dataset params
-        try:
-            df = mlflow.search_runs(
-                order_by=["attributes.start_time DESC"], max_results=200
-            )
-        except Exception:
-            df = None
-        if df is not None and not df.empty:
-            for _, row in df.iterrows():
-                ds = row.get("params.dataset_dataset_filename")
-                if isinstance(ds, str) and ds:
-                    params = {"dataset_dataset_filename": ds}
-                    break
-
-    if params is None:
-        # Fallback: pick the most recent synthetic train dataset file
-        train_dir = os.path.join(
-            get_path("workspace/datasets/synthetic"), "train"
-        )
-        if not os.path.exists(train_dir):
-            raise FileNotFoundError(
-                f"No train dir found at {train_dir} and no MLflow "
-                "runs with dataset params."
-            )
-        cand = [f for f in os.listdir(train_dir) if f.endswith(".npz")]
-        if not cand:
-            raise FileNotFoundError(
-                "No .npz datasets in synthetic/train and no MLflow "
-                "runs with dataset params."
-            )
-        latest = max(
-            cand,
-            key=lambda fn: os.path.getmtime(os.path.join(train_dir, fn)),
-        )
-        params = {"dataset_dataset_filename": latest}
+    # Get params using the helper function
+    params = _get_dataset_params_from_model(model_id)
 
     ds_filename = params.get("dataset_dataset_filename")
     if not ds_filename:
         raise RuntimeError(
-            "dataset_filename not found in run params. "
-            "Cannot load original images."
+            f"dataset_filename not found in run params for model {model_id}. "
+            f"Available params: {list(params.keys())}. "
+            "Cannot load original images without knowing which dataset was used."
         )
 
     ds_path = os.path.join(
@@ -202,6 +212,40 @@ def _load_original_images_from_dataset(
 
     # Load dataset
     images, _ = load_npz_dataset(ds_path)
+    
+    # Log dataset information for verification
+    print(f"[INFO] Loaded dataset: {ds_filename}")
+    print(f"[INFO] Dataset contains {images.shape[0]} images")
+    print(f"[INFO] Image shape: {images.shape[1:]}")
+    
+    # Extract dataset type from filename for validation
+    # Check for cifar10 first (more specific), then cifar, then mnist
+    if "cifar10" in ds_filename.lower() or "cifar-10" in ds_filename.lower():
+        dataset_type = "cifar10"
+    elif "cifar100" in ds_filename.lower() or "cifar-100" in ds_filename.lower():
+        dataset_type = "cifar100"
+    elif "cifar" in ds_filename.lower():
+        dataset_type = "cifar"
+    elif "mnist" in ds_filename.lower():
+        dataset_type = "mnist"
+    else:
+        dataset_type = "unknown"
+    print(f"[INFO] Detected dataset type: {dataset_type}")
+    
+    # Validate dataset type matches model if available in params
+    model_dataset_type = params.get("dataset_dataset_type", "unknown")
+    if model_dataset_type != "unknown" and dataset_type != "unknown":
+        # Normalize for comparison (cifar10 == cifar-10 == CIFAR10)
+        model_type_normalized = model_dataset_type.lower().replace("-", "")
+        dataset_type_normalized = dataset_type.lower().replace("-", "")
+        
+        if model_type_normalized != dataset_type_normalized:
+            raise ValueError(
+                f"Dataset type mismatch! Model was trained on '{model_dataset_type}' "
+                f"but trying to load '{dataset_type}' dataset. "
+                f"Dataset file: {ds_filename}"
+            )
+        print(f"[INFO] ✓ Dataset type validated: {dataset_type} matches model training dataset")
 
     # Extract requested images
     original_images = []
@@ -225,74 +269,16 @@ def _infer_target_rates_from_model(
     dataset_filename), loads the synthetic train .npz, and returns the
     firing-rate vector at the requested sample index.
     """
-    from mlflow.tracking import MlflowClient
-
-    client = MlflowClient()
-
-    params = None
-    # First try model registry
-    try:
-        versions = client.search_model_versions(f"name='{model_id}'")
-    except Exception:
-        versions = []
-    if versions:
-        preferred = None
-        for mv in versions:
-            if getattr(mv, "current_stage", "") == "Production":
-                preferred = mv
-                break
-        if preferred is None:
-            preferred = sorted(
-                versions,
-                key=lambda v: int(getattr(v, "version", 0)),
-                reverse=True,
-            )[0]
-        run_id = preferred.run_id
-        run = client.get_run(run_id)
-        params = run.data.params
-    else:
-        # Fallback: latest run with dataset params using fluent API
-        try:
-            df = mlflow.search_runs(
-                order_by=["attributes.start_time DESC"], max_results=200
-            )
-        except Exception:
-            df = None
-        if df is not None and not df.empty:
-            for _, row in df.iterrows():
-                ds = row.get("params.dataset_dataset_filename")
-                if isinstance(ds, str) and ds:
-                    params = {
-                        "dataset_dataset_filename": ds,
-                    }
-                    break
-        if params is None:
-            # Fallback: pick the most recent synthetic train dataset file
-            train_dir = os.path.join(
-                get_path("workspace/datasets/synthetic"), "train"
-            )
-            if not os.path.exists(train_dir):
-                raise FileNotFoundError(
-                    f"No train dir found at {train_dir} and no MLflow "
-                    "runs with dataset params."
-                )
-            cand = [f for f in os.listdir(train_dir) if f.endswith(".npz")]
-            if not cand:
-                raise FileNotFoundError(
-                    "No .npz datasets in synthetic/train and no MLflow "
-                    "runs with dataset params."
-                )
-            latest = max(
-                cand,
-                key=lambda fn: os.path.getmtime(os.path.join(train_dir, fn)),
-            )
-            params = {"dataset_dataset_filename": latest}
+    # Get params using the helper function
+    params = _get_dataset_params_from_model(model_id)
 
     # Dataset parameters were logged with 'dataset_*' keys
     ds_filename = params.get("dataset_dataset_filename")
     if not ds_filename:
         raise RuntimeError(
-            "dataset_filename not found in run params. Cannot infer dataset."
+            f"dataset_filename not found in run params for model {model_id}. "
+            f"Available params: {list(params.keys())}. "
+            "Cannot infer dataset without knowing which dataset was used."
         )
 
     ds_path = os.path.join(
@@ -305,7 +291,42 @@ def _infer_target_rates_from_model(
         )
 
     _, firing = load_npz_dataset(ds_path)
+    
+    # Log dataset information for verification
+    print(f"[INFO] Loaded dataset for target rates: {ds_filename}")
+    print(f"[INFO] Dataset contains {firing.shape[0]} samples with {firing.shape[1]} neurons")
+    
+    # Extract dataset type from filename for validation
+    # Check for cifar10 first (more specific), then cifar, then mnist
+    if "cifar10" in ds_filename.lower() or "cifar-10" in ds_filename.lower():
+        dataset_type = "cifar10"
+    elif "cifar100" in ds_filename.lower() or "cifar-100" in ds_filename.lower():
+        dataset_type = "cifar100"
+    elif "cifar" in ds_filename.lower():
+        dataset_type = "cifar"
+    elif "mnist" in ds_filename.lower():
+        dataset_type = "mnist"
+    else:
+        dataset_type = "unknown"
+    print(f"[INFO] Detected dataset type: {dataset_type}")
+    
+    # Validate dataset type matches model if available in params
+    model_dataset_type = params.get("dataset_dataset_type", "unknown")
+    if model_dataset_type != "unknown" and dataset_type != "unknown":
+        # Normalize for comparison (cifar10 == cifar-10 == CIFAR10)
+        model_type_normalized = model_dataset_type.lower().replace("-", "")
+        dataset_type_normalized = dataset_type.lower().replace("-", "")
+        
+        if model_type_normalized != dataset_type_normalized:
+            raise ValueError(
+                f"Dataset type mismatch! Model was trained on '{model_dataset_type}' "
+                f"but trying to load '{dataset_type}' dataset. "
+                f"Dataset file: {ds_filename}"
+            )
+        print(f"[INFO] ✓ Dataset type validated: {dataset_type} matches model training dataset")
+    
     if sample_index < 0 or sample_index >= firing.shape[0]:
+
         raise IndexError(
             f"sample_index {sample_index} out of range "
             f"(0..{firing.shape[0] - 1})"
@@ -358,13 +379,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=1,
         help="Num channels (only 1 supported; grayscale)",
     )
-    p.add_argument(
-        "--tv-weight",
-        type=float,
-        default=1e-4,
-        help="Total variation",
-    )
-    p.add_argument("--l2-weight", type=float, default=1e-6, help="L2 weight")
     p.add_argument("--log-every", type=int, default=50, help="Log cadence")
     p.add_argument("--seed", type=int, default=42, help="Random seed")
     p.add_argument(
@@ -403,8 +417,6 @@ def main(args: argparse.Namespace) -> None:
                 "lr": args.lr,
                 "image_size": args.image_size,
                 "channels": args.channels,
-                "tv_weight": args.tv_weight,
-                "l2_weight": args.l2_weight,
                 "log_every": args.log_every,
                 "seed": args.seed,
             }
@@ -442,8 +454,6 @@ def main(args: argparse.Namespace) -> None:
             channels=args.channels,
             steps=args.steps,
             lr=args.lr,
-            tv_weight=args.tv_weight,
-            l2_weight=args.l2_weight,
             log_every=args.log_every,
             seed=args.seed,
             image_ids=image_ids,
@@ -542,8 +552,6 @@ def main(args: argparse.Namespace) -> None:
                         "lr": args.lr,
                         "image_size": args.image_size,
                         "channels": args.channels,
-                        "tv_weight": args.tv_weight,
-                        "l2_weight": args.l2_weight,
                         "log_every": args.log_every,
                         "seed": args.seed,
                         "image_id": img_id,

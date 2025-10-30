@@ -33,17 +33,6 @@ def _to_device() -> torch.device:
     return torch.device("cpu")
 
 
-def _total_variation(img: torch.Tensor) -> torch.Tensor:
-    """Isotropic total variation regularizer for smoothness.
-
-    Args:
-        img: Tensor of shape (B, C, H, W)
-    """
-    dh = torch.abs(img[:, :, 1:, :] - img[:, :, :-1, :]).mean()
-    dw = torch.abs(img[:, :, :, 1:] - img[:, :, :, :-1]).mean()
-    return dh + dw
-
-
 def create_comparison_plots(
     original_images: List[np.ndarray],
     reconstructed_images: List[np.ndarray],
@@ -226,8 +215,6 @@ class OptimConfig:
     channels: int = 1
     steps: int = 2000
     lr: float = 0.05
-    tv_weight: float = 1e-4
-    l2_weight: float = 1e-6
     log_every: int = 50
     init_mean: float = 0.5
     init_std: float = 0.01
@@ -317,31 +304,27 @@ class ImageOptimizer:
             raise ValueError("Encoder output must be shape (1, N) or (N,)")
 
         rate = self.softplus(pred)
-        loss_data = self.poisson(rate, self.target)
+        loss = self.poisson(rate, self.target)
 
-        tv = _total_variation(self.image) if self.cfg.tv_weight > 0 else 0.0
-        l2 = (self.image**2).mean() if self.cfg.l2_weight > 0 else 0.0
-
-        total = (
-            loss_data
-            + self.cfg.tv_weight * (tv if isinstance(tv, torch.Tensor) else 0)
-            + self.cfg.l2_weight * (l2 if isinstance(l2, torch.Tensor) else 0)
-        )
-
-        total.backward()
+        loss.backward()
+        
+        # Apply gradient normalization and clipping as in the paper
+        # (Equation 6 and methods section 4.5)
+        with torch.no_grad():
+            if self.image.grad is not None:
+                # Normalize by matrix norm (Frobenius norm)
+                grad_norm = torch.norm(self.image.grad)
+                if grad_norm > 0:
+                    self.image.grad /= grad_norm
+                # Clip gradients to [-1, 1]
+                self.image.grad.clamp_(-1.0, 1.0)
+        
         opt.step()
         with torch.no_grad():
             self.image.clamp_(self.cfg.clamp_min, self.cfg.clamp_max)
 
         metrics = {
-            "loss_total": float(total.detach().cpu().item()),
-            "loss_poisson": float(loss_data.detach().cpu().item()),
-            "tv": float(tv.detach().cpu().item())
-            if isinstance(tv, torch.Tensor)
-            else 0.0,
-            "l2": float(l2.detach().cpu().item())
-            if isinstance(l2, torch.Tensor)
-            else 0.0,
+            "loss": float(loss.detach().cpu().item()),
         }
         return self.image.detach(), metrics
 
@@ -449,7 +432,10 @@ def load_encoder_from_mlflow(model_id: str) -> nn.Module:
     """Load a PyTorch encoder from MLflow given a model identifier.
 
     Tries common registry URIs; falls back to latest run's encoder_model.
-    Also handles local file paths.
+    Also handles local file paths and run IDs.
+    
+    Args:
+        model_id: Can be a model registry ID (m-xxx), run ID (32 char hex), or file path
     """
     # Check if it's a local file path first
     if os.path.exists(model_id):
@@ -460,18 +446,34 @@ def load_encoder_from_mlflow(model_id: str) -> nn.Module:
             print(f"Warning: Could not load local model {model_id}: {e}")
     
     tried = []
-    uris = [
-        f"models:/{model_id}",
-        f"models:/{model_id}/latest",
-        f"models:/{model_id}/Production",
-        f"models:/{model_id}/Staging",
-    ]
-    for uri in uris:
-        try:
-            model = mlflow.pytorch.load_model(uri)
-            return model
-        except Exception:
-            tried.append(uri)
+    
+    # Check if it's a run ID (32 char hex string without m- prefix)
+    if len(model_id) == 32 and not model_id.startswith('m-'):
+        print(f"[INFO] Input looks like a run ID, trying to load from run artifacts: {model_id}")
+        for art_name in ("trained_model", "encoder_model", "model"):
+            uri = f"runs:/{model_id}/{art_name}"
+            try:
+                print(f"[INFO] Trying to load from: {uri}")
+                model = mlflow.pytorch.load_model(uri)
+                print(f"[INFO] Successfully loaded model from {uri}")
+                return model
+            except Exception as e:
+                print(f"[WARNING] Failed to load from {uri}: {e}")
+                tried.append(uri)
+    else:
+        # Try model registry URIs
+        uris = [
+            f"models:/{model_id}",
+            f"models:/{model_id}/latest",
+            f"models:/{model_id}/Production",
+            f"models:/{model_id}/Staging",
+        ]
+        for uri in uris:
+            try:
+                model = mlflow.pytorch.load_model(uri)
+                return model
+            except Exception:
+                tried.append(uri)
 
     # Fallback: attempt to load the most recent run's encoder_model artifact
     try:
@@ -488,7 +490,7 @@ def load_encoder_from_mlflow(model_id: str) -> nn.Module:
             )
             for r in runs:
                 run_id = r.info.run_id
-                for art_name in ("encoder_model", "model"):
+                for art_name in ("trained_model", "encoder_model", "model"):
                     try:
                         uri = f"runs:/{run_id}/{art_name}"
                         model = mlflow.pytorch.load_model(uri)
