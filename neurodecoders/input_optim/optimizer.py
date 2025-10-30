@@ -34,9 +34,9 @@ def _to_device() -> torch.device:
 
 
 def create_comparison_plots(
-    original_images: List[np.ndarray],
-    reconstructed_images: List[np.ndarray],
-    image_ids: List[int],
+    original_image: List[np.ndarray],
+    reconstructed_image: List[np.ndarray],
+    image_id: List[int],
     output_path: str,
     figsize: Tuple[int, int] = (8, 6),
 ) -> None:
@@ -50,161 +50,35 @@ def create_comparison_plots(
         output_path: Path to save the comparison plot
         figsize: Figure size tuple (width, height)
     """
-    n_images = len(original_images)
-    if n_images == 0:
-        return
+    n_images = len(original_image)
 
-    # Adjust figure size based on number of images
-    if n_images == 1:
-        figsize = (6, 8)  # Taller for single image
-    elif n_images <= 3:
-        figsize = (4 * n_images, 8)  # 4 units per image
-    else:
-        figsize = (12, 8)  # Cap at reasonable size for many images
-
+    figsize = (6, 8)  # Taller for single image
+    
     # Create subplots: 3 rows
     # (original, reconstructed, difference) x n_images cols
     fig, axes = plt.subplots(3, n_images, figsize=figsize)
-    if n_images == 1:
-        axes = axes.reshape(3, 1)
+    axes = axes.reshape(3, 1)
 
-    for i, (orig, recon, img_id) in enumerate(
-        zip(original_images, reconstructed_images, image_ids)
-    ):
-        # Ensure images are in [0, 1] range
-        orig = np.clip(orig, 0, 1)
-        recon = np.clip(recon, 0, 1)
+    # Calculate difference
+    diff = np.abs(original_image - reconstructed_image)
 
-        # Resize original image to match reconstructed image dimensions
-        if orig.shape != recon.shape:
-            print(f"[DEBUG] Resizing original {orig.shape} to match reconstructed {recon.shape}")
-            try:
-                # Try PIL first (most common and reliable)
-                from PIL import Image
+    # Original image
+    axes[0].imshow(original_image.squeeze(), cmap="gray")
+    axes[0].set_title(f"Original {image_id}", fontsize=12)
+    axes[0].axis("off")
 
-                # Convert to PIL Image - ensure we have a 2D image
-                if len(orig.shape) == 3:
-                    # If 3D, take the first channel or squeeze
-                    if orig.shape[0] == 1:
-                        orig_2d = orig.squeeze(0)
-                    else:
-                        orig_2d = orig[0]
-                else:
-                    orig_2d = orig
+    # Reconstructed image
+    axes[1].imshow(reconstructed_image.squeeze(), cmap="gray")
+    axes[1].set_title(f"Reconstructed {image_id}", fontsize=12)
+    axes[1].axis("off")
 
-                pil_img = Image.fromarray(
-                    (orig_2d * 255).astype(np.uint8)
-                )
+    # Difference image
+    im = axes[2].imshow(diff.squeeze(), cmap="hot")
+    axes[2].set_title(f"Difference {image_id}", fontsize=12)
+    axes[2].axis("off")
 
-                # Resize to match reconstructed image
-                if len(recon.shape) == 3:
-                    target_size = (
-                        recon.shape[2],  # width
-                        recon.shape[1],   # height
-                    )  # PIL uses (width, height)
-                else:
-                    target_size = (
-                        recon.shape[1],  # width
-                        recon.shape[0],  # height
-                    )  # PIL uses (width, height)
-                pil_img = pil_img.resize(target_size, Image.LANCZOS)
-
-                # Convert back to numpy
-                orig = np.array(pil_img) / 255.0
-                # Ensure the shape matches the reconstructed image
-                if len(recon.shape) == 3 and len(orig.shape) == 2:
-                    orig = orig.reshape(1, orig.shape[0], orig.shape[1])
-                elif len(recon.shape) == 2 and len(orig.shape) == 3:
-                    orig = orig.squeeze()
-                # Ensure we have a 2D image for display
-                if len(orig.shape) == 1:
-                    # If we somehow got a 1D array, reshape it to 2D
-                    orig = orig.reshape(int(np.sqrt(len(orig))), int(np.sqrt(len(orig))))
-                print(f"[DEBUG] PIL resized original image to {orig.shape}")
-            except ImportError:
-                try:
-                    # Try scipy as fallback
-                    from scipy.ndimage import zoom
-
-                    zoom_factors = [
-                        recon.shape[j] / orig.shape[j]
-                        for j in range(len(orig.shape))
-                    ]
-                    orig = zoom(orig, zoom_factors, order=1)
-                    # Ensure the shape matches the reconstructed image
-                    if len(recon.shape) == 3 and len(orig.shape) == 2:
-                        orig = orig.reshape(1, orig.shape[0], orig.shape[1])
-                    elif len(recon.shape) == 2 and len(orig.shape) == 3:
-                        orig = orig.squeeze()
-                    # Ensure we have a 2D image for display
-                    if len(orig.shape) == 1:
-                        orig = orig.reshape(int(np.sqrt(len(orig))), int(np.sqrt(len(orig))))
-                    print(
-                        f"[DEBUG] Scipy resized original image to {orig.shape}"
-                    )
-                except ImportError:
-                    # Final fallback: simple numpy resizing using interpolation
-                    # Create coordinate arrays for interpolation
-                    orig_h, orig_w = orig.shape[:2]
-                    recon_h, recon_w = recon.shape[:2]
-
-                    # Create coordinate grids
-                    y_coords = np.linspace(0, orig_h - 1, recon_h)
-                    x_coords = np.linspace(0, orig_w - 1, recon_w)
-
-                    # Simple nearest neighbor interpolation
-                    y_indices = np.round(y_coords).astype(int)
-                    x_indices = np.round(x_coords).astype(int)
-
-                    # Ensure indices are within bounds
-                    y_indices = np.clip(y_indices, 0, orig_h - 1)
-                    x_indices = np.clip(x_indices, 0, orig_w - 1)
-
-                    # Resize using advanced indexing
-                    if len(orig.shape) == 3:
-                        orig = orig[y_indices[:, None], x_indices[None, :]]
-                    else:
-                        orig = orig[y_indices[:, None], x_indices[None, :]]
-                    
-                    # Ensure the shape matches the reconstructed image
-                    if len(recon.shape) == 3 and len(orig.shape) == 2:
-                        orig = orig.reshape(1, orig.shape[0], orig.shape[1])
-                    elif len(recon.shape) == 2 and len(orig.shape) == 3:
-                        orig = orig.squeeze()
-                    # Ensure we have a 2D image for display
-                    if len(orig.shape) == 1:
-                        orig = orig.reshape(int(np.sqrt(len(orig))), int(np.sqrt(len(orig))))
-
-        # Calculate difference
-        diff = np.abs(orig - recon)
-
-        # Original image
-        axes[0, i].imshow(orig.squeeze(), cmap="gray", vmin=0, vmax=1)
-        axes[0, i].set_title(f"Original {img_id}", fontsize=12)
-        axes[0, i].axis("off")
-
-        # Reconstructed image
-        axes[1, i].imshow(recon.squeeze(), cmap="gray", vmin=0, vmax=1)
-        axes[1, i].set_title(f"Reconstructed {img_id}", fontsize=12)
-        axes[1, i].axis("off")
-
-        # Difference image
-        im = axes[2, i].imshow(diff.squeeze(), cmap="hot", vmin=0, vmax=1)
-        axes[2, i].set_title(f"Difference {img_id}", fontsize=12)
-        axes[2, i].axis("off")
-
-    # Add a single colorbar for all difference images
-    if n_images > 0:
-        # Create a colorbar for the difference images
-        fig.subplots_adjust(right=0.85)
-        cbar_ax = fig.add_axes([0.9, 0.15, 0.02, 0.7])  # [left, bottom, width, height]
-        cbar = fig.colorbar(im, cax=cbar_ax)
-        cbar.set_label('Difference', rotation=270, labelpad=15)
-        # Don't use tight_layout when we have custom colorbar
-        plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    else:
-        plt.tight_layout()
-        plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
     
     plt.close()
 
@@ -215,13 +89,14 @@ class OptimConfig:
     channels: int = 1
     steps: int = 2000
     lr: float = 0.05
-    log_every: int = 50
+    log_every: int = 20
     init_mean: float = 0.5
     init_std: float = 0.01
     clamp_min: float = 0.0
     clamp_max: float = 1.0
     seed: Optional[int] = 42
     image_ids: Optional[list] = None
+    loss: str = "poisson_mean"
 
 
 class ImageOptimizer:
@@ -289,7 +164,15 @@ class ImageOptimizer:
                 f" {self.cfg.image_size}). Original error: {e}"
             ) from e
 
-        self.poisson = nn.PoissonNLLLoss(log_input=False, reduction="mean")
+        # Loss function
+        if self.cfg.loss == "mse":
+            self.loss = nn.MSELoss(reduction="mean")
+        elif self.cfg.loss == "poisson_mean":
+            self.loss = nn.PoissonNLLLoss(log_input=False, reduction="mean")
+        elif self.cfg.loss == "poisson_sum":
+            self.loss = nn.PoissonNLLLoss(log_input=False, reduction="sum")
+        else:
+            raise ValueError(f"Unknown loss function: {self.cfg.loss}")
         self.softplus = nn.Softplus()
 
     def step(
@@ -297,19 +180,37 @@ class ImageOptimizer:
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         opt.zero_grad(set_to_none=True)
 
-        pred = self.encoder(self.image)
+        def apply_gaussian_blur_to_image(img: torch.Tensor) -> torch.Tensor:
+            """Applies a Gaussian blur to the input image tensor."""
+            import torch.nn.functional as F
+
+            # Define a simple Gaussian kernel
+            kernel_size = 20
+            sigma = 20.0
+            x = torch.arange(-kernel_size // 2 + 1., kernel_size // 2 + 1.)
+            x_grid = x.repeat(kernel_size).view(kernel_size, kernel_size)
+            y_grid = x_grid.t()
+            gaussian_kernel = torch.exp(-(x_grid**2 + y_grid**2) / (2 * sigma**2))
+            gaussian_kernel /= gaussian_kernel.sum()
+
+            # Reshape to [out_channels, in_channels, kH, kW]
+            gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size).to(img.device)
+
+            # Apply the Gaussian filter
+            img = F.conv2d(img, gaussian_kernel, padding=kernel_size // 2)
+            return img
+
+        pred = self.encoder(apply_gaussian_blur_to_image(self.image))
         if pred.ndim == 2 and pred.shape[0] == 1:
             pred = pred[0]
         elif pred.ndim != 1:
             raise ValueError("Encoder output must be shape (1, N) or (N,)")
 
         rate = self.softplus(pred)
-        loss = self.poisson(rate, self.target)
+        loss = self.loss(rate, self.target)
 
         loss.backward()
-        
-        # Apply gradient normalization and clipping as in the paper
-        # (Equation 6 and methods section 4.5)
+
         with torch.no_grad():
             if self.image.grad is not None:
                 # Normalize by matrix norm (Frobenius norm)
@@ -318,7 +219,7 @@ class ImageOptimizer:
                     self.image.grad /= grad_norm
                 # Clip gradients to [-1, 1]
                 self.image.grad.clamp_(-1.0, 1.0)
-        
+
         opt.step()
         with torch.no_grad():
             self.image.clamp_(self.cfg.clamp_min, self.cfg.clamp_max)
@@ -397,31 +298,32 @@ class ImageOptimizer:
                 f"Loss: {metrics.get('loss_total', 'N/A'):.4f}"
             )
 
-        # Create comparison plot if we have multiple images
-        if len(reconstructed_images) > 1:
-            comparison_path = os.path.join(output_dir, "comparison_plot.png")
-            create_comparison_plots(
-                original_images=original_images
-                or [np.zeros_like(img) for img in reconstructed_images],
-                reconstructed_images=reconstructed_images,
-                image_ids=image_ids,
-                output_path=comparison_path,
-            )
-            print(f"Comparison plot saved: {comparison_path}")
-        elif len(reconstructed_images) == 1:
-            # Even for single image,
-            # create a comparison plot if we have original
-            if original_images and len(original_images) == 1:
-                comparison_path = os.path.join(
-                    output_dir, "comparison_plot.png"
-                )
-                create_comparison_plots(
-                    original_images=original_images,
-                    reconstructed_images=reconstructed_images,
-                    image_ids=image_ids,
-                    output_path=comparison_path,
-                )
-                print(f"Single image comparison plot saved: {comparison_path}")
+        # # Create comparison plot with unique filename per run
+        # import datetime
+        # #  with seco
+        # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        # img_id_str = "_".join(str(i) for i in image_ids)
+        # comparison_filename = f"comparison_{img_id_str}_{timestamp}.png"
+        # comparison_path = os.path.join(output_dir, comparison_filename)
+
+        # if len(reconstructed_images) > 1:
+        #     create_comparison_plots(
+        #         original_images=original_images
+        #         or [np.zeros_like(img) for img in reconstructed_images],
+        #         reconstructed_images=reconstructed_images,
+        #         image_ids=image_ids,
+        #         output_path=comparison_path,
+        #     )
+        #     print(f"Comparison plot saved: {comparison_path}")
+        # elif len(reconstructed_images) == 1:
+        #     if original_images and len(original_images) == 1:
+        #         create_comparison_plots(
+        #             original_images=original_images,
+        #             reconstructed_images=reconstructed_images,
+        #             image_ids=image_ids,
+        #             output_path=comparison_path,
+        #         )
+        #         print(f"Single image comparison plot saved: {comparison_path}")
 
         return original_images or [
             np.zeros_like(img) for img in reconstructed_images
@@ -437,84 +339,20 @@ def load_encoder_from_mlflow(model_id: str) -> nn.Module:
     Args:
         model_id: Can be a model registry ID (m-xxx), run ID (32 char hex), or file path
     """
-    # Check if it's a local file path first
-    if os.path.exists(model_id):
-        try:
-            device = _to_device()
-            return load_encoder_model(model_id, device)
-        except Exception as e:
-            print(f"Warning: Could not load local model {model_id}: {e}")
-    
     tried = []
     
     # Check if it's a run ID (32 char hex string without m- prefix)
     if len(model_id) == 32 and not model_id.startswith('m-'):
         print(f"[INFO] Input looks like a run ID, trying to load from run artifacts: {model_id}")
-        for art_name in ("trained_model", "encoder_model", "model"):
-            uri = f"runs:/{model_id}/{art_name}"
-            try:
-                print(f"[INFO] Trying to load from: {uri}")
-                model = mlflow.pytorch.load_model(uri)
-                print(f"[INFO] Successfully loaded model from {uri}")
-                return model
-            except Exception as e:
-                print(f"[WARNING] Failed to load from {uri}: {e}")
-                tried.append(uri)
-    else:
-        # Try model registry URIs
-        uris = [
-            f"models:/{model_id}",
-            f"models:/{model_id}/latest",
-            f"models:/{model_id}/Production",
-            f"models:/{model_id}/Staging",
-        ]
-        for uri in uris:
-            try:
-                model = mlflow.pytorch.load_model(uri)
-                return model
-            except Exception:
-                tried.append(uri)
-
-    # Fallback: attempt to load the most recent run's encoder_model artifact
-    try:
-        from mlflow.tracking import MlflowClient
-
-        client = MlflowClient()
-        exps = client.list_experiments()
-        exp_ids = [e.experiment_id for e in exps]
-        if exp_ids:
-            runs = client.search_runs(
-                experiment_ids=exp_ids,
-                order_by=["attributes.start_time DESC"],
-                max_results=50,
-            )
-            for r in runs:
-                run_id = r.info.run_id
-                for art_name in ("trained_model", "encoder_model", "model"):
-                    try:
-                        uri = f"runs:/{run_id}/{art_name}"
-                        model = mlflow.pytorch.load_model(uri)
-                        return model
-                    except Exception:
-                        continue
-    except Exception:
-        pass
-
-    # Local fallback: load most recent encoder weights from workspace
-    try:
-        models_dir = get_path("workspace/models/encoders")
-        if os.path.exists(models_dir):
-            cand = [
-                os.path.join(models_dir, f)
-                for f in os.listdir(models_dir)
-                if f.endswith(".pth") or f.endswith(".ckpt")
-            ]
-            if cand:
-                latest = max(cand, key=os.path.getmtime)
-                device = _to_device()
-                return load_encoder_model(latest, device)
-    except Exception:
-        pass
+        uri = f"runs:/{model_id}/model"
+        try:
+            print(f"[INFO] Trying to load from: {uri}")
+            model = mlflow.pytorch.load_model(uri)
+            print(f"[INFO] Successfully loaded model from {uri}")
+            return model
+        except Exception as e:
+            print(f"[WARNING] Failed to load from {uri}: {e}")
+            tried.append(uri)
 
     raise RuntimeError(
         "Could not load encoder from MLflow. Tried URIs: " + ", ".join(tried)
