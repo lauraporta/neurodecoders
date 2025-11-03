@@ -184,11 +184,11 @@ class ResNetConvOnly(nn.Module, ResNetMixin):
     for firing rate prediction. Simpler architecture than ResNetEncoder.
     """
 
-    def __init__(self, out_neurons, freeze_backbone=True):
+    def __init__(self, out_neurons, freeze_backbone=False):
         super().__init__()
 
-        # Load pre-trained ResNet18
-        resnet = models.resnet18(pretrained=True)
+        # Load ResNet18 architecture WITHOUT pre-trained weights
+        resnet = models.resnet18(pretrained=False)
         
         # Extract only the convolutional layers (remove avgpool and fc)
         # This gives us the pure conv feature extractor
@@ -202,11 +202,9 @@ class ResNetConvOnly(nn.Module, ResNetMixin):
         # Feature dimension after layer4 is 512 channels
         feature_dim = 512
 
-        # Freeze backbone if requested
-        if freeze_backbone:
-            for param in self.backbone.parameters():
-                param.requires_grad = False
-
+        # DON'T freeze backbone - we want to train it!
+        # freeze_backbone parameter kept for compatibility but ignored
+        
         # Single linear layer for firing rate prediction
         self.firing_head = nn.Linear(feature_dim, out_neurons)
 
@@ -226,6 +224,61 @@ class ResNetConvOnly(nn.Module, ResNetMixin):
         features = features.squeeze(-1).squeeze(-1)
 
         # Single linear layer prediction
+        firing_rates = self.firing_head(features)
+        return firing_rates + 1  # Ensure positive firing rates
+
+
+class ResNetConv_2layerHead(nn.Module, ResNetMixin):
+    """
+    ResNet18 encoder using pre-trained convolutional layers with a 2-layer head.
+    Uses pre-trained ResNet18 conv backbone followed by a two-layer MLP
+    for firing rate prediction. Balance between capacity and simplicity,
+    designed for better input optimization/reconstruction while maintaining
+    good prediction performance.
+    """
+
+    def __init__(self, out_neurons, freeze_backbone=False):
+        super().__init__()
+
+        # Load ResNet18 architecture WITHOUT pre-trained weights
+        resnet = models.resnet18(pretrained=False)
+        
+        # Extract only the convolutional layers (remove avgpool and fc)
+        conv_layers = []
+        for name, module in resnet.named_children():
+            if name != "fc" and name != "avgpool":
+                conv_layers.append(module)
+
+        self.backbone = nn.Sequential(*conv_layers)
+        
+        # Feature dimension after layer4 is 512 channels
+        feature_dim = 512
+        
+        # Two-layer MLP: 512 -> 256 -> neurons
+        # Lighter regularization than ResNetEncoder for better reconstruction
+        self.firing_head = nn.Sequential(
+            nn.Linear(feature_dim, 256),
+            nn.ELU(),
+            nn.Dropout(0.1),  # Light dropout
+            nn.Linear(256, out_neurons),
+        )
+
+        self.feature_dim = feature_dim
+
+    def forward(self, x):
+        # ResNet expects 3 channels, ensure input is correct
+        if x.shape[1] == 1:  # If grayscale, repeat to make RGB
+            x = x.repeat(1, 3, 1, 1)
+        elif x.shape[1] != 3:
+            raise ValueError(f"Expected 1 or 3 channels, got {x.shape[1]}")
+
+        # Extract features using conv layers only
+        features = self.backbone(x)
+        # Global average pooling to get fixed-size features
+        features = torch.nn.functional.adaptive_avg_pool2d(features, (1, 1))
+        features = features.view(features.size(0), -1)
+
+        # Two-layer MLP prediction
         firing_rates = self.firing_head(features)
         return firing_rates + 1  # Ensure positive firing rates
 

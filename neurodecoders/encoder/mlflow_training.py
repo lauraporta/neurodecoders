@@ -22,6 +22,7 @@ from neurodecoders.data.loading import (
 )
 from neurodecoders.encoder.models import (
     ResNetConvOnly,
+    ResNetConv_2layerHead,
     ResNetEncoder,
     ResNetFromScratch,
     SimpleEncoder,
@@ -73,6 +74,12 @@ def get_model(config: Dict[str, Any]) -> torch.nn.Module:
     elif model_type == "resnet_conv_only":
         freeze_backbone = config["freeze_backbone"]
         return ResNetConvOnly(
+            out_neurons=out_neurons,
+            freeze_backbone=freeze_backbone,
+        )
+    elif model_type == "resnet_conv_2layer":
+        freeze_backbone = config["freeze_backbone"]
+        return ResNetConv_2layerHead(
             out_neurons=out_neurons,
             freeze_backbone=freeze_backbone,
         )

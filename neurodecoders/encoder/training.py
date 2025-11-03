@@ -669,6 +669,14 @@ def _clone_model(model: nn.Module) -> nn.Module:
             out_neurons=out_neurons,
             freeze_backbone=freeze_backbone,
         )
+    elif model_class.__name__ == "ResNetConv_2layerHead":
+        # firing_head is a Sequential with 2 linear layers
+        out_neurons = model.firing_head[-1].out_features
+        freeze_backbone = getattr(model, "freeze_backbone", True)
+        cloned_model = model_class(
+            out_neurons=out_neurons,
+            freeze_backbone=freeze_backbone,
+        )
     else:
         # Fallback: try to recreate with default parameters
         try:
