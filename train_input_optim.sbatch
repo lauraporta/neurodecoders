@@ -7,7 +7,7 @@
 #SBATCH -n 1
 #SBATCH -t 00-01:00 # time (D-HH:MM)
 #SBATCH --exclude=gpu-sr670-21  # Exclude nodes with CUDA driver issues
-#SBATCH --array=0-3
+#SBATCH --array=0-2
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.err.txt
 
@@ -24,37 +24,44 @@ which python
 
 export CUDA_VISIBLE_DEVICES=0
 
-# Configure MLflow to use PostgreSQL database
-export MLFLOW_TRACKING_URI="postgresql://laura:piscina@enc1-node9:5433/mlflow"
+# Load environment variables from .env file
+if [ -f .env ]; then
+    set -a  # automatically export all variables
+    source .env
+    set +a
+    echo "[INFO] Loaded environment variables from .env"
+    echo "[INFO] MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI"
+else
+    echo "[WARNING] .env file not found, using default MLFLOW_TRACKING_URI"
+fi
 
 # ==========================================
 # HYPERPARAMETER SWEEP CONFIGURATION:
 # ==========================================
 
 # Input optimization parameters
-MODEL_ID="04d2e41a86d948acb30f0e8c3dad75cc"  # Run ID for CIFAR10 model
-STEPS=100000  # Paper uses 1000 epochs
+MODEL_IDS=("7694dd13cb044c05bfc4e81503b321fe" "4964446c33c54d35ba455c00a020ccb1" "22a5f66e911d40d6b90cf5441590157f") 
+STEPS=1000  
+IMAGE_SIZE=224  # Match encoder training size (CIFAR-10 resized to 224x224)
 
 # Define hyperparameter arrays
-# Paper settings: LR=1000 with gradient normalization + warmup, no explicit regularization
 LEARNING_RATES=(0.001)  # Paper uses LR=1000 with gradient normalization
-IMAGE_SIZES=(224)  # Match encoder training size (CIFAR-10 resized to 224x224)
-IMAGE_IDS=("0")  # Space-separated image IDs to reconstruct
+IMAGE_IDS=("0" "50" "100")  # Space-separated image IDs to reconstruct
 
 # ------------------------------------------
 # Compute lengths and total combinations
 # ------------------------------------------
+NUM_MODEL_IDS=${#MODEL_IDS[@]}
 NUM_LR=${#LEARNING_RATES[@]}
-NUM_IMG_SIZE=${#IMAGE_SIZES[@]}
 NUM_IMG_IDS=${#IMAGE_IDS[@]}
 
 # Define axis order, fastest varying first
-# Order: LEARNING_RATES -> IMAGE_SIZES -> IMAGE_IDS
+# Order: LEARNING_RATES -> IMAGE_IDS -> MODEL_IDS
 STRIDE_LR=1
-STRIDE_IMG_SIZE=$((STRIDE_LR * NUM_LR))
-STRIDE_IMG_IDS=$((STRIDE_IMG_SIZE * NUM_IMG_SIZE))
+STRIDE_IMG_IDS=$((STRIDE_LR * NUM_LR))
+STRIDE_MODEL_IDS=$((STRIDE_IMG_IDS * NUM_IMG_IDS))
 
-TOTAL_COMBINATIONS=$((NUM_LR * NUM_IMG_SIZE * NUM_IMG_IDS))
+TOTAL_COMBINATIONS=$((NUM_LR * NUM_IMG_IDS * NUM_MODEL_IDS))
 
 # Guard: if task id exceeds combinations, exit gracefully (supports oversize arrays)
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
@@ -65,19 +72,19 @@ fi
 
 # Calculate indices from array task ID using mixed-radix decomposition
 LR_IDX=$(( (TASK_ID / STRIDE_LR) % NUM_LR ))
-IMG_SIZE_IDX=$(( (TASK_ID / STRIDE_IMG_SIZE) % NUM_IMG_SIZE ))
 IMG_IDS_IDX=$(( (TASK_ID / STRIDE_IMG_IDS) % NUM_IMG_IDS ))
+MODEL_ID_IDX=$(( (TASK_ID / STRIDE_MODEL_IDS) % NUM_MODEL_IDS ))
 
 # Extract values
 LEARNING_RATE=${LEARNING_RATES[$LR_IDX]}
-IMAGE_SIZE=${IMAGE_SIZES[$IMG_SIZE_IDX]}
 IMG_ID_SET=${IMAGE_IDS[$IMG_IDS_IDX]}
+MODEL_ID=${MODEL_IDS[$MODEL_ID_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="input_optim_lr_${LEARNING_RATE}_size_${IMAGE_SIZE}"
+RUN_NAME="final_clamp_-1.2_-1.2_grandient_clip_Kernel_20_5_modelid_${MODEL_ID}_imgids_${IMG_ID_SET}"
 EXPERIMENT_NAME="input_optim"
 
-echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: lr=$LEARNING_RATE, image_size=$IMAGE_SIZE, steps=$STEPS, image_ids=$IMG_ID_SET"
+echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model_id=$MODEL_ID, lr=$LEARNING_RATE, image_size=$IMAGE_SIZE, steps=$STEPS, image_ids=$IMG_ID_SET"
 
 # Pass individual parameters to the Python script
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/input_optim/mlflow_run.py \

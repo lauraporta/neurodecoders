@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-#SBATCH -p gpu_lowp,gpu,a100 # partition (queue)
+#SBATCH -p gpu_lowp,gpu # partition (queue)
 #SBATCH -J encoder_enhanced_training
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
 #SBATCH -t 00-01:00 # time (D-HH:MM)
-#SBATCH --array=0-39
+#SBATCH --array=0-1
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/test_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/test_%j.err.txt
 
@@ -21,24 +21,24 @@ module load miniconda
 conda activate /nfs/nhome/live/lporta/.conda/envs/decoders
 which python
 
-export MLFLOW_TRACKING_URI=/ceph/margrie/laura/neurodecoders/mlruns
-mkdir -p "$MLFLOW_TRACKING_URI"
-
 export CUDA_VISIBLE_DEVICES=0
+
+# Configure MLflow to use PostgreSQL database
+export MLFLOW_TRACKING_URI="postgresql://laura:piscina@enc1-node3:5433/mlflow"
 
 # ==========================================
 # HYPERPARAMETER SWEEP CONFIGURATION:
 # ==========================================
-EPOCHS=100
+EPOCHS=40
 
 # Define hyperparameter arrays
-LEARNING_RATES=(1e-3 1e-4)
+LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
-MODEL_TYPES=("simple" "skip" "resnet" "resnet_scratch" "resnet_conv_only")
+MODEL_TYPES=("resnet_conv_2layer")
 OPTIMIZERS=("adam")
-SCHEDULERS=("none" "plateau")
+SCHEDULERS=("none")
 DATASETS=("gabor,100,100")
-DATASET_TYPES=("cifar10" "mnist")
+DATASET_TYPES=("cifar10")
 
 # ------------------------------------------
 # Compute lengths and total combinations
@@ -89,8 +89,8 @@ DATASET=${DATASETS[$DATASET_IDX]}
 DATASET_TYPE=${DATASET_TYPES[$DATASET_TYPE_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="model_${MODEL_TYPE}_Dataset_${DATASET}_lr_${LEARNING_RATE}_sched_${SCHEDULER}_dataset_type_${DATASET_TYPE}"
-EXPERIMENT_NAME="encoder_architectures_sweep_all"
+RUN_NAME="model_${MODEL_TYPE}_Dataset_${DATASET}_lr_${LEARNING_RATE}_sched_${SCHEDULER}_dataset_type_${DATASET_TYPE}_new_plots"
+EXPERIMENT_NAME="long_training"
 
 echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET, dataset_type=$DATASET_TYPE"
 
