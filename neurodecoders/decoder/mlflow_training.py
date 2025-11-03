@@ -29,9 +29,17 @@ from neurodecoders.paths import get_path
 
 def main(config: Dict[str, Any]):
     print("=== Neural Decoder Training (MLflow) ===")
+    
+    # Set up MLflow with proper artifact location
+    from neurodecoders.config import get_base_path
+    artifact_location = f"file://{get_base_path()}/mlruns"
+    
     setup_mlflow_experiment(
-        config["mlflow_experiment_name"], config.get("tracking_uri")
+        config["mlflow_experiment_name"], 
+        config.get("tracking_uri"),
+        artifact_location=artifact_location
     )
+    print(f"Using MLflow artifact location: {artifact_location}")
 
     with mlflow.start_run(
         run_name=config["mlflow_run_name"], log_system_metrics=True

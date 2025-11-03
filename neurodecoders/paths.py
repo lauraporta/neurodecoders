@@ -18,7 +18,11 @@ def get_base_path() -> str:
     Returns:
         Base path string from config file
     """
-    config_path = "config.yaml"
+    # Look for config.yaml in the project root (parent of neurodecoders package)
+    module_dir = Path(__file__).resolve().parent  # neurodecoders/
+    project_root = module_dir.parent  # neurodecoders project root
+    config_path = project_root / "config.yaml"
+    
     try:
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
