@@ -31,7 +31,6 @@ from neurodecoders.paths import get_path
 from mlflow.tracking import MlflowClient
 
 
-# export MLFLOW_TRACKING_URI="postgresql://laura:piscina@enc3-node4:5433/mlflow"
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI")
 client = MlflowClient(MLFLOW_TRACKING_URI) 
 
@@ -121,9 +120,9 @@ def _get_dataset_params_from_model(model_id: str) -> dict:
     """
     params = None
     run_id = None
-    
-    # Check if it's a run ID (32 char hex string without m- prefix)
-    if len(model_id) == 32 and not model_id.startswith('m-'):
+
+    # 1) If looks like a run ID (32 hex chars, no m- prefix), try direct lookup
+    if len(model_id) == 32 and not model_id.startswith("m-"):
         print(f"[INFO] Input looks like a run ID, trying direct lookup: {model_id}")
         try:
             run = client.get_run(model_id)
@@ -131,9 +130,73 @@ def _get_dataset_params_from_model(model_id: str) -> dict:
             run_id = model_id
             print(f"[INFO] Successfully retrieved run {run_id}")
         except Exception as e:
-            print(f"[WARNING] Failed to get run directly: {e}")
+            print(f"[DEBUG] Failed to get run directly: {e}")
 
-    
+    # 2) If still not found and model_id looks like a model registry name (m-... or plain name),
+    # try searching model registry versions for a linked run_id
+    if params is None:
+        try:
+            print(f"[INFO] Trying model registry lookup for: {model_id}")
+            versions = client.search_model_versions(f"name='{model_id}'")
+            if versions:
+                preferred = None
+                for mv in versions:
+                    if getattr(mv, "current_stage", "") == "Production":
+                        preferred = mv
+                        break
+                if preferred is None:
+                    preferred = sorted(
+                        versions,
+                        key=lambda v: int(getattr(v, "version", 0)),
+                        reverse=True,
+                    )[0]
+                run_id = getattr(preferred, "run_id", None) or getattr(preferred, "run_id", None)
+                if run_id:
+                    try:
+                        run = client.get_run(run_id)
+                        params = run.data.params
+                        print(f"[INFO] Retrieved params from model registry version run {run_id}")
+                    except Exception as e:
+                        print(f"[DEBUG] Could not get run {run_id} from registry entry: {e}")
+        except Exception as e:
+            print(f"[DEBUG] Model registry lookup failed: {e}")
+
+    # 3) Final fallback: search recent runs and try to match by model_id in params or tags
+    if params is None:
+        try:
+            print("[INFO] Searching recent MLflow runs for candidate runs to extract dataset params")
+            df = mlflow.search_runs(order_by=["attributes.start_time DESC"], max_results=500)
+            if df is not None and not df.empty:
+                for _, row in df.iterrows():
+                    # If run_id matches exactly, use it
+                    candidate_run_id = row.get("run_id") or row.get("info.run_id")
+                    if candidate_run_id and candidate_run_id == model_id:
+                        try:
+                            run = client.get_run(candidate_run_id)
+                            params = run.data.params
+                            run_id = candidate_run_id
+                            print(f"[INFO] Matched run_id exactly: {run_id}")
+                            break
+                        except Exception:
+                            continue
+                    # Otherwise check if the run logged a 'model_id' param equal to provided model_id
+                    try:
+                        rid = row.get("params.model_id") or row.get("data.params.model_id")
+                    except Exception:
+                        rid = None
+                    if rid and str(rid) == str(model_id):
+                        candidate_run_id = row.get("run_id") or row.get("info.run_id")
+                        try:
+                            run = client.get_run(candidate_run_id)
+                            params = run.data.params
+                            run_id = candidate_run_id
+                            print(f"[INFO] Found run with matching 'model_id' param: {run_id}")
+                            break
+                        except Exception:
+                            continue
+        except Exception as e:
+            print(f"[DEBUG] Recent runs search failed: {e}")
+
     if params is None:
         raise RuntimeError(
             f"Could not retrieve parameters for model/run {model_id}. "
@@ -376,10 +439,28 @@ def build_parser() -> argparse.ArgumentParser:
 def main(args: argparse.Namespace) -> None:
 
     date = datetime.now().strftime("%Y-%m-%d_%H-%M-%S:%f") 
+    
+    # Set up MLflow tracking and artifact location
+    from neurodecoders.config import get_base_path, get_mlflow_tracking_uri
+    artifact_location = f"file://{get_base_path()}/mlruns"
+    
+    # Log configuration for debugging
+    tracking_uri = args.tracking_uri if args.tracking_uri else get_mlflow_tracking_uri()
+    print(f"[INFO] MLflow tracking URI: {tracking_uri}")
+    print(f"[INFO] MLflow artifact location: {artifact_location}")
+    print(f"[INFO] MLflow experiment: {args.experiment_name}")
+    
     if args.tracking_uri:
-        setup_mlflow_experiment(args.experiment_name, args.tracking_uri)
+        setup_mlflow_experiment(
+            args.experiment_name, 
+            tracking_uri=args.tracking_uri,
+            artifact_location=artifact_location
+        )
     else:
-        setup_mlflow_experiment(args.experiment_name)
+        setup_mlflow_experiment(
+            args.experiment_name,
+            artifact_location=artifact_location
+        )
 
     run_name = args.run_name
     if not run_name:
@@ -482,18 +563,14 @@ def main(args: argparse.Namespace) -> None:
         comparison_path = os.path.join(out_dir, f"comparison_plot_{image_ids[0]}_{date}.png")
         if original_images:
             create_comparison_plots(
-                original_image=original_images,
-                reconstructed_image=[img_np],
-                image_id=image_ids,
+                original_images=original_images,
+                reconstructed_images=[img_np],
+                image_ids=image_ids,
                 output_path=comparison_path,
             )
             print(f"Single image comparison plot saved: {comparison_path}")
             log_single_artifact(comparison_path, artifact_path="images")
-        else:
-            # Fallback: save individual reconstruction
-            out_img = os.path.join(out_dir, "reconstruction.png")
-            optim_runner.save_image(out_img)
-            log_single_artifact(out_img, artifact_path="images")
+        
 
         # Log final metrics
         if metrics:
@@ -508,7 +585,8 @@ def main(args: argparse.Namespace) -> None:
         if original_images:
             print(f"Comparison plot: {comparison_path}")
         else:
-            print(f"Saved image: {out_img}")
+            # We saved the numpy array at out_npy above
+            print(f"Saved reconstruction numpy: {out_npy}")
 
 
 

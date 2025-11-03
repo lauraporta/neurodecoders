@@ -34,9 +34,9 @@ def _to_device() -> torch.device:
 
 
 def create_comparison_plots(
-    original_image: List[np.ndarray],
-    reconstructed_image: List[np.ndarray],
-    image_id: List[int],
+    original_images: List[np.ndarray],
+    reconstructed_images: List[np.ndarray],
+    image_ids: List[int],
     output_path: str,
     figsize: Tuple[int, int] = (8, 6),
 ) -> None:
@@ -50,17 +50,16 @@ def create_comparison_plots(
         output_path: Path to save the comparison plot
         figsize: Figure size tuple (width, height)
     """
-    n_images = len(original_image)
+    original_image = original_images[0]
+    reconstructed_image = reconstructed_images[0]
+    image_id = image_ids[0]
 
-    figsize = (6, 8)  # Taller for single image
-    
-    # Create subplots: 3 rows
-    # (original, reconstructed, difference) x n_images cols
-    fig, axes = plt.subplots(3, n_images, figsize=figsize)
-    axes = axes.reshape(3, 1)
+    figsize = (4, 2) 
+
+    fig, axes = plt.subplots(1, 3, figsize=figsize)
 
     # Calculate difference
-    diff = np.abs(original_image - reconstructed_image)
+    diff = original_image - reconstructed_image
 
     # Original image
     axes[0].imshow(original_image.squeeze(), cmap="gray")
@@ -92,8 +91,8 @@ class OptimConfig:
     log_every: int = 20
     init_mean: float = 0.5
     init_std: float = 0.01
-    clamp_min: float = 0.0
-    clamp_max: float = 1.0
+    clamp_min: float = -.5
+    clamp_max: float = .5
     seed: Optional[int] = 42
     image_ids: Optional[list] = None
     loss: str = "poisson_mean"
@@ -122,6 +121,12 @@ class ImageOptimizer:
         self.target = torch.tensor(target_rates.astype(np.float32)).to(
             self.device
         )
+
+        target_variance = torch.var(self.target).item()
+        self.idx_of_top_30_by_variance = torch.topk(
+            torch.abs(self.target - torch.mean(self.target)), k=30
+        ).indices.tolist()
+
         if self.target.ndim != 1:
             raise ValueError("target_rates must be a 1D array of shape (N,)")
 
@@ -141,28 +146,6 @@ class ImageOptimizer:
         )
         init = init.clamp(self.cfg.clamp_min, self.cfg.clamp_max)
         self.image = nn.Parameter(init.to(self.device))
-
-        # Validate encoder compatibility (channels/size and output dims)
-        try:
-            with torch.no_grad():
-                test_out = self.encoder(self.image)
-            if test_out.ndim == 2 and test_out.shape[0] == 1:
-                test_out = test_out[0]
-            if test_out.ndim != 1:
-                raise ValueError("Encoder output must be shape (1, N) or (N,)")
-            if test_out.shape[0] != self.target.shape[0]:
-                raise ValueError(
-                    "Target length does not match encoder output: "
-                    f"got {test_out.shape[0]}, "
-                    f"expected {self.target.shape[0]}"
-                )
-        except Exception as e:
-            raise ValueError(
-                "Encoder is incompatible with the provided image shape."
-                f" Image shape: (1, {self.cfg.channels}, "
-                f"{self.cfg.image_size},"
-                f" {self.cfg.image_size}). Original error: {e}"
-            ) from e
 
         # Loss function
         if self.cfg.loss == "mse":
@@ -186,7 +169,7 @@ class ImageOptimizer:
 
             # Define a simple Gaussian kernel
             kernel_size = 20
-            sigma = 20.0
+            sigma = 5.0
             x = torch.arange(-kernel_size // 2 + 1., kernel_size // 2 + 1.)
             x_grid = x.repeat(kernel_size).view(kernel_size, kernel_size)
             y_grid = x_grid.t()
@@ -207,7 +190,11 @@ class ImageOptimizer:
             raise ValueError("Encoder output must be shape (1, N) or (N,)")
 
         rate = self.softplus(pred)
-        loss = self.loss(rate, self.target)
+
+        # only use the idx_of_top_30_by_variance
+        loss = self.loss(
+            rate[self.idx_of_top_30_by_variance], 
+            self.target[self.idx_of_top_30_by_variance])
 
         loss.backward()
 
@@ -218,11 +205,14 @@ class ImageOptimizer:
                 if grad_norm > 0:
                     self.image.grad /= grad_norm
                 # Clip gradients to [-1, 1]
-                self.image.grad.clamp_(-1.0, 1.0)
+                # self.image.grad.clamp_(-1.0, 1.0)
 
         opt.step()
         with torch.no_grad():
-            self.image.clamp_(self.cfg.clamp_min, self.cfg.clamp_max)
+            #  normalise first
+            self.image.data -= self.image.data.mean()
+            self.image.data /= self.image.data.std()
+            self.image.data.clamp_(self.cfg.clamp_min, self.cfg.clamp_max)
 
         metrics = {
             "loss": float(loss.detach().cpu().item()),
@@ -231,11 +221,17 @@ class ImageOptimizer:
 
     def optimize(self) -> Tuple[np.ndarray, Dict[str, float]]:
         opt = optim.Adam([self.image], lr=self.cfg.lr)
+        # Add CosineAnnealingLR scheduler
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            opt, T_max=self.cfg.steps, eta_min=1e-6
+        )
         last_metrics: Dict[str, float] = {}
 
         for step in range(1, self.cfg.steps + 1):
             img, metrics = self.step(opt)
             last_metrics = metrics
+            # Step the scheduler with current loss
+            scheduler.step(metrics["loss"])
             if step % self.cfg.log_every == 0:
                 try:
                     mlflow.log_metrics(metrics, step=step)
@@ -244,10 +240,6 @@ class ImageOptimizer:
 
         img_np = img.squeeze(0).detach().cpu().numpy()
         return img_np, last_metrics
-
-    def save_image(self, path: str) -> None:
-        with torch.no_grad():
-            save_image(self.image.clamp(0, 1), path)
 
     def reconstruct_multiple_images(
         self,
@@ -297,34 +289,6 @@ class ImageOptimizer:
                 f"Reconstructed image {img_id} - "
                 f"Loss: {metrics.get('loss_total', 'N/A'):.4f}"
             )
-
-        # # Create comparison plot with unique filename per run
-        # import datetime
-        # #  with seco
-        # timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        # img_id_str = "_".join(str(i) for i in image_ids)
-        # comparison_filename = f"comparison_{img_id_str}_{timestamp}.png"
-        # comparison_path = os.path.join(output_dir, comparison_filename)
-
-        # if len(reconstructed_images) > 1:
-        #     create_comparison_plots(
-        #         original_images=original_images
-        #         or [np.zeros_like(img) for img in reconstructed_images],
-        #         reconstructed_images=reconstructed_images,
-        #         image_ids=image_ids,
-        #         output_path=comparison_path,
-        #     )
-        #     print(f"Comparison plot saved: {comparison_path}")
-        # elif len(reconstructed_images) == 1:
-        #     if original_images and len(original_images) == 1:
-        #         create_comparison_plots(
-        #             original_images=original_images,
-        #             reconstructed_images=reconstructed_images,
-        #             image_ids=image_ids,
-        #             output_path=comparison_path,
-        #         )
-        #         print(f"Single image comparison plot saved: {comparison_path}")
-
         return original_images or [
             np.zeros_like(img) for img in reconstructed_images
         ], reconstructed_images
