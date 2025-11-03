@@ -431,7 +431,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--loss-function",
         choices=["mse", "poisson_mean", "poisson_sum"],
-        help="Loss function",
+        default="poisson_mean",
+        help="Loss function (default: poisson_mean)",
     )
     return p
 

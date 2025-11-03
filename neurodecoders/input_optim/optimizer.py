@@ -91,8 +91,8 @@ class OptimConfig:
     log_every: int = 20
     init_mean: float = 0.5
     init_std: float = 0.01
-    clamp_min: float = -.5
-    clamp_max: float = .5
+    clamp_min: float = -1
+    clamp_max: float = 1
     seed: Optional[int] = 42
     image_ids: Optional[list] = None
     loss: str = "poisson_mean"
@@ -205,13 +205,13 @@ class ImageOptimizer:
                 if grad_norm > 0:
                     self.image.grad /= grad_norm
                 # Clip gradients to [-1, 1]
-                # self.image.grad.clamp_(-1.0, 1.0)
+                self.image.grad.clamp_(-1.0, 1.0)
 
         opt.step()
         with torch.no_grad():
-            #  normalise first
-            self.image.data -= self.image.data.mean()
-            self.image.data /= self.image.data.std()
+            # #  normalise first
+            # self.image.data -= self.image.data.mean()
+            # self.image.data /= self.image.data.std()
             self.image.data.clamp_(self.cfg.clamp_min, self.cfg.clamp_max)
 
         metrics = {

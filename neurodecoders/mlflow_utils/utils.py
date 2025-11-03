@@ -584,7 +584,7 @@ def create_firing_rate_scatterplot(
         from sklearn.metrics import r2_score
 
         # Create figure with subplots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(4, 2))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
 
         # Plot 1: Mean firing rates
         ax1.scatter(true_mean, pred_mean, alpha=0.6, s=30)

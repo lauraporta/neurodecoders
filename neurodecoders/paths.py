@@ -26,7 +26,7 @@ def get_base_path() -> str:
     try:
         with open(config_path, "r") as f:
             config = yaml.safe_load(f)
-        return config.get("base_path", ".")
+        return config["base_path"].rstrip('/')  # Remove trailing slash if present
     except FileNotFoundError:
         print(f"Warning: {config_path} not found, using current directory")
         return "."

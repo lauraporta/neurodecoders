@@ -79,4 +79,6 @@ def get_mlflow_tracking_uri() -> Optional[str]:
 def get_base_path() -> str:
     """Get the base path from config."""
     config = load_config()
-    return config.get('base_path', '')
+    base_path = config['base_path']
+    # Remove trailing slash to avoid double slashes in paths
+    return base_path.rstrip('/')

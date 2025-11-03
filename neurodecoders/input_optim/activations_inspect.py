@@ -230,7 +230,7 @@ def run_inspect(
 # Paste the cell below into a notebook or run as a cell in an editor that
 # supports interactive execution (for example VS Code with Python).
 
-MODEL_ID = "04d2e41a86d948acb30f0e8c3dad75cc"
+MODEL_ID = "7694dd13cb044c05bfc4e81503b321fe"
 IMAGE_IDS = [0]
 OUT_DIR = None  # or "/tmp/activations"
 
@@ -261,7 +261,7 @@ for i, name in enumerate(activations.keys()):
 
 # %%
 # Configurable layer selection - CHANGE THIS TO VIEW DIFFERENT LAYERS
-LAYER_INDEX = 14  # 0 = first layer, 1 = second layer, etc. (max index is num_layers - 1)
+LAYER_INDEX = 12  # 0 = first layer, 1 = second layer, etc. (max index is num_layers - 1)
 
 # Get the selected layer
 layer_names = list(activations.keys())

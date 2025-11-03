@@ -78,6 +78,7 @@ def create_encoder_parser() -> argparse.ArgumentParser:
             "resnet",
             "resnet_scratch",
             "resnet_conv_only",
+            "resnet_conv_2layer",
         ],
         default="simple",
         help="Type of encoder model",
