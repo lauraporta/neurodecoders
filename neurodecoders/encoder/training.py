@@ -457,10 +457,17 @@ def _train_single_model(
                     f"{configured_mlflow_dir}"
                 )
         
+        # Set up MLflow with proper artifact location
+        from neurodecoders.config import get_base_path
+        artifact_location = f"file://{get_base_path()}/mlruns"
+        
         setup_mlflow_experiment(
-            experiment_name=mlflow_experiment_name, tracking_uri=tracking_uri
+            experiment_name=mlflow_experiment_name, 
+            tracking_uri=tracking_uri,
+            artifact_location=artifact_location
         )
         print(f"Using MLflow tracking URI: {tracking_uri}")
+        print(f"Using MLflow artifact location: {artifact_location}")
 
         print(f"Setting MLflow experiment: {mlflow_experiment_name}")
 
@@ -655,8 +662,8 @@ def _clone_model(model: nn.Module) -> nn.Module:
             freeze_backbone=freeze_backbone,
         )
     elif model_class.__name__ == "ResNetConvOnly":
-        # Extract out_neurons from the last layer of the firing_head module
-        out_neurons = model.firing_head[-1].out_features
+        # firing_head is a single Linear layer, not Sequential
+        out_neurons = model.firing_head.out_features
         freeze_backbone = getattr(model, "freeze_backbone", True)
         cloned_model = model_class(
             out_neurons=out_neurons,
@@ -733,11 +740,13 @@ def train_encoder(
 
         # Setup MLflow for single run
         if enable_mlflow:
-            from neurodecoders.config import get_mlflow_tracking_uri
+            from neurodecoders.config import get_mlflow_tracking_uri, get_base_path
             tracking_uri = get_mlflow_tracking_uri()
+            artifact_location = f"file://{get_base_path()}/mlruns"
             setup_mlflow_experiment(
                 experiment_name=mlflow_experiment_name,
                 tracking_uri=tracking_uri,
+                artifact_location=artifact_location,
             )
 
         # Use the data module as-is (with existing train/val splits)
@@ -774,10 +783,13 @@ def train_encoder(
 
     # Setup MLflow for cross-validation
     if enable_mlflow:
-        from neurodecoders.config import get_mlflow_tracking_uri
+        from neurodecoders.config import get_mlflow_tracking_uri, get_base_path
         tracking_uri = get_mlflow_tracking_uri()
+        artifact_location = f"file://{get_base_path()}/mlruns"
         setup_mlflow_experiment(
-            experiment_name=mlflow_experiment_name, tracking_uri=tracking_uri
+            experiment_name=mlflow_experiment_name, 
+            tracking_uri=tracking_uri,
+            artifact_location=artifact_location,
         )
 
         # Start main CV run to log aggregated results

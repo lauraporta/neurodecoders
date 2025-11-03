@@ -21,6 +21,7 @@ from pytorch_lightning.callbacks import Callback
 sys.path.append(os.path.dirname(__file__))
 
 from neurodecoders.mlflow_utils.utils import (
+    create_all_firing_rates_scatterplot,
     create_firing_rate_scatterplot,
     log_encoder_verification_metrics,
     log_single_artifact,
@@ -156,6 +157,16 @@ class EncoderVerificationCallback(Callback):
                     print(f"Error logging firing rate plot artifact: {e}")
                     traceback.print_exc()
 
+            # Log all firing rates plot artifact if available
+            all_rates_plot_path = verification_results.get("all_firing_rates_plot_path")
+            if all_rates_plot_path and os.path.exists(all_rates_plot_path):
+                try:
+                    log_single_artifact(all_rates_plot_path, "all_firing_rates_plot")
+                    print(f"Logged all firing rates plot to MLflow: {all_rates_plot_path}")
+                except Exception as e:
+                    print(f"Error logging all firing rates plot artifact: {e}")
+                    traceback.print_exc()
+
         print("=== VERIFICATION ANALYSIS COMPLETE ===")
 
     def _save_model(self, pl_module: pl.LightningModule) -> str:
@@ -289,6 +300,14 @@ class EncoderVerificationCallback(Callback):
             if plot_path:
                 results["firing_rate_plot_path"] = plot_path
 
+            # Generate all firing rates scatterplot
+            print("Generating all firing rates scatterplot...")
+            all_rates_plot_path = self._generate_all_firing_rates_plot(
+                verifier, model_path
+            )
+            if all_rates_plot_path:
+                results["all_firing_rates_plot_path"] = all_rates_plot_path
+
             # Classification test (if labels are available)
             if (
                 hasattr(verifier, "image_labels")
@@ -361,5 +380,49 @@ class EncoderVerificationCallback(Callback):
 
         except Exception as e:
             print(f"Error generating firing rate plot: {e}")
+            traceback.print_exc()
+            return None
+
+    def _generate_all_firing_rates_plot(
+        self, verifier, model_path: Optional[str]
+    ) -> Optional[str]:
+        """Generate and save all firing rates scatterplot visualization."""
+        try:
+            # Check if we have the required data
+            if (
+                not hasattr(verifier, "true_firing_rates")
+                or not hasattr(verifier, "predicted_firing_rates")
+                or verifier.true_firing_rates is None
+                or verifier.predicted_firing_rates is None
+            ):
+                print("Missing firing rate arrays for all rates plot generation")
+                return None
+
+            # Create plots directory
+            plots_dir = get_path("workspace/plots")
+            ensure_dir(plots_dir)
+
+            # Generate timestamp for unique filename
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            plot_filename = f"all_firing_rates_{timestamp}.png"
+            plot_path = os.path.join(plots_dir, plot_filename)
+
+            # Create the scatterplot
+            plot_path = create_all_firing_rates_scatterplot(
+                true_firing_rates=verifier.true_firing_rates,
+                pred_firing_rates=verifier.predicted_firing_rates,
+                save_path=plot_path,
+                title=f"All Firing Rates - {timestamp}",
+            )
+
+            if plot_path and os.path.exists(plot_path):
+                print(f"All firing rates scatterplot saved to: {plot_path}")
+                return plot_path
+            else:
+                print("Failed to generate all firing rates scatterplot")
+                return None
+
+        except Exception as e:
+            print(f"Error generating all firing rates plot: {e}")
             traceback.print_exc()
             return None

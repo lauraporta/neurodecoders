@@ -447,9 +447,112 @@ def log_single_artifact(
         artifact_path: Path within the run's artifact directory
     """
     if os.path.exists(local_path):
-        mlflow.log_artifact(local_path, artifact_path)
+        try:
+            mlflow.log_artifact(local_path, artifact_path)
+            print(f"✓ Successfully logged artifact: {local_path} to {artifact_path or 'root'}")
+        except Exception as e:
+            print(f"ERROR: Failed to log artifact {local_path}: {e}")
+            raise
     else:
-        print(f"Warning: File {local_path} does not exist")
+        error_msg = f"ERROR: Artifact file does not exist: {local_path}"
+        print(error_msg)
+        raise FileNotFoundError(error_msg)
+
+
+def create_all_firing_rates_scatterplot(
+    true_firing_rates: np.ndarray,
+    pred_firing_rates: np.ndarray,
+    save_path: str,
+    title: str = "All Firing Rates: Predicted vs True",
+    max_points: int = 50000,
+) -> str:
+    """
+    Create a scatterplot visualization of all firing rates (flattened).
+
+    Args:
+        true_firing_rates: True firing rates array (n_images, n_neurons)
+        pred_firing_rates: Predicted firing rates array (n_images, n_neurons)
+        save_path: Path to save the plot
+        title: Title for the plot
+        max_points: Maximum number of points to plot (for performance)
+
+    Returns:
+        str: Path to the saved plot file
+    """
+    try:
+        import matplotlib.pyplot as plt
+        from sklearn.linear_model import LinearRegression
+        from sklearn.metrics import r2_score
+
+        # Flatten the arrays to get all firing rates
+        true_flat = true_firing_rates.flatten()
+        pred_flat = pred_firing_rates.flatten()
+
+        # Subsample if too many points for performance
+        if len(true_flat) > max_points:
+            indices = np.random.choice(
+                len(true_flat), size=max_points, replace=False
+            )
+            true_flat = true_flat[indices]
+            pred_flat = pred_flat[indices]
+            print(
+                f"Subsampled to {max_points} points for visualization "
+                f"(from {len(true_firing_rates.flatten())} total)"
+            )
+
+        # Create figure
+        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+
+        # Scatter plot with transparency
+        ax.scatter(true_flat, pred_flat, alpha=0.3, s=10, color='steelblue')
+
+        # Add fit line
+        if len(true_flat) > 1:
+            reg = LinearRegression()
+            X = true_flat.reshape(-1, 1)
+            reg.fit(X, pred_flat)
+            pred_line = reg.predict(X)
+            r2 = r2_score(pred_flat, pred_line)
+
+            # Sort for smooth line plotting
+            sort_idx = np.argsort(true_flat)
+            ax.plot(
+                true_flat[sort_idx],
+                pred_line[sort_idx],
+                "r-",
+                linewidth=2,
+                label=f"Fit (R²={r2:.3f})",
+            )
+
+        # Add diagonal line for perfect prediction
+        min_val = min(true_flat.min(), pred_flat.min())
+        max_val = max(true_flat.max(), pred_flat.max())
+        ax.plot(
+            [min_val, max_val],
+            [min_val, max_val],
+            "k--",
+            alpha=0.5,
+            linewidth=2,
+            label="Perfect Prediction",
+        )
+
+        ax.set_xlabel("True Firing Rate", fontsize=12)
+        ax.set_ylabel("Predicted Firing Rate", fontsize=12)
+        ax.set_title(title, fontsize=14, fontweight="bold")
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+
+        # Adjust layout and save
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+        print(f"All firing rates scatterplot saved to: {save_path}")
+        return save_path
+
+    except Exception as e:
+        print(f"Error creating all firing rates scatterplot: {e}")
+        return ""
 
 
 def create_firing_rate_scatterplot(
@@ -481,7 +584,7 @@ def create_firing_rate_scatterplot(
         from sklearn.metrics import r2_score
 
         # Create figure with subplots
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(4, 2))
 
         # Plot 1: Mean firing rates
         ax1.scatter(true_mean, pred_mean, alpha=0.6, s=30)
