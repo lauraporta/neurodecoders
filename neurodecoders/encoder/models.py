@@ -180,41 +180,35 @@ class ResNetFromScratch(nn.Module, ResNetMixin):
 class ResNetConvOnly(nn.Module, ResNetMixin):
     """
     ResNet18 encoder using only pre-trained convolutional layers.
-    Uses pre-trained ResNet18 conv layers but replaces the fully connected
-    layers with a custom firing rate prediction head.
+    Uses pre-trained ResNet18 conv backbone followed by a single linear layer
+    for firing rate prediction. Simpler architecture than ResNetEncoder.
     """
 
     def __init__(self, out_neurons, freeze_backbone=True):
         super().__init__()
 
         # Load pre-trained ResNet18
-        self.backbone = models.resnet18(pretrained=True)
-        feature_dim = 512
-
+        resnet = models.resnet18(pretrained=True)
+        
         # Extract only the convolutional layers (remove avgpool and fc)
         # This gives us the pure conv feature extractor
         conv_layers = []
-        for name, module in self.backbone.named_children():
+        for name, module in resnet.named_children():
             if name != "fc" and name != "avgpool":
                 conv_layers.append(module)
 
         self.backbone = nn.Sequential(*conv_layers)
+        
+        # Feature dimension after layer4 is 512 channels
+        feature_dim = 512
 
         # Freeze backbone if requested
         if freeze_backbone:
             for param in self.backbone.parameters():
                 param.requires_grad = False
 
-        # Add firing rate prediction head
-        self.firing_head = nn.Sequential(
-            nn.Linear(feature_dim, 1024),
-            nn.ELU(),
-            nn.Dropout(0.3),
-            nn.Linear(1024, 512),
-            nn.ELU(),
-            nn.Dropout(0.2),
-            nn.Linear(512, out_neurons),
-        )
+        # Single linear layer for firing rate prediction
+        self.firing_head = nn.Linear(feature_dim, out_neurons)
 
         self.feature_dim = feature_dim
 
@@ -231,6 +225,7 @@ class ResNetConvOnly(nn.Module, ResNetMixin):
         features = torch.nn.functional.adaptive_avg_pool2d(features, (1, 1))
         features = features.squeeze(-1).squeeze(-1)
 
+        # Single linear layer prediction
         firing_rates = self.firing_head(features)
         return firing_rates + 1  # Ensure positive firing rates
 
