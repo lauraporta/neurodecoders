@@ -10,6 +10,102 @@ import torch.nn as nn
 import torchvision.models as models
 
 
+class Simple3LayerEncoder(nn.Module):
+    """
+    Simple 3-layer convolutional encoder with spatial readout matching the paper.
+    
+    Architecture:
+    - 3 convolutional layers to extract features at multiple scales
+    - Spatial readout layer that learns RF position for each neuron
+    - Linear readout from features at each neuron's RF position
+    
+    This matches the paper's approach: "three layer neural network that extracts 
+    intermediate image features and a readout layer that learns the position of 
+    each cell's receptive field in the monitor, extracts the intermediate features 
+    at that point and linearly predicts a cell response"
+    """
+    
+    def __init__(self, out_neurons, image_height=32, image_width=32, learn_positions=True):
+        super().__init__()
+        self.out_neurons = out_neurons
+        self.image_height = image_height
+        self.image_width = image_width
+        self.learn_positions = learn_positions
+        
+        # Three convolutional layers as per paper
+        # Keep spatial dimensions to enable spatial readout
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=5, stride=1, padding=2),  # 32x32 -> 32x32
+            nn.ReLU(),
+        )
+        
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2),  # 32x32 -> 32x32
+            nn.ReLU(),
+        )
+        
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),  # 32x32 -> 32x32
+            nn.ReLU(),
+        )
+        
+        # Spatial readout: learnable RF positions for each neuron
+        if learn_positions:
+            # Initialize RF positions randomly within image bounds
+            init_x = torch.rand(out_neurons) * (image_width - 1)
+            init_y = torch.rand(out_neurons) * (image_height - 1)
+            
+            # Learnable parameters for RF positions
+            self.rf_x = nn.Parameter(init_x)
+            self.rf_y = nn.Parameter(init_y)
+        else:
+            # Fixed random positions (for baseline comparison)
+            self.register_buffer('rf_x', torch.rand(out_neurons) * (image_width - 1))
+            self.register_buffer('rf_y', torch.rand(out_neurons) * (image_height - 1))
+        
+        # Linear readout from features at each RF position
+        # Each neuron gets its own linear weights across all feature channels
+        self.feature_readout = nn.Linear(64, out_neurons)
+        
+    def forward(self, x):
+        batch_size = x.shape[0]
+        
+        # Extract features through 3 conv layers
+        features1 = self.conv1(x)  # (B, 16, H, W)
+        features2 = self.conv2(features1)  # (B, 32, H, W)
+        features3 = self.conv3(features2)  # (B, 64, H, W)
+        
+        # Spatial readout: extract features at each neuron's RF position
+        # Use bilinear interpolation to sample from continuous positions
+        
+        # Normalize RF positions to [-1, 1] for grid_sample
+        norm_x = 2.0 * self.rf_x / (self.image_width - 1) - 1.0
+        norm_y = 2.0 * self.rf_y / (self.image_height - 1) - 1.0
+        
+        # Create sampling grid: (B, N_neurons, 1, 2) where last dim is (x, y)
+        grid = torch.stack([norm_x, norm_y], dim=-1)  # (N_neurons, 2)
+        grid = grid.unsqueeze(0).unsqueeze(2)  # (1, N_neurons, 1, 2)
+        grid = grid.expand(batch_size, -1, -1, -1)  # (B, N_neurons, 1, 2)
+        
+        # Sample features at RF positions using bilinear interpolation
+        # grid_sample expects (B, C, H, W) input and (B, H_out, W_out, 2) grid
+        sampled_features = torch.nn.functional.grid_sample(
+            features3, grid, mode='bilinear', padding_mode='border', align_corners=True
+        )  # (B, 64, N_neurons, 1)
+        
+        # Reshape to (B, N_neurons, 64)
+        sampled_features = sampled_features.squeeze(-1).permute(0, 2, 1)
+        
+        # Linear readout for each neuron
+        outputs = self.feature_readout(sampled_features)  # (B, N_neurons, N_neurons)
+        
+        # Take diagonal elements (each neuron's own output)
+        # This implements independent linear readouts per neuron
+        firing_rates = torch.diagonal(outputs, dim1=1, dim2=2)  # (B, N_neurons)
+        
+        return firing_rates
+
+
 class ResNetMixin:
     """
     Mixin class providing common functionality for ResNet-based encoders.
