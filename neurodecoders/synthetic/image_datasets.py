@@ -89,8 +89,15 @@ class ImageDataset:
         dataset = dataset_class(
             root=root, train=True, download=True, transform=self.transform
         )
+        
+        # Use a subset if we don't need all images - sample without replacement
+        if n_images < len(dataset):
+            # Use fixed seed for reproducibility
+            indices = torch.randperm(len(dataset), generator=torch.Generator().manual_seed(42))[:n_images].tolist()
+            dataset = torch.utils.data.Subset(dataset, indices)
+        
         loader = torch.utils.data.DataLoader(
-            dataset, batch_size=n_images, shuffle=True
+            dataset, batch_size=n_images, shuffle=False
         )
         images, labels = next(iter(loader))
         # No need for additional normalization since ToTensor and Normalize
