@@ -86,7 +86,7 @@ def create_comparison_plots(
 class OptimConfig:
     image_size: int = 32  # Match CIFAR-10 native resolution
     channels: int = 1
-    steps: int = 2000
+    steps: int = 1000  # Paper uses 1000 steps
     lr: float = 0.05
     log_every: int = 20
     init_mean: float = 0.5
@@ -95,7 +95,7 @@ class OptimConfig:
     clamp_max: float = 1
     seed: Optional[int] = 42
     image_ids: Optional[list] = None
-    loss: str = "poisson_mean"
+    loss: str = "mse"  # Paper uses MSE loss
 
 
 class ImageOptimizer:
@@ -170,9 +170,8 @@ class ImageOptimizer:
         elif pred.ndim != 1:
             raise ValueError("Encoder output must be shape (1, N) or (N,)")
 
-        rate = self.softplus(pred)
-
-        loss = self.loss(rate, self.target)
+        # Use predicted firing rates directly (no softplus for MSE loss)
+        loss = self.loss(pred, self.target)
 
         loss.backward()
 
