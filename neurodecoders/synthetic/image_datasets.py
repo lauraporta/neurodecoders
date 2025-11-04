@@ -8,29 +8,96 @@ from neurodecoders.paths import ensure_dir, get_raw_datasets_path
 class ImageDataset:
     def __init__(self):
         """Initialize common transform that's used across all methods."""
-        self.transform = transforms.Compose(
+        # Basic transform without normalization (normalization will be calculated from training data)
+        self.base_transform = transforms.Compose(
             [
-                transforms.Resize((224, 224)),
+                transforms.Resize((224, 224)),  # Will be changed to (36, 64) in next commit
                 transforms.Grayscale(num_output_channels=1),
                 transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.5],
-                    std=[0.5],
-                    # NB: this is not the normalization
-                    # suggested for RGB images
-                ),  # Normalize to [-1, 1] with mean=0.5
             ]
         )
+        self.transform = self.base_transform
+        self.mean = None
+        self.std = None
     
-    def get_data(self, type: str, n_images: int):
+    def calculate_normalization_stats(self, dataset_class, n_samples=5000):
+        """
+        Calculate mean and std from training data to match paper's approach.
+        
+        Args:
+            dataset_class: The torchvision dataset class to use
+            n_samples: Number of samples to use for computing statistics
+        """
+        root = get_raw_datasets_path()
+        ensure_dir(root)
+        dataset = dataset_class(
+            root=root, train=True, download=True, transform=self.base_transform
+        )
+        
+        # Use a subset for efficiency
+        if n_samples < len(dataset):
+            indices = torch.randperm(len(dataset))[:n_samples].tolist()
+            dataset = torch.utils.data.Subset(dataset, indices)
+        
+        loader = torch.utils.data.DataLoader(
+            dataset, batch_size=100, shuffle=False, num_workers=0
+        )
+        
+        # Calculate mean and std across all images
+        mean = 0.0
+        std = 0.0
+        n_pixels = 0
+        
+        for images, _ in loader:
+            batch_pixels = images.numel()
+            mean += images.sum()
+            std += (images ** 2).sum()
+            n_pixels += batch_pixels
+        
+        mean /= n_pixels
+        std = torch.sqrt(std / n_pixels - mean ** 2)
+        
+        self.mean = mean.item()
+        self.std = std.item()
+        
+        print(f"Calculated normalization stats: mean={self.mean:.4f}, std={self.std:.4f}")
+        
+        # Update transform with calculated normalization
+        self.transform = transforms.Compose(
+            [
+                self.base_transform,
+                transforms.Normalize(mean=[self.mean], std=[self.std]),
+            ]
+        )
+        
+        return self.mean, self.std
+    
+    def get_data(self, type: str, n_images: int, calculate_stats=True):
+        """
+        Get dataset with optional normalization stats calculation.
+        
+        Args:
+            type: Dataset type ('cifar10' or 'mnist')
+            n_images: Number of images to load
+            calculate_stats: Whether to calculate and apply data-driven normalization
+        """
+        dataset_class = self._get_dataset_class(type)
+        
+        if calculate_stats and self.mean is None:
+            self.calculate_normalization_stats(dataset_class)
+        
+        return self.load_dataset(dataset_class, n_images)
+    
+    def _get_dataset_class(self, type: str):
+        """Get the dataset class for the given type."""
         if type == "cifar10":
-            return self.load_dataset(torchvision.datasets.CIFAR10, n_images)
+            return torchvision.datasets.CIFAR10
         elif type == "mnist":
-            return self.load_dataset(torchvision.datasets.MNIST, n_images)
+            return torchvision.datasets.MNIST
         else:
             raise ValueError(f"Invalid dataset type: {type}")
 
-    def get_data_loader(self, type: str, n_images: int, batch_size: int = 100):
+    def get_data_loader(self, type: str, n_images: int, batch_size: int = 100, calculate_stats=True):
         """
         Get a DataLoader for memory-efficient loading.
         
@@ -38,16 +105,17 @@ class ImageDataset:
             type: Dataset type ('cifar10' or 'mnist')
             n_images: Total number of images to use
             batch_size: Batch size for the DataLoader
+            calculate_stats: Whether to calculate and apply data-driven normalization
             
         Returns:
             DataLoader and labels tensor
         """
-        if type == "cifar10":
-            return self._create_loader(torchvision.datasets.CIFAR10, n_images, batch_size)
-        elif type == "mnist":
-            return self._create_loader(torchvision.datasets.MNIST, n_images, batch_size)
-        else:
-            raise ValueError(f"Invalid dataset type: {type}")
+        dataset_class = self._get_dataset_class(type)
+        
+        if calculate_stats and self.mean is None:
+            self.calculate_normalization_stats(dataset_class)
+        
+        return self._create_loader(dataset_class, n_images, batch_size)
     
     def _create_loader(self, dataset_class, n_images: int, batch_size: int):
         """Create a DataLoader with the specified batch size."""
