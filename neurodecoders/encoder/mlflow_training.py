@@ -25,6 +25,7 @@ from neurodecoders.encoder.models import (
     ResNetConv_2layerHead,
     ResNetEncoder,
     ResNetFromScratch,
+    Simple3LayerEncoder,
     SimpleEncoder,
     SimpleEncoderWithSkipConnection,
 )
@@ -57,6 +58,8 @@ def get_model(config: Dict[str, Any]) -> torch.nn.Module:
 
     if model_type == "simple":
         return SimpleEncoder(out_neurons=out_neurons)
+    elif model_type == "simple3layer":
+        return Simple3LayerEncoder(out_neurons=out_neurons)
     elif model_type == "skip":
         return SimpleEncoderWithSkipConnection(out_neurons=out_neurons)
     elif model_type == "resnet":

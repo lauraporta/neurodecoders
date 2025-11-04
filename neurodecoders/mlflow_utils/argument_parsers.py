@@ -74,14 +74,15 @@ def create_encoder_parser() -> argparse.ArgumentParser:
         "--model-type",
         choices=[
             "simple",
+            "simple3layer",
             "skip",
             "resnet",
             "resnet_scratch",
             "resnet_conv_only",
             "resnet_conv_2layer",
         ],
-        default="simple",
-        help="Type of encoder model",
+        default="simple3layer",
+        help="Type of encoder model (simple3layer recommended for reconstruction)",
     )
     parser.add_argument(
         "--freeze-backbone",
