@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 from typing import Dict, List, Tuple
+import gc
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -230,8 +231,8 @@ def run_inspect(
 # Paste the cell below into a notebook or run as a cell in an editor that
 # supports interactive execution (for example VS Code with Python).
 
-MODEL_ID = "7694dd13cb044c05bfc4e81503b321fe"
-IMAGE_IDS = [0]
+MODEL_ID = "5a183b56245743379d23efb485da8f4e"
+IMAGE_IDS = [3387]
 OUT_DIR = None  # or "/tmp/activations"
 
 activations, encoder_out, imgs = run_inspect(
@@ -261,7 +262,7 @@ for i, name in enumerate(activations.keys()):
 
 # %%
 # Configurable layer selection - CHANGE THIS TO VIEW DIFFERENT LAYERS
-LAYER_INDEX = 12  # 0 = first layer, 1 = second layer, etc. (max index is num_layers - 1)
+LAYER_INDEX = 11  # 0 = first layer, 1 = second layer, etc. (max index is num_layers - 1)
 
 # Get the selected layer
 layer_names = list(activations.keys())
@@ -377,4 +378,195 @@ print(f"  Std: {encoder_out.std():.4f}")
 print(f"  Min: {encoder_out.min():.4f}")
 print(f"  Max: {encoder_out.max():.4f}")
 print(f"  % in [0,100]: {((encoder_out >= 0) & (encoder_out <= 100)).mean() * 100:.1f}%")
+
+# %%
+# ## Analyze neuron activation across multiple images
+# Run the inspection with multiple images to compare activation patterns
+
+# CONFIGURATION
+TOTAL_IMAGES = 8000  # Total number of images in dataset
+BATCH_SIZE = 50  # Process images in batches to save memory (reduced to 50 for safety)
+ACTIVATION_THRESHOLD = 0.01  # Threshold to consider a neuron "activated"
+
+print(f"Processing {TOTAL_IMAGES} images in batches of {BATCH_SIZE}...")
+print(f"Note: Reduce BATCH_SIZE if you run out of memory")
+
+# Collect all activation statistics across batches
+all_activation_stats = []
+
+# Process images in batches
+for batch_start in range(0, TOTAL_IMAGES, BATCH_SIZE):
+    batch_end = min(batch_start + BATCH_SIZE, TOTAL_IMAGES)
+    IMAGE_IDS_BATCH = list(range(batch_start, batch_end))
+    
+    print(f"\nProcessing batch: images {batch_start} to {batch_end-1}...")
+    
+    try:
+        activations_batch, encoder_out_batch, imgs_batch = run_inspect(
+            model_id=MODEL_ID,
+            image_ids=IMAGE_IDS_BATCH,
+            output_dir=None,
+            max_layers=12,
+            save_plots=False,
+        )
+        
+        # Get the last layer activations
+        last_layer_name = list(activations_batch.keys())[-1]
+        last_layer_acts = activations_batch[last_layer_name]
+        
+        # Ensure we're working with (N, Features) shape
+        if last_layer_acts.ndim == 3:
+            last_layer_acts = last_layer_acts.squeeze()
+        if last_layer_acts.ndim == 1:
+            last_layer_acts = last_layer_acts[None, :]
+        
+        N_images_batch, N_features = last_layer_acts.shape
+        
+        # Calculate mode and statistics for each image in batch
+        from scipy import stats
+        
+        for i in range(N_images_batch):
+            act = last_layer_acts[i]
+            
+            # Calculate mode (most frequent value)
+            # Round to avoid floating point precision issues
+            act_rounded = np.round(act, decimals=4)
+            mode_result = stats.mode(act_rounded, keepdims=True)
+            mode_value = float(mode_result.mode[0])
+            mode_count = int(mode_result.count[0])
+            
+            # Calculate other metrics
+            n_activated = np.sum(np.abs(act) > ACTIVATION_THRESHOLD)
+            pct_activated = (n_activated / N_features) * 100
+            
+            all_activation_stats.append({
+                'image_id': IMAGE_IDS_BATCH[i],
+                'mode_value': mode_value,
+                'mode_count': mode_count,
+                'mode_pct': (mode_count / N_features) * 100,
+                'n_activated': n_activated,
+                'pct_activated': pct_activated,
+                'mean_abs_activation': np.mean(np.abs(act)),
+                'max_activation': np.max(np.abs(act)),
+            })
+        
+        print(f"  Processed {N_images_batch} images from this batch")
+        
+        # Clean up memory after each batch
+        del activations_batch, encoder_out_batch, imgs_batch, last_layer_acts
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+    except Exception as e:
+        print(f"  Error processing batch {batch_start}-{batch_end}: {e}")
+        # Clean up even on error
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        continue
+
+print(f"\n{'='*80}")
+print(f"Finished processing all batches. Total images processed: {len(all_activation_stats)}")
+print(f"{'='*80}")
+
+# Filter out images where mode is 0 or negative (we want only positive modes)
+filtered_stats = [s for s in all_activation_stats if s['mode_value'] > 0.0]
+print(f"\nFiltered out {len(all_activation_stats) - len(filtered_stats)} images with mode <= 0")
+print(f"Kept {len(filtered_stats)} images with mode > 0")
+
+# Sort by mode value (descending) - images with higher mode are more densely activated
+sorted_by_activation = sorted(filtered_stats, key=lambda x: x['mode_value'], reverse=True)
+
+# Display results
+print(f"\n{'='*100}")
+print(f"NEURON ACTIVATION ANALYSIS - Sorted by Mode (excluding images with mode <= 0)")
+print(f"{'='*100}")
+print(f"\n{'Rank':<6} {'Image ID':<10} {'Mode':<12} {'Mode Count':<12} {'Mode %':<12} {'# Act':<12} {'% Act':<12} {'Mean |Act|':<15} {'Max |Act|'}")
+print(f"{'-'*100}")
+
+for rank, info in enumerate(sorted_by_activation, 1):
+    print(f"{rank:<6} {info['image_id']:<10} {info['mode_value']:<12.4f} "
+          f"{info['mode_count']:<12} {info['mode_pct']:<12.1f} "
+          f"{info['n_activated']:<12} {info['pct_activated']:<12.1f} "
+          f"{info['mean_abs_activation']:<15.4f} {info['max_activation']:<15.4f}")
+
+# Summary statistics
+mode_values = [x['mode_value'] for x in filtered_stats]
+n_activated_list = [x['n_activated'] for x in all_activation_stats]
+print(f"\n{'='*100}")
+print(f"SUMMARY STATISTICS (filtered: {len(filtered_stats)} images, excluded: {len(all_activation_stats) - len(filtered_stats)})")
+print(f"{'='*100}")
+print(f"Mode statistics (positive modes only):")
+print(f"  Mean mode value: {np.mean(mode_values):.4f}")
+print(f"  Std mode value: {np.std(mode_values):.4f}")
+print(f"  Min mode value: {np.min(mode_values):.4f}")
+print(f"  Max mode value: {np.max(mode_values):.4f}")
+print(f"  Median mode value: {np.median(mode_values):.4f}")
+print(f"\nActivation count statistics (all images):")
+print(f"  Mean activated neurons: {np.mean(n_activated_list):.2f}")
+print(f"  Std activated neurons: {np.std(n_activated_list):.2f}")
+print(f"  Min activated neurons: {np.min(n_activated_list)}")
+print(f"  Max activated neurons: {np.max(n_activated_list)}")
+print(f"  Median activated neurons: {np.median(n_activated_list):.2f}")
+
+# Visualization: Bar plot of mode values sorted by image
+fig, axes = plt.subplots(2, 1, figsize=(14, 10))
+
+# Plot 1: Sorted by mode value
+image_indices_sorted = [x['image_id'] for x in sorted_by_activation]
+mode_values_sorted = [x['mode_value'] for x in sorted_by_activation]
+axes[0].bar(range(len(image_indices_sorted)), mode_values_sorted, 
+            color='steelblue', edgecolor='black')
+axes[0].set_xlabel('Rank (sorted by mode value)')
+axes[0].set_ylabel('Mode of Activation Values')
+axes[0].set_title(f'Images Sorted by Mode of Neuron Activations (excluding mode <= 0)')
+axes[0].axhline(np.mean(mode_values_sorted), color='red', linestyle='--', 
+                label=f'Mean={np.mean(mode_values_sorted):.4f}')
+axes[0].legend()
+axes[0].grid(True, alpha=0.3, axis='y')
+
+# Add image IDs as labels on x-axis (every nth to avoid crowding)
+step = max(1, len(image_indices_sorted) // 20)
+axes[0].set_xticks(range(0, len(image_indices_sorted), step))
+axes[0].set_xticklabels([f"ID:{image_indices_sorted[i]}" for i in range(0, len(image_indices_sorted), step)], 
+                        rotation=45, ha='right')
+
+# Plot 2: Distribution of mode values
+axes[1].hist(mode_values_sorted, bins=min(30, len(set(mode_values_sorted))), 
+             color='coral', edgecolor='black', alpha=0.7)
+axes[1].axvline(np.mean(mode_values_sorted), color='red', linestyle='--', 
+                label=f'Mean={np.mean(mode_values_sorted):.4f}')
+axes[1].axvline(np.median(mode_values_sorted), color='green', linestyle='--', 
+                label=f'Median={np.median(mode_values_sorted):.4f}')
+axes[1].set_xlabel('Mode of Activation Values')
+axes[1].set_ylabel('Frequency')
+axes[1].set_title('Distribution of Mode Values Across Images (positive modes only)')
+axes[1].legend()
+axes[1].grid(True, alpha=0.3, axis='y')
+
+plt.tight_layout()
+plt.show()
+
+# %%
+print(f"\nTop 20 images with highest mode values (densest activation patterns):")
+for rank, info in enumerate(sorted_by_activation[:20], 1):
+    print(f"  {rank}. Image ID {info['image_id']}: mode={info['mode_value']:.4f} "
+          f"({info['mode_count']} neurons = {info['mode_pct']:.1f}%)")
+
+if len(sorted_by_activation) >= 20:
+    print(f"\nBottom 20 images with lowest mode values (but mode > 0):")
+    for rank, info in enumerate(sorted_by_activation[-20:], 1):
+        print(f"  {rank}. Image ID {info['image_id']}: mode={info['mode_value']:.4f} "
+              f"({info['mode_count']} neurons = {info['mode_pct']:.1f}%)")
+
+print(f"\nImages excluded (mode <= 0):")
+excluded = [s for s in all_activation_stats if s['mode_value'] <= 0.0]
+if excluded:
+    for info in excluded:
+        print(f"  Image ID {info['image_id']}: mode={info['mode_value']:.4f}, "
+              f"{info['n_activated']} neurons activated ({info['pct_activated']:.1f}%)")
+else:
+    print("  None - all images have mode > 0")
+
 # %%

@@ -168,8 +168,8 @@ class ImageOptimizer:
             import torch.nn.functional as F
 
             # Define a simple Gaussian kernel
-            kernel_size = 20
-            sigma = 5.0
+            kernel_size = 10
+            sigma = 2.5
             x = torch.arange(-kernel_size // 2 + 1., kernel_size // 2 + 1.)
             x_grid = x.repeat(kernel_size).view(kernel_size, kernel_size)
             y_grid = x_grid.t()
@@ -184,6 +184,7 @@ class ImageOptimizer:
             return img
 
         pred = self.encoder(apply_gaussian_blur_to_image(self.image))
+        # pred = self.encoder(self.image)
         if pred.ndim == 2 and pred.shape[0] == 1:
             pred = pred[0]
         elif pred.ndim != 1:
@@ -192,9 +193,10 @@ class ImageOptimizer:
         rate = self.softplus(pred)
 
         # only use the idx_of_top_30_by_variance
-        loss = self.loss(
-            rate[self.idx_of_top_30_by_variance], 
-            self.target[self.idx_of_top_30_by_variance])
+        # loss = self.loss(
+        #     rate[self.idx_of_top_30_by_variance], 
+        #     self.target[self.idx_of_top_30_by_variance])
+        loss = self.loss(rate, self.target)
 
         loss.backward()
 
@@ -208,11 +210,11 @@ class ImageOptimizer:
                 self.image.grad.clamp_(-1.0, 1.0)
 
         opt.step()
-        with torch.no_grad():
-            # #  normalise first
-            # self.image.data -= self.image.data.mean()
-            # self.image.data /= self.image.data.std()
-            self.image.data.clamp_(self.cfg.clamp_min, self.cfg.clamp_max)
+        # with torch.no_grad():
+        #     # #  normalise first
+        #     # self.image.data -= self.image.data.mean()
+        #     # self.image.data /= self.image.data.std()
+        #     self.image.data.clamp_(self.cfg.clamp_min, self.cfg.clamp_max)
 
         metrics = {
             "loss": float(loss.detach().cpu().item()),
@@ -231,7 +233,7 @@ class ImageOptimizer:
             img, metrics = self.step(opt)
             last_metrics = metrics
             # Step the scheduler with current loss
-            scheduler.step(metrics["loss"])
+            scheduler.step()
             if step % self.cfg.log_every == 0:
                 try:
                     mlflow.log_metrics(metrics, step=step)
