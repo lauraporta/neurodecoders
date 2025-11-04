@@ -84,7 +84,7 @@ def create_comparison_plots(
 
 @dataclass
 class OptimConfig:
-    image_size: int = 64
+    image_size: int = 32  # Match CIFAR-10 native resolution
     channels: int = 1
     steps: int = 2000
     lr: float = 0.05

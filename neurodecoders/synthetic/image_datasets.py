@@ -9,9 +9,10 @@ class ImageDataset:
     def __init__(self):
         """Initialize common transform that's used across all methods."""
         # Basic transform without normalization (normalization will be calculated from training data)
+        # Use native CIFAR-10 resolution (32x32) - similar scale to paper's 36x64
         self.base_transform = transforms.Compose(
             [
-                transforms.Resize((224, 224)),  # Will be changed to (36, 64) in next commit
+                # No resize - keep native resolution (32x32 for CIFAR-10, 28x28 for MNIST)
                 transforms.Grayscale(num_output_channels=1),
                 transforms.ToTensor(),
             ]

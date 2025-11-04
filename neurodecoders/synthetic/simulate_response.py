@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 
 class SimulateResponse:
-    def __init__(self, device, images_or_loader_fn, stas, n_neurons, n_images=None):
+    def __init__(self, device, images_or_loader_fn, stas, n_neurons, n_images=None, image_height=32, image_width=32):
         self.device = device
         # Support both pre-loaded images (tensor) or a function that creates a DataLoader
         if callable(images_or_loader_fn):
@@ -22,6 +22,8 @@ class SimulateResponse:
         self.stas = stas
         self.n_neurons = n_neurons
         self.rf_size = stas.shape[1]
+        self.image_height = image_height
+        self.image_width = image_width
 
         self.selected_indices = np.random.choice(stas.shape[0], n_neurons)
         self.selected_stas = stas[self.selected_indices]
@@ -29,9 +31,11 @@ class SimulateResponse:
             self.selected_stas, dtype=torch.float32
         ).to(self.device)
 
-        self.rf_coords = np.random.randint(
-            0, 224 - self.rf_size, size=(n_neurons, 2)
-        )
+        # Place RFs randomly within image bounds
+        self.rf_coords = np.column_stack([
+            np.random.randint(0, max(1, self.image_width - self.rf_size), size=n_neurons),
+            np.random.randint(0, max(1, self.image_height - self.rf_size), size=n_neurons)
+        ])
 
     def estimate_memory_usage(self, batch_size=100, neuron_batch_size=1000):
         """
