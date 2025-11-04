@@ -163,28 +163,8 @@ class ImageOptimizer:
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         opt.zero_grad(set_to_none=True)
 
-        def apply_gaussian_blur_to_image(img: torch.Tensor) -> torch.Tensor:
-            """Applies a Gaussian blur to the input image tensor."""
-            import torch.nn.functional as F
-
-            # Define a simple Gaussian kernel
-            kernel_size = 10
-            sigma = 2.5
-            x = torch.arange(-kernel_size // 2 + 1., kernel_size // 2 + 1.)
-            x_grid = x.repeat(kernel_size).view(kernel_size, kernel_size)
-            y_grid = x_grid.t()
-            gaussian_kernel = torch.exp(-(x_grid**2 + y_grid**2) / (2 * sigma**2))
-            gaussian_kernel /= gaussian_kernel.sum()
-
-            # Reshape to [out_channels, in_channels, kH, kW]
-            gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size).to(img.device)
-
-            # Apply the Gaussian filter
-            img = F.conv2d(img, gaussian_kernel, padding=kernel_size // 2)
-            return img
-
-        pred = self.encoder(apply_gaussian_blur_to_image(self.image))
-        # pred = self.encoder(self.image)
+        # Forward pass WITHOUT blurring the image
+        pred = self.encoder(self.image)
         if pred.ndim == 2 and pred.shape[0] == 1:
             pred = pred[0]
         elif pred.ndim != 1:
@@ -192,22 +172,31 @@ class ImageOptimizer:
 
         rate = self.softplus(pred)
 
-        # only use the idx_of_top_30_by_variance
-        # loss = self.loss(
-        #     rate[self.idx_of_top_30_by_variance], 
-        #     self.target[self.idx_of_top_30_by_variance])
         loss = self.loss(rate, self.target)
 
         loss.backward()
 
+        # Blur the GRADIENT, not the image (as per paper)
         with torch.no_grad():
             if self.image.grad is not None:
-                # Normalize by matrix norm (Frobenius norm)
-                grad_norm = torch.norm(self.image.grad)
-                if grad_norm > 0:
-                    self.image.grad /= grad_norm
-                # Clip gradients to [-1, 1]
-                self.image.grad.clamp_(-1.0, 1.0)
+                # Apply Gaussian blur to gradient (σ=2.5px as per paper)
+                import torch.nn.functional as F
+                
+                kernel_size = 5
+                sigma = 2.5
+                x = torch.arange(-kernel_size // 2 + 1., kernel_size // 2 + 1.)
+                x_grid = x.repeat(kernel_size).view(kernel_size, kernel_size)
+                y_grid = x_grid.t()
+                gaussian_kernel = torch.exp(-(x_grid**2 + y_grid**2) / (2 * sigma**2))
+                gaussian_kernel /= gaussian_kernel.sum()
+                
+                # Reshape to [out_channels, in_channels, kH, kW]
+                gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size).to(self.image.device)
+                
+                # Apply Gaussian blur to gradient
+                self.image.grad = F.conv2d(
+                    self.image.grad, gaussian_kernel, padding=kernel_size // 2
+                )
 
         opt.step()
         # with torch.no_grad():
