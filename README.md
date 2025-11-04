@@ -22,25 +22,26 @@ data_dir = get_synthetic_data_path()  # Gets configured path
 
 ### 1. Create Synthetic Dataset
 
-Generate synthetic neural responses with configurable parameters:
+Generate synthetic neural responses matching paper's scale (32x32 images, ~100 neurons):
 
 ```bash
 python neurodecoders/synthetic/create_simulated_neural_responses.py \
-    --n_images 10000 \
-    --n_neurons 5000 \
+    --n_images 5000 \
+    --n_neurons 1000 \
     --dataset_type cifar10 \
-    --sta_type gabor,7,7 \
-    --batch_size 50 \
-    --neuron_batch_size 500
+    --sta_type gabor,11,11 \
+    --batch_size 100 \
+    --neuron_batch_size 100
 ```
 
 **Arguments:**
-- `--n_images`: Number of images (default: 100)
+- `--n_images`: Number of images (default: 100, paper uses 4500+500)
 - `--n_neurons`: Number of neurons (default: 100)
-- `--dataset_type`: Dataset type (default: cifar10)
+- `--dataset_type`: Dataset type (default: cifar10, gives 32x32 images)
 - `--sta_type`: STA type and parameters (default: periodic_patterns,7,7)
-  - For 32x32 images, use small kernels: 5x5, 7x7, or 11x11
-  - Larger kernels (70x70, 100x100) are too large for 32x32 images
+  - **IMPORTANT:** For 32x32 images, use small kernels: 5x5, 7x7, or 11x11
+  - Kernels should be ~20-30% of image size for realistic RFs
+  - Examples: `gabor,5,5`, `gabor,7,7`, `periodic_patterns,11,11`
 - `--batch_size`: Image batch size for memory-efficient processing (default: 100)
 - `--neuron_batch_size`: Neuron batch size for memory-efficient processing (default: 1000)
 
@@ -50,30 +51,52 @@ python neurodecoders/synthetic/create_simulated_neural_responses.py \
 - Target total memory < 4-6 GB to avoid out-of-memory kills
 - Smaller batch sizes = slower but more memory-safe
 
-### 2. Train Encoder with MLflow
+### 2. Train Simple3Layer Encoder (Paper-like Architecture)
 
-Train neural encoders with experiment tracking:
+Train the new spatial readout encoder matching the paper's approach:
 
 ```bash
 python neurodecoders/encoder/mlflow_training.py \
-    --model-type simple \
+    --model-type simple3layer \
     --learning-rate 0.001 \
-    --epochs 30 \
+    --epochs 100 \
     --batch-size 32 \
     --optimizer adam \
-    --weight-decay 0.0 \
+    --weight-decay 0.0001 \
     --loss-function mse \
-    --scheduler none \
+    --scheduler plateau \
     --dataset-type cifar10 \
-    --sta-type periodic_patterns,7,7 \
+    --sta-type gabor,7,7 \
     --n-neurons 100 \
-    --n-images 100000 \
-    --experiment-name my_experiment \
-    --run-name simple_encoder_v1
+    --n-images 5000 \
+    --experiment-name simple3layer_spatial_readout \
+    --run-name gabor_7x7_100n
+```
+
+**Key Model: Simple3LayerEncoder**
+- 3 convolutional layers extracting features (matching paper)
+- **Spatial readout layer** that learns RF positions for each neuron
+- Independent linear readout per neuron from features at its RF
+- This is the CRITICAL difference enabling reconstruction!
+
+**Alternative: For comparison with old models**
+```bash
+# Old simple encoder (no spatial readout - won't reconstruct well)
+python neurodecoders/encoder/mlflow_training.py \
+    --model-type simple \
+    --learning-rate 0.001 \
+    --epochs 50 \
+    --batch-size 32 \
+    --dataset-type cifar10 \
+    --sta-type gabor,7,7
 ```
 
 **Model Arguments:**
-- `--model-type`: Model type (simple, skip, resnet)
+- `--model-type`: Model type 
+  - `simple3layer` - **RECOMMENDED**: 3-layer CNN with spatial readout (matches paper)
+  - `simple` - Old simple encoder without spatial readout
+  - `skip` - Simple encoder with skip connections
+  - `resnet` - ResNet-based encoder (not recommended for reconstruction)
 - `--resnet-type`: ResNet type (resnet18, resnet34, resnet50) - only for resnet model
 - `--freeze-backbone`: Freeze ResNet backbone (default: True)
 - `--unfreeze-backbone`: Unfreeze ResNet backbone (overrides --freeze-backbone)
@@ -91,10 +114,17 @@ python neurodecoders/encoder/mlflow_training.py \
 
 **Data Arguments:**
 - `--dataset-type`: Dataset type (cifar10, mnist) (default: cifar10)
+  - CIFAR-10 gives 32x32 images (close to paper's 36x64)
+  - MNIST gives 28x28 images
 - `--sta-type`: STA type for synthetic data (default: periodic_patterns,7,7)
-  - Use small kernels (5x5, 7x7, 11x11) appropriate for 32x32 images
+  - **Recommended sizes for 32x32 images:** 5x5, 7x7, 11x11
+  - Example patterns: `gabor,7,7`, `periodic_patterns,5,5`, `perlin_noise_patterns,11,11`
 - `--n-neurons`: Number of neurons in synthetic data (default: 100)
+  - Paper uses ~30 neurons for evaluation
+  - 100-200 neurons is good for initial experiments
 - `--n-images`: Number of images in synthetic data (default: 100000)
+  - Paper uses 4500 for training + 500 for validation
+  - Start with 5000-10000 for quick experiments
 
 **Data Loading Arguments:**
 - `--use-memory-mapping`: Use memory mapping for large datasets
@@ -110,7 +140,40 @@ python neurodecoders/encoder/mlflow_training.py \
 
 **Note:** The `--out-neurons` parameter is now optional and will be automatically inferred from the dataset if not specified.
 
-### 3. View MLflow Experiments
+### 3. Reconstruct Images via Input Optimization
+
+Use the trained encoder to reconstruct images from neural responses:
+
+```bash
+python neurodecoders/input_optim/mlflow_run.py \
+    --encoder-run-id <your_mlflow_run_id> \
+    --dataset-path workspace/datasets/synthetic/test/synthdata_*.npz \
+    --n-images 10 \
+    --image-size 32 \
+    --steps 1000 \
+    --learning-rate 0.05 \
+    --loss mse \
+    --experiment-name reconstruction_test \
+    --run-name simple3layer_reconstruction
+```
+
+**Key Parameters:**
+- `--encoder-run-id`: MLflow run ID of trained encoder (find in MLflow UI)
+- `--dataset-path`: Path to test dataset with neural responses
+- `--image-size`: Should match training (32 for CIFAR-10)
+- `--steps`: Optimization steps (paper uses 1000, ~5 seconds)
+- `--loss`: Loss function (`mse` recommended, matches paper)
+
+**How it works (matching the paper):**
+1. Start with blank/gray image
+2. Forward pass through encoder → predicted responses
+3. Compute MSE between predicted and target responses
+4. Backward pass to get gradients w.r.t. input image
+5. **Apply Gaussian blur (σ=2.5px) to gradients** (reduces high-frequency noise)
+6. Update image via gradient descent
+7. Repeat for 1000 steps
+
+### 4. View MLflow Experiments
 
 ```bash
 mlflow ui
@@ -118,6 +181,37 @@ mlflow ui
 ```
 
 ## Advanced Usage
+
+### Complete Workflow Example
+
+```bash
+# 1. Generate synthetic data (5000 images, 100 neurons, 7x7 Gabor kernels)
+python neurodecoders/synthetic/create_simulated_neural_responses.py \
+    --n_images 5000 \
+    --n_neurons 100 \
+    --dataset_type cifar10 \
+    --sta_type gabor,7,7
+
+# 2. Train Simple3Layer encoder with spatial readout
+python neurodecoders/encoder/mlflow_training.py \
+    --model-type simple3layer \
+    --learning-rate 0.001 \
+    --epochs 100 \
+    --batch-size 32 \
+    --loss-function mse \
+    --scheduler plateau \
+    --sta-type gabor,7,7 \
+    --n-neurons 100 \
+    --experiment-name paper_approach
+
+# 3. Get encoder run ID from MLflow UI, then reconstruct images
+python neurodecoders/input_optim/mlflow_run.py \
+    --encoder-run-id <run_id_from_step_2> \
+    --dataset-path workspace/datasets/synthetic/test/synthdata_*.npz \
+    --n-images 30 \
+    --steps 1000 \
+    --loss mse
+```
 
 ### Hyperparameter Sweep
 
@@ -128,24 +222,23 @@ python neurodecoders/encoder/mlflow_training.py \
     --array-task-id 0
 ```
 
-### Large Dataset Training with Memory Optimization
+### Large-Scale Training
 
-For training with large datasets (100k+ images), use memory mapping and optimized data loading:
+For training with more neurons/images (closer to paper scale):
 
 ```bash
 python neurodecoders/encoder/mlflow_training.py \
-    --model-type simple \
+    --model-type simple3layer \
     --learning-rate 0.001 \
     --epochs 100 \
-    --batch-size 128 \
-    --n-images 100000 \
-    --n-neurons 100 \
+    --batch-size 64 \
+    --n-images 10000 \
+    --n-neurons 500 \
+    --sta-type gabor,7,7 \
     --use-memory-mapping \
     --num-workers 4 \
-    --prefetch-factor 3 \
     --pin-memory \
-    --experiment-name large_dataset_training \
-    --run-name simple_large_optimized
+    --experiment-name large_scale_experiment
 ```
 
 **Memory Optimization Tips:**
@@ -153,6 +246,7 @@ python neurodecoders/encoder/mlflow_training.py \
 - Increase `--num-workers` for faster data loading (4-8 workers recommended)
 - Use `--pin-memory` for GPU training
 - Adjust `--batch-size` based on available GPU memory
+- For synthetic data generation with many neurons, reduce batch sizes
 
 ## Output
 
