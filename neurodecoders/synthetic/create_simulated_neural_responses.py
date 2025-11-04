@@ -271,7 +271,13 @@ def main():
         "--batch_size",
         type=int,
         default=100,
-        help="Batch size for memory-efficient processing (default: 100)",
+        help="Batch size for images in memory-efficient processing (default: 100)",
+    )
+    parser.add_argument(
+        "--neuron_batch_size",
+        type=int,
+        default=1000,
+        help="Batch size for neurons in memory-efficient processing (default: 1000)",
     )
 
     args = parser.parse_args()
@@ -281,35 +287,56 @@ def main():
     print(f"  STA type: {args.sta_type}")
     print(f"  Number of images: {args.n_images}")
     print(f"  Number of neurons: {args.n_neurons}")
-    print(f"  Batch size: {args.batch_size}")
+    print(f"  Image batch size: {args.batch_size}")
+    print(f"  Neuron batch size: {args.neuron_batch_size}")
     print()
 
     print("Loading data and model...")
-    images, labels = ImageDataset().get_data(
-        args.dataset_type, n_images=args.n_images
+    # Create a function that returns a fresh DataLoader each time it's called
+    dataset_helper = ImageDataset()
+    def create_data_loader():
+        loader, _ = dataset_helper.get_data_loader(
+            args.dataset_type, n_images=args.n_images, batch_size=args.batch_size
+        )
+        return loader
+    
+    # Get labels once
+    _, labels = dataset_helper.get_data_loader(
+        args.dataset_type, n_images=args.n_images, batch_size=args.batch_size
     )
     stas = STA().get_simulated_sta(args.sta_type)
 
     print("Generating responses...")
-    simulator = SimulateResponse(device, images, stas, args.n_neurons)
+    simulator = SimulateResponse(device, create_data_loader, stas, args.n_neurons, n_images=args.n_images)
 
     # Show memory estimates
-    memory_info = simulator.estimate_memory_usage(args.batch_size)
-    print(f"Memory estimates for batch size {args.batch_size}:")
+    memory_info = simulator.estimate_memory_usage(args.batch_size, args.neuron_batch_size)
+    print(f"Memory estimates for batch sizes (images: {args.batch_size}, neurons: {args.neuron_batch_size}):")
     print(f"  Patch memory: {memory_info['patch_memory_gb']:.2f} GB")
     print(f"  Other tensors: {memory_info['other_tensors_gb']:.2f} GB")
     print(f"  Total memory: {memory_info['total_memory_gb']:.2f} GB")
-    print(f"  Suggested batch size: {memory_info['suggested_batch_size']}")
     print()
 
     firing_rates, dot_products, noise = (
         simulator.simulate_neural_responses_vectorized(
-            batch_size=args.batch_size
+            batch_size=args.batch_size,
+            neuron_batch_size=args.neuron_batch_size,
         )
     )
 
     # Create output directory
     os.makedirs("output", exist_ok=True)
+
+    print("Collecting images for saving...")
+    # Collect all images from a fresh loader for saving
+    image_loader_for_saving = create_data_loader()
+    all_images = []
+    for batch_images, _ in image_loader_for_saving:
+        all_images.append(batch_images)
+        if len(torch.cat(all_images)) >= args.n_images:
+            break
+    images = torch.cat(all_images)[:args.n_images]
+    del image_loader_for_saving
 
     print("Saving dataset...")
     # Skip STA vs z-score correlation calculation for speed
