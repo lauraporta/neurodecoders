@@ -27,16 +27,28 @@ Generate synthetic neural responses with configurable parameters:
 ```bash
 python neurodecoders/synthetic/create_simulated_neural_responses.py \
     --n_images 10000 \
-    --n_neurons 100 \
+    --n_neurons 5000 \
     --dataset_type cifar10 \
-    --sta_type perlin_noise_patterns,11,11
+    --sta_type gabor,7,7 \
+    --batch_size 50 \
+    --neuron_batch_size 500
 ```
 
 **Arguments:**
 - `--n_images`: Number of images (default: 100)
 - `--n_neurons`: Number of neurons (default: 100)
 - `--dataset_type`: Dataset type (default: cifar10)
-- `--sta_type`: STA type and parameters (default: periodic_patterns,70,70)
+- `--sta_type`: STA type and parameters (default: periodic_patterns,7,7)
+  - For 32x32 images, use small kernels: 5x5, 7x7, or 11x11
+  - Larger kernels (70x70, 100x100) are too large for 32x32 images
+- `--batch_size`: Image batch size for memory-efficient processing (default: 100)
+- `--neuron_batch_size`: Neuron batch size for memory-efficient processing (default: 1000)
+
+**Memory Optimization Tips:**
+- For large neuron counts (5000+), use smaller batch sizes: `--batch_size 50 --neuron_batch_size 500`
+- Monitor memory usage: the script shows estimated memory before processing
+- Target total memory < 4-6 GB to avoid out-of-memory kills
+- Smaller batch sizes = slower but more memory-safe
 
 ### 2. Train Encoder with MLflow
 
@@ -53,7 +65,7 @@ python neurodecoders/encoder/mlflow_training.py \
     --loss-function mse \
     --scheduler none \
     --dataset-type cifar10 \
-    --sta-type periodic_patterns,70,70 \
+    --sta-type periodic_patterns,7,7 \
     --n-neurons 100 \
     --n-images 100000 \
     --experiment-name my_experiment \
@@ -79,7 +91,8 @@ python neurodecoders/encoder/mlflow_training.py \
 
 **Data Arguments:**
 - `--dataset-type`: Dataset type (cifar10, mnist) (default: cifar10)
-- `--sta-type`: STA type for synthetic data (default: periodic_patterns,70,70)
+- `--sta-type`: STA type for synthetic data (default: periodic_patterns,7,7)
+  - Use small kernels (5x5, 7x7, 11x11) appropriate for 32x32 images
 - `--n-neurons`: Number of neurons in synthetic data (default: 100)
 - `--n-images`: Number of images in synthetic data (default: 100000)
 
