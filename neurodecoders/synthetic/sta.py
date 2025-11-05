@@ -24,10 +24,10 @@ class STA:
         patterns = np.zeros((n_patterns, sta_shape[0], sta_shape[1]))
 
         for i in range(n_patterns):
-            # Random Gabor parameters
-            sigma = np.random.uniform(5, 20)  # Standard deviation
+            # Random Gabor parameters (scaled for smaller patches ~11x11)
+            sigma = np.random.uniform(1, 4)  # Standard deviation
             theta = np.random.uniform(0, 2 * np.pi)  # Orientation
-            lambda_param = np.random.uniform(10, 30)  # Wavelength
+            lambda_param = np.random.uniform(2, 8)  # Wavelength
             psi = np.random.uniform(0, 2 * np.pi)  # Phase offset
             gamma = np.random.uniform(0.3, 1.0)  # Spatial aspect ratio
 
