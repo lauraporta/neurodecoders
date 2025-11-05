@@ -68,48 +68,40 @@ class EncoderVerificationCallback(Callback):
         # Create directories
         ensure_dir(self.model_save_dir)
 
-        # Store training data for verification
-        self.training_images = None
-        self.training_firing_rates = None
-        self.training_labels = None
-
     def on_train_start(
         self, trainer: pl.Trainer, pl_module: pl.LightningModule
     ):
-        """Store training data for later verification."""
-        # Extract training data from data module
+        """Log training data metadata (without storing the actual data)."""
+        # Just log metadata about the training data - don't store it!
         try:
-            # Store the full training dataset for verification
-            self.training_images = self.data_module.images
-            self.training_firing_rates = self.data_module.firing_rates
+            # Get shapes from data module without copying the data
+            images_shape = self.data_module.images.shape
+            firing_rates_shape = self.data_module.firing_rates.shape
+            n_neurons = firing_rates_shape[1]
 
-            # Ensure we have the data before proceeding
-            assert self.training_images is not None
-            assert self.training_firing_rates is not None
-
-            # Store labels if available
+            # Check if labels are available
             if (
                 hasattr(self.data_module, "labels")
                 and self.data_module.labels is not None
             ):
-                self.training_labels = self.data_module.labels
+                n_labels = len(self.data_module.labels)
                 print(
-                    f"Stored training data for verification: "
-                    f"{self.training_images.shape} images, "
-                    f"{self.training_firing_rates.shape[1]} neurons, "
-                    f"{len(self.training_labels)} labels"
+                    f"Training data metadata: "
+                    f"{images_shape} images, "
+                    f"{n_neurons} neurons, "
+                    f"{n_labels} labels"
                 )
             else:
                 print(
-                    f"Stored training data for verification: "
-                    f"{self.training_images.shape} images, "
-                    f"{self.training_firing_rates.shape[1]} neurons "
+                    f"Training data metadata: "
+                    f"{images_shape} images, "
+                    f"{n_neurons} neurons "
                     "(no labels available)"
                 )
 
         except Exception as e:
             print(
-                f"Warning: Could not store training data for verification: {e}"
+                f"Warning: Could not log training data metadata: {e}"
             )
 
     def on_train_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule):
@@ -196,22 +188,28 @@ class EncoderVerificationCallback(Callback):
             verifier.encoder = pl_module.model
             verifier.encoder.eval()
 
-            # Use training data if available, otherwise create synthetic data
+            # Get data directly from data_module (no copying!)
             if (
-                self.training_images is not None
-                and self.training_firing_rates is not None
+                hasattr(self.data_module, "images")
+                and hasattr(self.data_module, "firing_rates")
+                and self.data_module.images is not None
+                and self.data_module.firing_rates is not None
             ):
-                verifier.images = self.training_images
-                verifier.true_firing_rates = self.training_firing_rates
+                # Pass references to the data (not copies)
+                verifier.images = self.data_module.images
+                verifier.true_firing_rates = self.data_module.firing_rates
 
                 # Set labels if available
-                if self.training_labels is not None:
-                    verifier.image_labels = self.training_labels
+                if (
+                    hasattr(self.data_module, "labels")
+                    and self.data_module.labels is not None
+                ):
+                    verifier.image_labels = self.data_module.labels
                     print(
                         f"Using training data for verification: "
                         f"{verifier.images.shape} images, "
                         f"{verifier.true_firing_rates.shape[1]} neurons, "
-                        f"{len(self.training_labels)} labels"
+                        f"{len(self.data_module.labels)} labels"
                     )
                 else:
                     print(
