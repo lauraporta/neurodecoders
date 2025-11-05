@@ -21,24 +21,34 @@ module load miniconda
 conda activate /nfs/nhome/live/lporta/.conda/envs/decoders
 which python
 
-export CUDA_VISIBLE_DEVICES=0
+# SLURM automatically sets CUDA_VISIBLE_DEVICES based on --gres allocation
+# Do not manually override it to avoid conflicts
 
-# Configure MLflow to use PostgreSQL database
-export MLFLOW_TRACKING_URI="postgresql://laura:piscina@enc1-node3:5433/mlflow"
+
+# Load environment variables from .env file
+if [ -f .env ]; then
+    set -a  # automatically export all variables
+    source .env
+    set +a
+    echo "[INFO] Loaded environment variables from .env"
+    echo "[INFO] MLFLOW_TRACKING_URI=$MLFLOW_TRACKING_URI"
+else
+    echo "[WARNING] .env file not found, using default MLFLOW_TRACKING_URI"
+fi
 
 # ==========================================
 # HYPERPARAMETER SWEEP CONFIGURATION:
 # ==========================================
-EPOCHS=40
+EPOCHS=100
 
 # Define hyperparameter arrays
 LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
-MODEL_TYPES=("resnet_conv_2layer")
+MODEL_TYPES=("resnet_conv_only" "simple3layer")  # New spatial readout model
 OPTIMIZERS=("adam")
-SCHEDULERS=("none")
-DATASETS=("gabor,100,100")
-DATASET_TYPES=("cifar10")
+SCHEDULERS=("plateau")  # Reduce LR on plateau for better convergence
+DATASETS=("gabor,11,11")  # Small kernels for 32x32 images
+DATASET_TYPES=("cifar10")  # Native 32x32 resolution
 
 # ------------------------------------------
 # Compute lengths and total combinations
@@ -89,8 +99,8 @@ DATASET=${DATASETS[$DATASET_IDX]}
 DATASET_TYPE=${DATASET_TYPES[$DATASET_TYPE_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="model_${MODEL_TYPE}_Dataset_${DATASET}_lr_${LEARNING_RATE}_sched_${SCHEDULER}_dataset_type_${DATASET_TYPE}_new_plots"
-EXPERIMENT_NAME="long_training"
+RUN_NAME="model_${MODEL_TYPE}_dataset_${DATASET}_lr_${LEARNING_RATE}_sched_${SCHEDULER}_type_${DATASET_TYPE}_paper_approach"
+EXPERIMENT_NAME="long_training_paper_approach"
 
 echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET, dataset_type=$DATASET_TYPE"
 
@@ -101,13 +111,14 @@ echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNIN
     --batch-size "$BATCH_SIZE" \
     --epochs "$EPOCHS" \
     --optimizer "$OPTIMIZER" \
+    --loss-function mse \
     --scheduler "$SCHEDULER" \
     --mixed-precision \
     --no-early-stopping \
     --checkpointing \
     --sta-type "$DATASET" \
     --dataset-type "$DATASET_TYPE" \
-    --n-neurons 100 \
+    --n-neurons 5000 \
     --n-images 8000 \
     --cv-folds 1 \
     --experiment-name "$EXPERIMENT_NAME" \

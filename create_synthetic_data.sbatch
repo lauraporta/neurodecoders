@@ -28,9 +28,9 @@ nvidia-smi
     --n_images 10000 \
     --n_neurons 5000 \
     --dataset_type cifar10 \
-    --sta_type gabor,100,100 \
+    --sta_type gabor,11,11 \
     --batch_size 100 \
-    --neuron_batch_size 500
+    --neuron_batch_size 100
 
 echo "[INFO] Synthetic data creation completed"
 echo "[INFO] End time: $(date)"

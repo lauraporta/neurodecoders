@@ -33,7 +33,9 @@ if [ -n "$POSTGRES_USER" ] && [ -n "$POSTGRES_PASSWORD" ] && [ -n "$POSTGRES_DB"
     
     # Check if PostgreSQL is running
     echo "🔍 Checking PostgreSQL service..."
-    if ! pg_isready -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} &> /dev/null; then
+    # Use full path to pg_isready if available in conda environment
+    PG_ISREADY=$(which pg_isready 2>/dev/null || echo "${CONDA_PREFIX}/bin/pg_isready")
+    if ! ${PG_ISREADY} -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} &> /dev/null; then
         echo "⚠️  PostgreSQL is not running. Attempting to start..."
         
         # Check if PGDATA is set, otherwise use default
@@ -49,7 +51,7 @@ if [ -n "$POSTGRES_USER" ] && [ -n "$POSTGRES_PASSWORD" ] && [ -n "$POSTGRES_DB"
             sleep 3  # Wait for server to start
             
             # Check again if it's running
-            if pg_isready -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} &> /dev/null; then
+            if ${PG_ISREADY} -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} &> /dev/null; then
                 echo "✅ PostgreSQL service started successfully"
             else
                 echo "❌ Failed to start PostgreSQL service"

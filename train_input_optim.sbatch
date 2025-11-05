@@ -7,7 +7,7 @@
 #SBATCH -n 1
 #SBATCH -t 00-01:00 # time (D-HH:MM)
 #SBATCH --exclude=gpu-sr670-21  # Exclude nodes with CUDA driver issues
-#SBATCH --array=0-2
+#SBATCH --array=0-26
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.err.txt
 
@@ -40,13 +40,13 @@ fi
 # ==========================================
 
 # Input optimization parameters
-MODEL_IDS=("7694dd13cb044c05bfc4e81503b321fe" "4964446c33c54d35ba455c00a020ccb1" "22a5f66e911d40d6b90cf5441590157f") 
-STEPS=1000  
-IMAGE_SIZE=224  # Match encoder training size (CIFAR-10 resized to 224x224)
+MODEL_IDS=("72df8c56175c4d7a9381b0e3a5478e65" "d38f93de27854e21a61ae52c9ee25bbe" "8bfd15aefa4944de81561203cb25bf01") 
+STEPS=2000  
+IMAGE_SIZE=32  # Match encoder training size (CIFAR-10 resized to 32x32)
 
 # Define hyperparameter arrays
 LEARNING_RATES=(0.001)  # Paper uses LR=1000 with gradient normalization
-IMAGE_IDS=("0" "50" "100")  # Space-separated image IDs to reconstruct
+IMAGE_IDS=("0" "50" "100" "150" "250" "350" "400")  # Space-separated image IDs to reconstruct
 
 # ------------------------------------------
 # Compute lengths and total combinations
@@ -81,7 +81,7 @@ IMG_ID_SET=${IMAGE_IDS[$IMG_IDS_IDX]}
 MODEL_ID=${MODEL_IDS[$MODEL_ID_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="final_clamp_-1.2_-1.2_grandient_clip_Kernel_20_5_modelid_${MODEL_ID}_imgids_${IMG_ID_SET}"
+RUN_NAME="${MODEL_ID}_imgids_${IMG_ID_SET}"
 EXPERIMENT_NAME="input_optim"
 
 echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model_id=$MODEL_ID, lr=$LEARNING_RATE, image_size=$IMAGE_SIZE, steps=$STEPS, image_ids=$IMG_ID_SET"
