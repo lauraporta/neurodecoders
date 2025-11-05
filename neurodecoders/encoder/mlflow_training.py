@@ -117,8 +117,17 @@ def train_with_config(config: Dict[str, Any]):
     print(f"Early stopping: {config['enable_early_stopping']}")
     print(f"Checkpointing: {config['enable_checkpointing']}")
 
-    # Load data
-    images, firing_rates, labels, metadata = load_synthetic_split_data(config)
+    # Load training data
+    print("\n=== Loading Training Data ===")
+    images, firing_rates, labels, metadata = load_synthetic_split_data(config, split="train")
+    print(f"Loaded {len(images)} training samples")
+
+    # Load test data separately - REQUIRED, no fallback
+    print("\n=== Loading Test Data ===")
+    test_images, test_firing_rates, test_labels, test_metadata = load_synthetic_split_data(
+        config, split="test"
+    )
+    print(f"Loaded {len(test_images)} test samples")
 
     # Infer out_neurons from dataset if not specified
     if config.get("out_neurons") is None:
@@ -127,11 +136,14 @@ def train_with_config(config: Dict[str, Any]):
     else:
         print(f"Output neurons: {config['out_neurons']}")
 
-    # Create data module
+    # Create data module with separate test data
     data_module = NeuralDataModule(
         images=images,
         firing_rates=firing_rates,
         labels=labels,
+        test_images=test_images,
+        test_firing_rates=test_firing_rates,
+        test_labels=test_labels,
         batch_size=config["batch_size"],
         dataset_metadata=metadata,
         use_memory_mapping=config["use_memory_mapping"],

@@ -32,6 +32,9 @@ class NeuralDataModule(pl.LightningDataModule):
         images,
         firing_rates,
         labels=None,
+        test_images=None,
+        test_firing_rates=None,
+        test_labels=None,
         train_split=0.7,
         val_split=0.15,
         batch_size=32,
@@ -46,6 +49,12 @@ class NeuralDataModule(pl.LightningDataModule):
         self.images = images
         self.firing_rates = firing_rates
         self.labels = labels
+        
+        # Separate test data
+        self.test_images = test_images
+        self.test_firing_rates = test_firing_rates
+        self.test_labels = test_labels
+        
         self.train_split = train_split
         self.val_split = val_split
         self.batch_size = batch_size
@@ -138,29 +147,51 @@ class NeuralDataModule(pl.LightningDataModule):
 
     def setup_splits(self):
         """Set up train/validation/test splits."""
-        # Check if we're using pre-split data (from synthetic generation)
+        # Check if we have separate test data provided
+        if self.test_images is not None and self.test_firing_rates is not None:
+            # Use provided test data
+            self.test_dataset = NeuralDataset(
+                self.test_images, 
+                self.test_firing_rates, 
+                self.test_labels
+            )
+            print(f"Using separate test dataset: {len(self.test_dataset)} samples")
+            
+            # Split training data into train/val
+            total_size = len(self.full_dataset)
+            train_size = int(total_size * 0.9)  # Use 90% for train
+            val_size = total_size - train_size   # 10% for validation
+
+            self.train_dataset, self.val_dataset = random_split(
+                self.full_dataset,
+                [train_size, val_size],
+                generator=torch.Generator().manual_seed(42),
+            )
+            print(
+                f"Split training data: "
+                f"{train_size} train ({train_size/total_size*100:.1f}%), "
+                f"{val_size} val ({val_size/total_size*100:.1f}%)"
+            )
+            return
+        
+        # ERROR: No separate test data provided!
+        # This is now a hard requirement to prevent data leakage
         if hasattr(self, "dataset_metadata") and self.dataset_metadata:
             data_split = self.dataset_metadata.get("data_split")
             if data_split == "train":
-                # We're using train data, create validation split from it
-                total_size = len(self.full_dataset)
-                train_size = int(total_size * 0.8)
-                val_size = total_size - train_size
-
-                self.train_dataset, self.val_dataset = random_split(
-                    self.full_dataset,
-                    [train_size, val_size],
-                    generator=torch.Generator().manual_seed(42),
+                raise ValueError(
+                    "CRITICAL ERROR: No separate test data provided! "
+                    "Test data must be loaded separately from the test/ folder. "
+                    "Please update your training code to load test data using:\n"
+                    "  load_synthetic_split_data(config, split='test')\n"
+                    "and pass it to NeuralDataModule with:\n"
+                    "  test_images=test_images, test_firing_rates=test_firing_rates\n\n"
+                    "Using validation data as test data causes DATA LEAKAGE and "
+                    "invalidates all test results!"
                 )
-                # For test, we'll use the same as validation for now
-                self.test_dataset = self.val_dataset
-                print(
-                    f"Using pre-split train data: "
-                    f"{train_size} train, {val_size} val"
-                )
-                return
 
-        # Default behavior for non-pre-split data
+        # Default behavior for non-pre-split data (single dataset, no train/test folders)
+        # This splits a single dataset into train/val/test
         total_size = len(self.full_dataset)
         train_size = int(total_size * self.train_split)
         val_size = int(total_size * self.val_split)

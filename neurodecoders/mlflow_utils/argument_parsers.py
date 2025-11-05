@@ -142,8 +142,20 @@ def create_encoder_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--n-images",
         type=int,
-        default=10000,
-        help="Number of images in synthetic data",
+        default=None,
+        help="Number of images in synthetic data (deprecated: use --n-train-images and --n-test-images)",
+    )
+    parser.add_argument(
+        "--n-train-images",
+        type=int,
+        default=None,
+        help="Number of training images in synthetic data",
+    )
+    parser.add_argument(
+        "--n-test-images",
+        type=int,
+        default=None,
+        help="Number of test images in synthetic data",
     )
 
     # Data loading configuration

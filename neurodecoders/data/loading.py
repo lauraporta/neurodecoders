@@ -48,11 +48,39 @@ def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
 
 def load_synthetic_split_data(
     config: Dict[str, Any],
+    split: str = "train",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Load synthetic data from workspace/datasets/synthetic split structure.
-    Returns images, firing_rates, labels, and metadata.
+    
+    Args:
+        config: Configuration dictionary. Supports:
+            - n_neurons: Number of neurons to match
+            - n_images: Number of images (used if n_train_images/n_test_images not specified)
+            - n_train_images: Number of training images (overrides n_images for train split)
+            - n_test_images: Number of test images (overrides n_images for test split)
+            - dataset_type: Dataset type (e.g., 'cifar10')
+            - sta_type: STA type (e.g., 'gabor,100,100')
+        split: Which split to load - "train" or "test" (default: "train")
+    
+    Returns:
+        images, firing_rates, labels, and metadata.
+        
+    Example:
+        # Load train data with 8000 images and test data with 2000 images
+        config = {
+            "n_neurons": 5000,
+            "n_train_images": 8000,
+            "n_test_images": 2000,
+            "dataset_type": "cifar10",
+            "sta_type": "gabor,11,11"
+        }
+        train_data = load_synthetic_split_data(config, split="train")
+        test_data = load_synthetic_split_data(config, split="test")
     """
+    if split not in ["train", "test"]:
+        raise ValueError(f"split must be 'train' or 'test', got '{split}'")
+    
     synthetic_dir = get_path("workspace/datasets/synthetic")
     train_dir = os.path.join(synthetic_dir, "train")
     test_dir = os.path.join(synthetic_dir, "test")
@@ -63,24 +91,34 @@ def load_synthetic_split_data(
             "Please run the synthetic data generation first."
         )
 
-    return _load_from_split_structure(config, synthetic_dir)
+    return _load_from_split_structure(config, synthetic_dir, split)
 
 
 def _load_from_split_structure(
-    config: Dict[str, Any], synthetic_dir: str
+    config: Dict[str, Any], synthetic_dir: str, split: str = "train"
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
-    train_dir = os.path.join(synthetic_dir, "train")
-    avail = [f for f in os.listdir(train_dir) if f.endswith(".npz")]
+    """Load data from specified split directory (train or test)."""
+    split_dir = os.path.join(synthetic_dir, split)
+    avail = [f for f in os.listdir(split_dir) if f.endswith(".npz")]
     if not avail:
         raise FileNotFoundError(
-            f"No train data files found in {train_dir}. "
+            f"No {split} data files found in {split_dir}. "
             "Please run the synthetic data generation first."
         )
 
     n_neurons = (
         str(int(config["n_neurons"])) if "n_neurons" in config else None
     )
-    n_images = str(int(config["n_images"])) if "n_images" in config else None
+    
+    # Use split-specific n_images if provided, otherwise fall back to n_images
+    n_images_key = f"n_{split}_images"
+    if n_images_key in config and config[n_images_key] is not None:
+        n_images = str(int(config[n_images_key]))
+    elif "n_images" in config and config["n_images"] is not None:
+        n_images = str(int(config["n_images"]))
+    else:
+        n_images = None
+    
     sta_type = config.get("sta_type", "")
     dataset_type = config.get("dataset_type", "")
 
@@ -93,7 +131,7 @@ def _load_from_split_structure(
             and (not sta_type or meta.get("sta_type") == sta_type)
             and (not dataset_type or meta.get("dataset_type") == dataset_type)
         ):
-            fpath = os.path.join(train_dir, fname)
+            fpath = os.path.join(split_dir, fname)
             try:
                 mtime = os.path.getmtime(fpath)
             except OSError:
@@ -102,9 +140,10 @@ def _load_from_split_structure(
 
     if not candidates:
         raise ValueError(
-            "No train dataset matches the requested parameters. "
+            f"No {split} dataset matches the requested parameters. "
             f"Requested dataset_type={dataset_type or 'ANY'}, "
-            f"n_neurons={n_neurons}, n_images={n_images}, "
+            f"n_neurons={n_neurons}, "
+            f"n_images={n_images} (checked '{n_images_key}' and 'n_images'), "
             f"sta_type={sta_type}."
         )
 
@@ -114,9 +153,9 @@ def _load_from_split_structure(
     meta = parse_dataset_metadata(selected_file)
     meta["dataset_timestamp"] = datetime.datetime.now().isoformat()
     meta["dataset_filename"] = selected_file
-    meta["data_split"] = "train"
+    meta["data_split"] = split
 
-    file_path = os.path.join(train_dir, selected_file)
+    file_path = os.path.join(split_dir, selected_file)
     use_mmap = bool(config.get("use_memory_mapping"))
     data = np.load(file_path, mmap_mode="r" if use_mmap else None)
 
