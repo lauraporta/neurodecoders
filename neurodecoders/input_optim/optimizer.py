@@ -84,7 +84,7 @@ def create_comparison_plots(
 
 @dataclass
 class OptimConfig:
-    image_size: int = 32  # Match CIFAR-10 native resolution
+    image_size: int  # Should be inferred from dataset
     channels: int = 1
     steps: int = 1000  # Paper uses 1000 steps
     lr: float = 0.05
@@ -170,8 +170,20 @@ class ImageOptimizer:
         elif pred.ndim != 1:
             raise ValueError("Encoder output must be shape (1, N) or (N,)")
 
-        # Use predicted firing rates directly (no softplus for MSE loss)
+        # Apply softplus for Poisson losses to ensure positive predictions
+        # MSE loss can handle negative values directly
+        if self.cfg.loss in ["poisson_mean", "poisson_sum"]:
+            pred = self.softplus(pred)
+        
         loss = self.loss(pred, self.target)
+        
+        # Check for NaN loss (helps debugging)
+        if torch.isnan(loss):
+            raise ValueError(
+                f"Loss is NaN! pred range: [{pred.min():.4f}, {pred.max():.4f}], "
+                f"target range: [{self.target.min():.4f}, {self.target.max():.4f}], "
+                f"loss function: {self.cfg.loss}"
+            )
 
         loss.backward()
 
