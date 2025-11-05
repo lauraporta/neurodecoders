@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from dataclasses import dataclass
 from datetime import datetime
 from typing import List
 
@@ -33,6 +34,100 @@ from mlflow.tracking import MlflowClient
 
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI")
 client = MlflowClient(MLFLOW_TRACKING_URI) 
+
+
+@dataclass
+class DatasetInfo:
+    """Encapsulates all dataset information and data for a model.
+    
+    This class is created once per model and provides access to:
+    - Model parameters (from MLflow)
+    - Dataset metadata (filename, path, type)
+    - Dataset arrays (images and firing rates)
+    - Computed properties (image size)
+    """
+    model_id: str
+    params: dict
+    filename: str
+    path: str
+    dataset_type: str
+    images: np.ndarray
+    firing_rates: np.ndarray
+    
+    @property
+    def image_size(self) -> int:
+        """Get image size (assumes square images).
+        
+        Returns:
+            Image size (width/height)
+            
+        Raises:
+            ValueError: If images are not square or have unexpected dimensions
+        """
+        if self.images.ndim == 4:
+            # (N, C, H, W)
+            if self.images.shape[2] != self.images.shape[3]:
+                raise ValueError(
+                    f"Non-square images not supported. Got shape {self.images.shape}"
+                )
+            return self.images.shape[2]
+        elif self.images.ndim == 3:
+            # (N, H, W)
+            if self.images.shape[1] != self.images.shape[2]:
+                raise ValueError(
+                    f"Non-square images not supported. Got shape {self.images.shape}"
+                )
+            return self.images.shape[1]
+        else:
+            raise ValueError(
+                f"Unexpected image array shape: {self.images.shape}. "
+                "Expected 3D (N, H, W) or 4D (N, C, H, W)"
+            )
+    
+    def get_images(self, image_ids: List[int]) -> List[np.ndarray]:
+        """Get specific images by their indices.
+        
+        Args:
+            image_ids: List of image indices to retrieve
+            
+        Returns:
+            List of image arrays
+            
+        Raises:
+            IndexError: If any image_id is out of range
+        """
+        result = []
+        for img_id in image_ids:
+            if img_id < 0 or img_id >= self.images.shape[0]:
+                raise IndexError(
+                    f"image_id {img_id} out of range (0..{self.images.shape[0] - 1})"
+                )
+            result.append(self.images[img_id])
+        return result
+    
+    def get_firing_rates(self, sample_index: int) -> np.ndarray:
+        """Get firing rates for a specific sample.
+        
+        Args:
+            sample_index: Index of the sample
+            
+        Returns:
+            1D array of firing rates
+            
+        Raises:
+            IndexError: If sample_index is out of range
+            ValueError: If firing rates are not 1D
+        """
+        if sample_index < 0 or sample_index >= self.firing_rates.shape[0]:
+            raise IndexError(
+                f"sample_index {sample_index} out of range "
+                f"(0..{self.firing_rates.shape[0] - 1})"
+            )
+        vec = self.firing_rates[sample_index]
+        if vec.ndim != 1:
+            raise ValueError("Loaded firing rates sample is not a 1D vector")
+        return vec.astype(np.float32)
+
 
 def _log_model_source_info(model_id: str) -> None:
     """Log run/experiment info for the model from MLflow registry.
@@ -121,7 +216,6 @@ def _get_dataset_params_from_model(model_id: str) -> dict:
     params = None
     run_id = None
 
-    # 1) If looks like a run ID (32 hex chars, no m- prefix), try direct lookup
     if len(model_id) == 32 and not model_id.startswith("m-"):
         print(f"[INFO] Input looks like a run ID, trying direct lookup: {model_id}")
         try:
@@ -131,71 +225,6 @@ def _get_dataset_params_from_model(model_id: str) -> dict:
             print(f"[INFO] Successfully retrieved run {run_id}")
         except Exception as e:
             print(f"[DEBUG] Failed to get run directly: {e}")
-
-    # 2) If still not found and model_id looks like a model registry name (m-... or plain name),
-    # try searching model registry versions for a linked run_id
-    if params is None:
-        try:
-            print(f"[INFO] Trying model registry lookup for: {model_id}")
-            versions = client.search_model_versions(f"name='{model_id}'")
-            if versions:
-                preferred = None
-                for mv in versions:
-                    if getattr(mv, "current_stage", "") == "Production":
-                        preferred = mv
-                        break
-                if preferred is None:
-                    preferred = sorted(
-                        versions,
-                        key=lambda v: int(getattr(v, "version", 0)),
-                        reverse=True,
-                    )[0]
-                run_id = getattr(preferred, "run_id", None) or getattr(preferred, "run_id", None)
-                if run_id:
-                    try:
-                        run = client.get_run(run_id)
-                        params = run.data.params
-                        print(f"[INFO] Retrieved params from model registry version run {run_id}")
-                    except Exception as e:
-                        print(f"[DEBUG] Could not get run {run_id} from registry entry: {e}")
-        except Exception as e:
-            print(f"[DEBUG] Model registry lookup failed: {e}")
-
-    # 3) Final fallback: search recent runs and try to match by model_id in params or tags
-    if params is None:
-        try:
-            print("[INFO] Searching recent MLflow runs for candidate runs to extract dataset params")
-            df = mlflow.search_runs(order_by=["attributes.start_time DESC"], max_results=500)
-            if df is not None and not df.empty:
-                for _, row in df.iterrows():
-                    # If run_id matches exactly, use it
-                    candidate_run_id = row.get("run_id") or row.get("info.run_id")
-                    if candidate_run_id and candidate_run_id == model_id:
-                        try:
-                            run = client.get_run(candidate_run_id)
-                            params = run.data.params
-                            run_id = candidate_run_id
-                            print(f"[INFO] Matched run_id exactly: {run_id}")
-                            break
-                        except Exception:
-                            continue
-                    # Otherwise check if the run logged a 'model_id' param equal to provided model_id
-                    try:
-                        rid = row.get("params.model_id") or row.get("data.params.model_id")
-                    except Exception:
-                        rid = None
-                    if rid and str(rid) == str(model_id):
-                        candidate_run_id = row.get("run_id") or row.get("info.run_id")
-                        try:
-                            run = client.get_run(candidate_run_id)
-                            params = run.data.params
-                            run_id = candidate_run_id
-                            print(f"[INFO] Found run with matching 'model_id' param: {run_id}")
-                            break
-                        except Exception:
-                            continue
-        except Exception as e:
-            print(f"[DEBUG] Recent runs search failed: {e}")
 
     if params is None:
         raise RuntimeError(
@@ -216,29 +245,92 @@ def _get_dataset_params_from_model(model_id: str) -> dict:
     return params
 
 
-def _load_original_images_from_dataset(
-    model_id: str, image_ids: List[int]
-) -> List[np.ndarray]:
-    """Load original images from the model's training dataset.
+def _detect_dataset_type(filename: str) -> str:
+    """Detect dataset type from filename.
+    
+    Args:
+        filename: Dataset filename
+        
+    Returns:
+        Dataset type string (cifar10, cifar100, mnist, or unknown)
+    """
+    filename_lower = filename.lower()
+    
+    # Check for cifar10 first (more specific), then cifar, then mnist
+    if "cifar10" in filename_lower or "cifar-10" in filename_lower:
+        return "cifar10"
+    elif "cifar100" in filename_lower or "cifar-100" in filename_lower:
+        return "cifar100"
+    elif "cifar" in filename_lower:
+        return "cifar"
+    elif "mnist" in filename_lower:
+        return "mnist"
+    else:
+        return "unknown"
 
+
+def _validate_dataset_type(detected_type: str, model_type: str, filename: str) -> None:
+    """Validate that detected dataset type matches the model's training dataset type.
+    
+    Args:
+        detected_type: Dataset type detected from filename
+        model_type: Dataset type from model parameters
+        filename: Dataset filename (for error messages)
+        
+    Raises:
+        ValueError: If types don't match
+    """
+    if model_type == "unknown" or detected_type == "unknown":
+        return
+    
+    # Normalize for comparison (cifar10 == cifar-10 == CIFAR10)
+    model_type_normalized = model_type.lower().replace("-", "")
+    detected_type_normalized = detected_type.lower().replace("-", "")
+    
+    if model_type_normalized != detected_type_normalized:
+        raise ValueError(
+            f"Dataset type mismatch! Model was trained on '{model_type}' "
+            f"but trying to load '{detected_type}' dataset. "
+            f"Dataset file: {filename}"
+        )
+    print(f"[INFO] ✓ Dataset type validated: {detected_type} matches model training dataset")
+
+
+def _load_dataset_info(model_id: str) -> DatasetInfo:
+    """Load and validate all dataset information for a model.
+    
+    This function consolidates all the repetitive dataset loading logic:
+    - Gets model parameters from MLflow
+    - Validates and loads the dataset file
+    - Detects and validates dataset type
+    - Returns a DatasetInfo object with all data cached
+    
     Args:
         model_id: MLflow model ID or run ID
-        image_ids: List of image indices to load
-
+        
     Returns:
-        List of original images as numpy arrays
+        DatasetInfo object containing all dataset information and data
+        
+    Raises:
+        RuntimeError: If dataset filename not found in params
+        FileNotFoundError: If dataset file doesn't exist
+        ValueError: If dataset type doesn't match model
     """
-    # Get params using the helper function
+    print(f"[INFO] Loading dataset information for model: {model_id}")
+    
+    # 1. Get model parameters
     params = _get_dataset_params_from_model(model_id)
-
+    
+    # 2. Extract and validate dataset filename
     ds_filename = params.get("dataset_dataset_filename")
     if not ds_filename:
         raise RuntimeError(
             f"dataset_filename not found in run params for model {model_id}. "
             f"Available params: {list(params.keys())}. "
-            "Cannot load original images without knowing which dataset was used."
+            "Cannot load dataset without knowing which dataset was used."
         )
-
+    
+    # 3. Construct and validate dataset path
     ds_path = os.path.join(
         get_path("workspace/datasets/synthetic"), "train", ds_filename
     )
@@ -247,132 +339,31 @@ def _load_original_images_from_dataset(
             f"Dataset file not found: {ds_path}. "
             "Sync datasets or provide a mirrored path."
         )
-
-    # Load dataset
-    images, _ = load_npz_dataset(ds_path)
     
-    # Log dataset information for verification
-    print(f"[INFO] Loaded dataset: {ds_filename}")
+    # 4. Load dataset (both images and firing rates)
+    print(f"[INFO] Loading dataset: {ds_filename}")
+    images, firing_rates = load_npz_dataset(ds_path)
     print(f"[INFO] Dataset contains {images.shape[0]} images")
     print(f"[INFO] Image shape: {images.shape[1:]}")
+    print(f"[INFO] Firing rates shape: {firing_rates.shape}")
     
-    # Extract dataset type from filename for validation
-    # Check for cifar10 first (more specific), then cifar, then mnist
-    if "cifar10" in ds_filename.lower() or "cifar-10" in ds_filename.lower():
-        dataset_type = "cifar10"
-    elif "cifar100" in ds_filename.lower() or "cifar-100" in ds_filename.lower():
-        dataset_type = "cifar100"
-    elif "cifar" in ds_filename.lower():
-        dataset_type = "cifar"
-    elif "mnist" in ds_filename.lower():
-        dataset_type = "mnist"
-    else:
-        dataset_type = "unknown"
+    # 5. Detect and validate dataset type
+    dataset_type = _detect_dataset_type(ds_filename)
     print(f"[INFO] Detected dataset type: {dataset_type}")
     
-    # Validate dataset type matches model if available in params
     model_dataset_type = params.get("dataset_dataset_type", "unknown")
-    if model_dataset_type != "unknown" and dataset_type != "unknown":
-        # Normalize for comparison (cifar10 == cifar-10 == CIFAR10)
-        model_type_normalized = model_dataset_type.lower().replace("-", "")
-        dataset_type_normalized = dataset_type.lower().replace("-", "")
-        
-        if model_type_normalized != dataset_type_normalized:
-            raise ValueError(
-                f"Dataset type mismatch! Model was trained on '{model_dataset_type}' "
-                f"but trying to load '{dataset_type}' dataset. "
-                f"Dataset file: {ds_filename}"
-            )
-        print(f"[INFO] ✓ Dataset type validated: {dataset_type} matches model training dataset")
-
-    # Extract requested images
-    original_images = []
-    for img_id in image_ids:
-        if img_id < 0 or img_id >= images.shape[0]:
-            raise IndexError(
-                f"image_id {img_id} out of range (0..{images.shape[0] - 1})"
-            )
-        original_images.append(images[img_id])
-
-    return original_images
-
-
-def _infer_target_rates_from_model(
-    model_id: str, sample_index: int
-) -> np.ndarray:
-    """Infer a target firing-rate vector from the model's training dataset.
-
-    Uses MLflow's model registry to locate the model's originating run,
-    reads dataset parameters logged during training (including
-    dataset_filename), loads the synthetic train .npz, and returns the
-    firing-rate vector at the requested sample index.
-    """
-    # Get params using the helper function
-    params = _get_dataset_params_from_model(model_id)
-
-    # Dataset parameters were logged with 'dataset_*' keys
-    ds_filename = params.get("dataset_dataset_filename")
-    if not ds_filename:
-        raise RuntimeError(
-            f"dataset_filename not found in run params for model {model_id}. "
-            f"Available params: {list(params.keys())}. "
-            "Cannot infer dataset without knowing which dataset was used."
-        )
-
-    ds_path = os.path.join(
-        get_path("workspace/datasets/synthetic"), "train", ds_filename
+    _validate_dataset_type(dataset_type, model_dataset_type, ds_filename)
+    
+    # 6. Create and return DatasetInfo object
+    return DatasetInfo(
+        model_id=model_id,
+        params=params,
+        filename=ds_filename,
+        path=ds_path,
+        dataset_type=dataset_type,
+        images=images,
+        firing_rates=firing_rates,
     )
-    if not os.path.exists(ds_path):
-        raise FileNotFoundError(
-            f"Dataset file not found on this machine: {ds_path}. "
-            "Sync datasets or provide a mirrored path."
-        )
-
-    _, firing = load_npz_dataset(ds_path)
-    
-    # Log dataset information for verification
-    print(f"[INFO] Loaded dataset for target rates: {ds_filename}")
-    print(f"[INFO] Dataset contains {firing.shape[0]} samples with {firing.shape[1]} neurons")
-    
-    # Extract dataset type from filename for validation
-    # Check for cifar10 first (more specific), then cifar, then mnist
-    if "cifar10" in ds_filename.lower() or "cifar-10" in ds_filename.lower():
-        dataset_type = "cifar10"
-    elif "cifar100" in ds_filename.lower() or "cifar-100" in ds_filename.lower():
-        dataset_type = "cifar100"
-    elif "cifar" in ds_filename.lower():
-        dataset_type = "cifar"
-    elif "mnist" in ds_filename.lower():
-        dataset_type = "mnist"
-    else:
-        dataset_type = "unknown"
-    print(f"[INFO] Detected dataset type: {dataset_type}")
-    
-    # Validate dataset type matches model if available in params
-    model_dataset_type = params.get("dataset_dataset_type", "unknown")
-    if model_dataset_type != "unknown" and dataset_type != "unknown":
-        # Normalize for comparison (cifar10 == cifar-10 == CIFAR10)
-        model_type_normalized = model_dataset_type.lower().replace("-", "")
-        dataset_type_normalized = dataset_type.lower().replace("-", "")
-        
-        if model_type_normalized != dataset_type_normalized:
-            raise ValueError(
-                f"Dataset type mismatch! Model was trained on '{model_dataset_type}' "
-                f"but trying to load '{dataset_type}' dataset. "
-                f"Dataset file: {ds_filename}"
-            )
-        print(f"[INFO] ✓ Dataset type validated: {dataset_type} matches model training dataset")
-    
-    if sample_index < 0 or sample_index >= firing.shape[0]:
-
-        raise IndexError(
-            f"sample_index {sample_index} out of range "
-            f"(0..{firing.shape[0] - 1})"
-        )
-    vec = firing[sample_index]
-    if vec.ndim != 1:
-        raise ValueError("Loaded firing rates sample is not a 1D vector")
-    return vec.astype(np.float32)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -407,8 +398,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--image-size",
         type=int,
-        default=64,
-        help="Square image size",
+        default=None,
+        help="Square image size (DEPRECATED: automatically inferred from dataset)",
     )
     p.add_argument(
         "--channels",
@@ -472,13 +463,29 @@ def main(args: argparse.Namespace) -> None:
         # Log info about the source model's MLflow run/experiment
         _log_model_source_info(args.model_id)
 
+        # Load dataset info once (avoids loading dataset multiple times)
+        print("[INFO] Loading dataset information...")
+        dataset_info = _load_dataset_info(args.model_id)
+        
+        # Get image size from loaded dataset
+        image_size = dataset_info.image_size
+        
+        # Warn if user provided image_size that doesn't match
+        if args.image_size is not None and args.image_size != image_size:
+            print(
+                f"[WARNING] User provided --image-size {args.image_size}, "
+                f"but dataset has images of size {image_size}. "
+                f"Using dataset size {image_size} to avoid shape mismatch."
+            )
+
         # Log params
         mlflow.log_params(
             {
                 "model_id": args.model_id,
                 "steps": args.steps,
                 "lr": args.lr,
-                "image_size": args.image_size,
+                "image_size": image_size,
+                "image_size_source": "inferred_from_dataset",
                 "channels": args.channels,
                 "log_every": args.log_every,
                 "seed": args.seed,
@@ -511,9 +518,9 @@ def main(args: argparse.Namespace) -> None:
         # Load encoder
         encoder = load_encoder_from_mlflow(args.model_id)
 
-        # Configure optimizer
+        # Configure optimizer with inferred image size
         cfg = OptimConfig(
-            image_size=args.image_size,
+            image_size=image_size,
             channels=args.channels,
             steps=args.steps,
             lr=args.lr,
@@ -531,19 +538,15 @@ def main(args: argparse.Namespace) -> None:
         )
         os.makedirs(out_dir, exist_ok=True)
 
-        # Single image reconstruction with comparison plot
-        target: np.ndarray = _infer_target_rates_from_model(
-            model_id=args.model_id, sample_index=image_ids[0]
-        )
+        # Get target firing rates from dataset info
+        target: np.ndarray = dataset_info.get_firing_rates(image_ids[0])
         mlflow.log_param("target_source", "mlflow_dataset")
         mlflow.log_param("n_neurons", int(target.shape[0]))
 
         # Try to load original image for comparison
         try:
             print(f"[DEBUG] Loading original image for ID: {image_ids[0]}")
-            original_images = _load_original_images_from_dataset(
-                model_id=args.model_id, image_ids=[image_ids[0]]
-            )
+            original_images = dataset_info.get_images([image_ids[0]])
             print("[DEBUG] Successfully loaded original image")
             mlflow.log_param("original_image_loaded", True)
         except Exception as e:
