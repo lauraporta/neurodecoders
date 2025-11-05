@@ -265,7 +265,6 @@ class EncoderLightningModule(pl.LightningModule):
                 mode="min",
                 factor=0.1,
                 patience=5,
-                verbose=True,
             )
         else:
             raise ValueError(f"Unsupported scheduler: {scheduler_type}")
@@ -631,7 +630,19 @@ def _clone_model(model: nn.Module) -> nn.Module:
     model_class = model.__class__
 
     # Extract parameters from model architecture
-    if (
+    if model_class.__name__ == "Simple3LayerEncoder":
+        # Extract parameters for Simple3LayerEncoder
+        out_neurons = model.out_neurons
+        image_height = model.image_height
+        image_width = model.image_width
+        learn_positions = model.learn_positions
+        cloned_model = model_class(
+            out_neurons=out_neurons,
+            image_height=image_height,
+            image_width=image_width,
+            learn_positions=learn_positions,
+        )
+    elif (
         model_class.__name__ == "SimpleEncoder"
         or model_class.__name__ == "SimpleEncoderWithSkipConnection"
     ):
