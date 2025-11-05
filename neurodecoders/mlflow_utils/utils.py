@@ -153,7 +153,13 @@ def log_dataset_input_and_params(data_module) -> None:
     except Exception:
         pass
 
-    metadata_name = f"neural_data_{dataset_id}"
+    # Append timestamp to dataset name for better tracking
+    timestamp = data_module.timestamp if hasattr(data_module, "timestamp") else ""
+    if timestamp:
+        metadata_name = f"neural_data_{dataset_id}_{timestamp}"
+    else:
+        metadata_name = f"neural_data_{dataset_id}"
+    
     summary_dataset = mlflow.data.from_pandas(
         metadata_summary, source=source_info, name=metadata_name
     )
