@@ -5,9 +5,9 @@
 #SBATCH --mem=16G
 #SBATCH --gres=gpu:1
 #SBATCH -n 1
-#SBATCH -t 00-01:00 # time (D-HH:MM)
+#SBATCH -t 00-00:20 # time (D-HH:MM)
 #SBATCH --exclude=gpu-sr670-21  # Exclude nodes with CUDA driver issues
-#SBATCH --array=0-26
+#SBATCH --array=0-6
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.err.txt
 
@@ -40,13 +40,16 @@ fi
 # ==========================================
 
 # Input optimization parameters
-MODEL_IDS=("72df8c56175c4d7a9381b0e3a5478e65" "d38f93de27854e21a61ae52c9ee25bbe" "8bfd15aefa4944de81561203cb25bf01") 
-STEPS=2000  
+MODEL_IDS=("9c5b51243d6248bc8967f8c5d224572d") #"2f040db2f5bd42718b3fe123c554cd45" "afeba15f6eb04a8a9c754e9c913f1a5d") 
+STEPS=1000  
 IMAGE_SIZE=32  # Match encoder training size (CIFAR-10 resized to 32x32)
 
 # Define hyperparameter arrays
-LEARNING_RATES=(0.001)  # Paper uses LR=1000 with gradient normalization
-IMAGE_IDS=("0" "50" "100" "150" "250" "350" "400")  # Space-separated image IDs to reconstruct
+LEARNING_RATES=(0.001) 
+IMAGE_IDS=("250" "0" "50" "100" "350" "400")  # Space-separated image IDs to reconstruct
+SCHEDULERS=("none")  # Learning rate scheduler options
+LOSS_FUNCTIONS=("poisson_mean")  # Loss function options
+BLUR_SIGMAS=(0)  # Gaussian blur sigma values for gradient smoothing
 
 # ------------------------------------------
 # Compute lengths and total combinations
@@ -54,14 +57,20 @@ IMAGE_IDS=("0" "50" "100" "150" "250" "350" "400")  # Space-separated image IDs 
 NUM_MODEL_IDS=${#MODEL_IDS[@]}
 NUM_LR=${#LEARNING_RATES[@]}
 NUM_IMG_IDS=${#IMAGE_IDS[@]}
+NUM_SCHEDULERS=${#SCHEDULERS[@]}
+NUM_LOSS_FUNCTIONS=${#LOSS_FUNCTIONS[@]}
+NUM_BLUR_SIGMAS=${#BLUR_SIGMAS[@]}
 
 # Define axis order, fastest varying first
-# Order: LEARNING_RATES -> IMAGE_IDS -> MODEL_IDS
+# Order: LEARNING_RATES -> LOSS_FUNCTIONS -> BLUR_SIGMAS -> IMAGE_IDS -> SCHEDULERS -> MODEL_IDS
 STRIDE_LR=1
-STRIDE_IMG_IDS=$((STRIDE_LR * NUM_LR))
-STRIDE_MODEL_IDS=$((STRIDE_IMG_IDS * NUM_IMG_IDS))
+STRIDE_LOSS_FUNCTIONS=$((STRIDE_LR * NUM_LR))
+STRIDE_BLUR_SIGMAS=$((STRIDE_LOSS_FUNCTIONS * NUM_LOSS_FUNCTIONS))
+STRIDE_IMG_IDS=$((STRIDE_BLUR_SIGMAS * NUM_BLUR_SIGMAS))
+STRIDE_SCHEDULERS=$((STRIDE_IMG_IDS * NUM_IMG_IDS))
+STRIDE_MODEL_IDS=$((STRIDE_SCHEDULERS * NUM_SCHEDULERS))
 
-TOTAL_COMBINATIONS=$((NUM_LR * NUM_IMG_IDS * NUM_MODEL_IDS))
+TOTAL_COMBINATIONS=$((NUM_LR * NUM_LOSS_FUNCTIONS * NUM_BLUR_SIGMAS * NUM_IMG_IDS * NUM_SCHEDULERS * NUM_MODEL_IDS))
 
 # Guard: if task id exceeds combinations, exit gracefully (supports oversize arrays)
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
@@ -72,19 +81,25 @@ fi
 
 # Calculate indices from array task ID using mixed-radix decomposition
 LR_IDX=$(( (TASK_ID / STRIDE_LR) % NUM_LR ))
+LOSS_FUNCTION_IDX=$(( (TASK_ID / STRIDE_LOSS_FUNCTIONS) % NUM_LOSS_FUNCTIONS ))
+BLUR_SIGMA_IDX=$(( (TASK_ID / STRIDE_BLUR_SIGMAS) % NUM_BLUR_SIGMAS ))
 IMG_IDS_IDX=$(( (TASK_ID / STRIDE_IMG_IDS) % NUM_IMG_IDS ))
+SCHEDULER_IDX=$(( (TASK_ID / STRIDE_SCHEDULERS) % NUM_SCHEDULERS ))
 MODEL_ID_IDX=$(( (TASK_ID / STRIDE_MODEL_IDS) % NUM_MODEL_IDS ))
 
 # Extract values
 LEARNING_RATE=${LEARNING_RATES[$LR_IDX]}
+LOSS_FUNCTION=${LOSS_FUNCTIONS[$LOSS_FUNCTION_IDX]}
+BLUR_SIGMA=${BLUR_SIGMAS[$BLUR_SIGMA_IDX]}
 IMG_ID_SET=${IMAGE_IDS[$IMG_IDS_IDX]}
+SCHEDULER=${SCHEDULERS[$SCHEDULER_IDX]}
 MODEL_ID=${MODEL_IDS[$MODEL_ID_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="${MODEL_ID}_imgids_${IMG_ID_SET}"
-EXPERIMENT_NAME="input_optim"
+RUN_NAME="${MODEL_ID}_imgids_${IMG_ID_SET}_sched_${SCHEDULER}_lr_${LEARNING_RATE}_loss_${LOSS_FUNCTION}_blur_${BLUR_SIGMA}_images_sweep"
+EXPERIMENT_NAME="input_optim_sweep_experiment"
 
-echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model_id=$MODEL_ID, lr=$LEARNING_RATE, image_size=$IMAGE_SIZE, steps=$STEPS, image_ids=$IMG_ID_SET"
+echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model_id=$MODEL_ID, lr=$LEARNING_RATE, loss=$LOSS_FUNCTION, blur_sigma=$BLUR_SIGMA, scheduler=$SCHEDULER, image_size=$IMAGE_SIZE, steps=$STEPS, image_ids=$IMG_ID_SET"
 
 # Pass individual parameters to the Python script
 /nfs/nhome/live/lporta/.conda/envs/decoders/bin/python neurodecoders/input_optim/mlflow_run.py \
@@ -93,6 +108,9 @@ echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model_id=$MODEL_ID, lr=$LEARNI
     --run-name "$RUN_NAME" \
     --steps "$STEPS" \
     --lr "$LEARNING_RATE" \
+    --loss-function "$LOSS_FUNCTION" \
+    --blur-sigma "$BLUR_SIGMA" \
+    --scheduler "$SCHEDULER" \
     --image-size "$IMAGE_SIZE" \
     --channels 1 \
     --log-every 50 \

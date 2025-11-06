@@ -18,11 +18,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision.utils import save_image
-
-# Local imports
-from neurodecoders.extract_mei.mei import load_encoder_model
-from neurodecoders.paths import get_path
 
 
 def _to_device() -> torch.device:
@@ -96,6 +91,8 @@ class OptimConfig:
     seed: Optional[int] = 42
     image_ids: Optional[list] = None
     loss: str = "mse"  # Paper uses MSE loss
+    scheduler: str = "cosine"  # Options: "none", "cosine", "step", "exponential", "plateau"
+    blur_sigma: float = 2.5  # Gaussian blur sigma for gradient smoothing
 
 
 class ImageOptimizer:
@@ -122,10 +119,10 @@ class ImageOptimizer:
             self.device
         )
 
-        target_variance = torch.var(self.target).item()
-        self.idx_of_top_30_by_variance = torch.topk(
-            torch.abs(self.target - torch.mean(self.target)), k=30
-        ).indices.tolist()
+        # target_variance = torch.var(self.target).item()
+        # self.idx_of_top_30_by_variance = torch.topk(
+        #     torch.abs(self.target - torch.mean(self.target)), k=30
+        # ).indices.tolist()
 
         if self.target.ndim != 1:
             raise ValueError("target_rates must be a 1D array of shape (N,)")
@@ -159,7 +156,8 @@ class ImageOptimizer:
         self.softplus = nn.Softplus()
 
     def step(
-        self, opt: optim.Optimizer
+        self, opt: optim.Optimizer,
+        sigma: float = 2.5
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         opt.zero_grad(set_to_none=True)
 
@@ -189,16 +187,17 @@ class ImageOptimizer:
 
         # Blur the GRADIENT, not the image (as per paper)
         with torch.no_grad():
-            if self.image.grad is not None:
-                # Apply Gaussian blur to gradient (σ=2.5px as per paper)
+            if self.image.grad is not None and self.cfg.blur_sigma > 0:
+                # Apply Gaussian blur to gradient with configurable sigma
                 import torch.nn.functional as F
                 
                 kernel_size = 5
-                sigma = 2.5
+                # Use blur_sigma from config instead of hardcoded value
+                blur_sigma = self.cfg.blur_sigma
                 x = torch.arange(-kernel_size // 2 + 1., kernel_size // 2 + 1.)
                 x_grid = x.repeat(kernel_size).view(kernel_size, kernel_size)
                 y_grid = x_grid.t()
-                gaussian_kernel = torch.exp(-(x_grid**2 + y_grid**2) / (2 * sigma**2))
+                gaussian_kernel = torch.exp(-(x_grid**2 + y_grid**2) / (2 * blur_sigma**2))
                 gaussian_kernel /= gaussian_kernel.sum()
                 
                 # Reshape to [out_channels, in_channels, kH, kW]
@@ -223,20 +222,57 @@ class ImageOptimizer:
 
     def optimize(self) -> Tuple[np.ndarray, Dict[str, float]]:
         opt = optim.Adam([self.image], lr=self.cfg.lr)
-        # Add CosineAnnealingLR scheduler
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            opt, T_max=self.cfg.steps, eta_min=1e-6
-        )
+        
+        # Configure learning rate scheduler based on config
+        scheduler = None
+        if self.cfg.scheduler == "cosine":
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                opt, T_max=self.cfg.steps, eta_min=1e-6
+            )
+        elif self.cfg.scheduler == "step":
+            # Step decay: reduce LR by 0.1 every 1/3 of total steps
+            scheduler = optim.lr_scheduler.StepLR(
+                opt, step_size=self.cfg.steps // 3, gamma=0.1
+            )
+        elif self.cfg.scheduler == "exponential":
+            # Exponential decay: gamma^step
+            # Calculate gamma to reach ~1% of initial LR at final step
+            gamma = (0.01) ** (1.0 / self.cfg.steps)
+            scheduler = optim.lr_scheduler.ExponentialLR(opt, gamma=gamma)
+        elif self.cfg.scheduler == "plateau":
+            # Reduce LR when loss plateaus
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+                opt, mode='min', factor=0.5, patience=50
+            )
+        elif self.cfg.scheduler == "none":
+            scheduler = None
+        else:
+            raise ValueError(
+                f"Unknown scheduler: {self.cfg.scheduler}. "
+                f"Choose from: none, cosine, step, exponential, plateau"
+            )
+        
         last_metrics: Dict[str, float] = {}
 
         for step in range(1, self.cfg.steps + 1):
+            # img, metrics = self.step(opt, sigma=2.5 if step < self.cfg.steps / 2 else 1.5)
             img, metrics = self.step(opt)
             last_metrics = metrics
-            # Step the scheduler with current loss
-            scheduler.step()
+            
+            # Step the scheduler (if enabled)
+            if scheduler is not None:
+                if self.cfg.scheduler == "plateau":
+                    # ReduceLROnPlateau needs the loss value
+                    scheduler.step(metrics['loss'])
+                else:
+                    scheduler.step()
+            
             if step % self.cfg.log_every == 0:
                 try:
-                    mlflow.log_metrics(metrics, step=step)
+                    # Log current learning rate
+                    current_lr = opt.param_groups[0]['lr']
+                    metrics_with_lr = {**metrics, 'learning_rate': current_lr}
+                    mlflow.log_metrics(metrics_with_lr, step=step)
                 except Exception:
                     pass
 

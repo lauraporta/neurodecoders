@@ -17,6 +17,9 @@ from typing import List
 
 import mlflow
 import numpy as np
+import torch
+import torch.nn as nn
+from skimage.metrics import structural_similarity as ssim
 
 from neurodecoders.data.loading import load_npz_dataset
 from neurodecoders.input_optim.optimizer import (
@@ -296,6 +299,72 @@ def _validate_dataset_type(detected_type: str, model_type: str, filename: str) -
     print(f"[INFO] ✓ Dataset type validated: {detected_type} matches model training dataset")
 
 
+def _compute_original_image_loss(
+    encoder: nn.Module,
+    original_image: np.ndarray,
+    target_rates: np.ndarray,
+    loss_function: str,
+    device: torch.device,
+) -> float:
+    """Compute the loss when passing the original image through the encoder.
+    
+    This represents the "best case" loss if reconstruction were perfect,
+    and the delta between this and the final reconstruction loss shows
+    how much room there is for improvement.
+    
+    Args:
+        encoder: The encoder model in eval mode
+        original_image: Original image as numpy array
+        target_rates: Target firing rates as numpy array
+        loss_function: Loss function type (mse, poisson_mean, poisson_sum)
+        device: torch device to use
+        
+    Returns:
+        Loss value as float
+    """
+    encoder.eval()
+    
+    # Convert original image to tensor and add batch dimension if needed
+    img_tensor = torch.tensor(original_image.astype(np.float32)).to(device)
+    if img_tensor.ndim == 2:  # (H, W)
+        img_tensor = img_tensor.unsqueeze(0).unsqueeze(0)  # (1, 1, H, W)
+    elif img_tensor.ndim == 3:  # (C, H, W) or (H, W, C)
+        if img_tensor.shape[0] in [1, 3]:  # Assume (C, H, W)
+            img_tensor = img_tensor.unsqueeze(0)  # (1, C, H, W)
+        else:  # Assume (H, W, C)
+            img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0)  # (1, C, H, W)
+    
+    target_tensor = torch.tensor(target_rates.astype(np.float32)).to(device)
+    
+    # Setup loss function
+    if loss_function == "mse":
+        loss_fn = nn.MSELoss(reduction="mean")
+    elif loss_function == "poisson_mean":
+        loss_fn = nn.PoissonNLLLoss(log_input=False, reduction="mean")
+    elif loss_function == "poisson_sum":
+        loss_fn = nn.PoissonNLLLoss(log_input=False, reduction="sum")
+    else:
+        raise ValueError(f"Unknown loss function: {loss_function}")
+    
+    softplus = nn.Softplus()
+    
+    with torch.no_grad():
+        pred = encoder(img_tensor)
+        if pred.ndim == 2 and pred.shape[0] == 1:
+            pred = pred[0]
+        elif pred.ndim != 1:
+            raise ValueError("Encoder output must be shape (1, N) or (N,)")
+        
+        # Apply softplus for Poisson losses
+        if loss_function in ["poisson_mean", "poisson_sum"]:
+            pred = softplus(pred)
+        
+        loss = loss_fn(pred, target_tensor)
+    
+    return float(loss.cpu().item())
+
+
+
 def _load_dataset_info(model_id: str) -> DatasetInfo:
     """Load and validate all dataset information for a model.
     
@@ -425,6 +494,18 @@ def build_parser() -> argparse.ArgumentParser:
         default="poisson_mean",
         help="Loss function (default: poisson_mean)",
     )
+    p.add_argument(
+        "--scheduler",
+        choices=["none", "cosine", "step", "exponential", "plateau"],
+        default="cosine",
+        help="Learning rate scheduler (default: cosine)",
+    )
+    p.add_argument(
+        "--blur-sigma",
+        type=float,
+        default=2.5,
+        help="Gaussian blur sigma for gradient smoothing (default: 2.5, use 0 to disable)",
+    )
     return p
 
 
@@ -489,6 +570,9 @@ def main(args: argparse.Namespace) -> None:
                 "channels": args.channels,
                 "log_every": args.log_every,
                 "seed": args.seed,
+                "scheduler": args.scheduler,
+                "blur_sigma": args.blur_sigma,
+                "loss_function": args.loss_function,
             }
         )
 
@@ -528,6 +612,8 @@ def main(args: argparse.Namespace) -> None:
             seed=args.seed,
             image_ids=image_ids,
             loss=args.loss_function,
+            scheduler=args.scheduler,
+            blur_sigma=args.blur_sigma,
         )
 
         # Set up output directory
@@ -558,6 +644,48 @@ def main(args: argparse.Namespace) -> None:
             encoder=encoder, target_rates=target, config=cfg
         )
         img_np, metrics = optim_runner.optimize()
+
+        # Compute additional metrics if original image is available
+        if original_images:
+            original_image = original_images[0]
+            
+            # 1. Compute SSIM between original and reconstructed image
+            # Ensure images are in correct format for SSIM (2D grayscale)
+            orig_2d = original_image.squeeze()
+            recon_2d = img_np.squeeze()
+            
+            # SSIM expects data_range to be the range of the input images
+            data_range = max(orig_2d.max() - orig_2d.min(), 
+                           recon_2d.max() - recon_2d.min())
+            
+            ssim_value = ssim(orig_2d, recon_2d, data_range=data_range)
+            metrics["ssim"] = float(ssim_value)
+            print(f"[INFO] SSIM between original and reconstructed: {ssim_value:.4f}")
+            
+            # 2. Compute original image loss (baseline for comparison)
+            device = torch.device("cuda" if torch.cuda.is_available() 
+                                else "mps" if torch.backends.mps.is_available() 
+                                else "cpu")
+            
+            original_loss = _compute_original_image_loss(
+                encoder=encoder,
+                original_image=original_image,
+                target_rates=target,
+                loss_function=args.loss_function,
+                device=device,
+            )
+            metrics["original_image_loss"] = float(original_loss)
+            
+            # 3. Compute delta between reconstruction loss and original loss
+            # Positive delta means reconstruction is worse (expected)
+            # The larger the delta, the more room for improvement
+            final_loss = metrics.get("loss", 0.0)
+            loss_delta = final_loss - original_loss
+            metrics["loss_delta"] = float(loss_delta)
+            
+            print(f"[INFO] Original image loss: {original_loss:.6f}")
+            print(f"[INFO] Final reconstruction loss: {final_loss:.6f}")
+            print(f"[INFO] Loss delta (room for improvement): {loss_delta:.6f}")
 
         # Create comparison plot using the new format
         from neurodecoders.input_optim.optimizer import (
