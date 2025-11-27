@@ -277,7 +277,19 @@ def create_decoder_parser() -> argparse.ArgumentParser:
         "--n-images",
         type=int,
         default=10000,
-        help="Number of images in synthetic data",
+        help="Number of images in synthetic data (deprecated: use --n-train-images and --n-test-images)",
+    )
+    parser.add_argument(
+        "--n-train-images",
+        type=int,
+        default=None,
+        help="Number of training images in synthetic data",
+    )
+    parser.add_argument(
+        "--n-test-images",
+        type=int,
+        default=None,
+        help="Number of test images in synthetic data",
     )
 
     # Model configuration
@@ -290,8 +302,8 @@ def create_decoder_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--image-size",
         type=int,
-        default=64,
-        help="Output image size",
+        default=32,
+        help="Output image size (default: 32 for CIFAR-10 native resolution)",
     )
 
     # Training configuration
@@ -454,11 +466,17 @@ def parse_decoder_args(args: argparse.Namespace) -> Dict[str, Any]:
     enable_early_stopping = args.early_stopping and not args.no_early_stopping
     enable_checkpointing = args.checkpointing and not args.no_checkpointing
 
+    # Handle train/test split defaults (match encoder behavior)
+    n_train_images = args.n_train_images if args.n_train_images is not None else args.n_images
+    n_test_images = args.n_test_images if args.n_test_images is not None else args.n_images
+    
     config = {
         "dataset_type": args.dataset_type,
         "sta_type": args.sta_type,
         "n_neurons": args.n_neurons,
         "n_images": args.n_images,
+        "n_train_images": n_train_images,
+        "n_test_images": n_test_images,
         "model_type": args.model_type,
         "image_size": args.image_size,
         "learning_rate": args.learning_rate,
@@ -478,6 +496,7 @@ def parse_decoder_args(args: argparse.Namespace) -> Dict[str, Any]:
         "mlflow_experiment_name": args.experiment_name,
         "mlflow_run_name": args.run_name,
         "enable_mlflow": True,
+        "tracking_uri": getattr(args, "tracking_uri", None),
     }
 
     return config
