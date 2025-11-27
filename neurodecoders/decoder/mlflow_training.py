@@ -47,14 +47,59 @@ def main(config: Dict[str, Any]):
         log_training_config(config)
 
         # Load existing dataset directly
-        from neurodecoders.data.loading import load_npz_dataset
+        from neurodecoders.data.loading import (
+            load_npz_dataset,
+            compute_and_apply_normalization,
+        )
         
-        # Use existing decoder test dataset
+        # Load training data to compute normalization statistics
         dataset_path = config["dataset_path"]
-        images, firing = load_npz_dataset(dataset_path)
-        images, firing, H, W = normalize_images_and_rates(images, firing)
         
-        print(f"Loaded dataset: {dataset_path}")
+        # Check if this is a test dataset path and find corresponding train dataset
+        if "/test/" in dataset_path:
+            train_path = dataset_path.replace("/test/", "/train/")
+            if not os.path.exists(train_path):
+                # Try to find a matching train file
+                test_file = os.path.basename(dataset_path)
+                train_file = test_file.replace("_split-test_", "_split-train_")
+                train_dir = os.path.dirname(dataset_path).replace("/test", "/train")
+                train_path = os.path.join(train_dir, train_file)
+            
+            if os.path.exists(train_path):
+                print(f"Loading training data from: {train_path}")
+                train_images, train_firing = load_npz_dataset(train_path)
+                print(f"Loading test data from: {dataset_path}")
+                test_images, test_firing = load_npz_dataset(dataset_path)
+                
+                # Compute normalization from training set and apply to both
+                train_images, train_firing, test_images, test_firing, norm_stats = \
+                    compute_and_apply_normalization(
+                        train_images, train_firing, test_images, test_firing
+                    )
+                
+                # Use test set for decoder training (since we're decoding from responses)
+                images, firing = test_images, test_firing
+                
+                print(f"✅ Normalized using training set statistics:")
+                print(f"   Image mean={norm_stats['image_mean']:.4f}, std={norm_stats['image_std']:.4f}")
+                
+                # Log normalization stats as parameters
+                mlflow.log_params({
+                    "norm_image_mean": norm_stats["image_mean"],
+                    "norm_image_std": norm_stats["image_std"],
+                })
+            else:
+                print(f"⚠️  Could not find training dataset at {train_path}")
+                print(f"   Falling back to old normalization (not recommended)")
+                images, firing = load_npz_dataset(dataset_path)
+                images, firing, _, _ = normalize_images_and_rates(images, firing)
+        else:
+            # Not a test dataset, use old method
+            print(f"⚠️  Dataset path doesn't indicate train/test split")
+            print(f"   Using old normalization method (not recommended)")
+            images, firing = load_npz_dataset(dataset_path)
+            images, firing, _, _ = normalize_images_and_rates(images, firing)
+        
         print(f"Images shape: {images.shape}")
         print(f"Firing rates shape: {firing.shape}")
 

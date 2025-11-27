@@ -16,7 +16,7 @@ def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
     Parse dataset metadata from synthetic data filename.
 
     Expected format:
-    synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{n}_n_images-{m}.npz
+    synthdata_dataset-{dataset_type}_sta-{sta_type}_n_neurons-{n}_n_images-{m}_split-{split}_datetime-{timestamp}.npz
     """
     meta: Dict[str, Any] = {}
     try:
@@ -40,6 +40,16 @@ def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
             meta["n_images"] = str(
                 int(name.split("n_images-")[1].split("_")[0])
             )
+        if "datetime-" in name:
+            # Extract the datetime timestamp from the filename
+            # Format: datetime-20251104_161925
+            datetime_str = name.split("datetime-")[1].split("_split")[0] if "_split" in name else name.split("datetime-")[1]
+            # Convert to ISO format: 20251104_161925 -> 2025-11-04T16:19:25
+            if len(datetime_str) == 15 and "_" in datetime_str:
+                date_part, time_part = datetime_str.split("_")
+                if len(date_part) == 8 and len(time_part) == 6:
+                    iso_timestamp = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}T{time_part[:2]}:{time_part[2:4]}:{time_part[4:6]}"
+                    meta["dataset_timestamp"] = iso_timestamp
     except Exception:
         # Best-effort only
         pass
@@ -151,7 +161,11 @@ def _load_from_split_structure(
     selected_file = candidates[0][1]
 
     meta = parse_dataset_metadata(selected_file)
-    meta["dataset_timestamp"] = datetime.datetime.now().isoformat()
+    
+    # Only set dataset_timestamp to current time if it wasn't extracted from filename
+    if "dataset_timestamp" not in meta:
+        meta["dataset_timestamp"] = datetime.datetime.now().isoformat()
+    
     meta["dataset_filename"] = selected_file
     meta["data_split"] = split
 
@@ -223,6 +237,10 @@ def normalize_images_and_rates(
     """
     Normalize images to [-1, 1] and z-score firing rates per neuron.
     Returns images, firing_rates, H, W.
+    
+    DEPRECATED: This function uses min-max normalization which doesn't match
+    the paper's approach. Use compute_and_apply_normalization() instead for
+    training set statistics-based normalization.
     """
     img_min, img_max = images.min(), images.max()
     if img_max == img_min:
@@ -236,3 +254,95 @@ def normalize_images_and_rates(
 
     h, w = images.shape[1], images.shape[2]
     return images, firing_rates, h, w
+
+
+def compute_normalization_stats(
+    images: np.ndarray, firing_rates: np.ndarray
+) -> Dict[str, float]:
+    """
+    Compute normalization statistics from training data (matching paper's approach).
+    
+    Args:
+        images: Training images array (N, H, W) or (N, C, H, W)
+        firing_rates: Training firing rates array (N, n_neurons)
+    
+    Returns:
+        Dictionary with keys: image_mean, image_std, firing_mean, firing_std
+    """
+    stats = {
+        "image_mean": float(images.mean()),
+        "image_std": float(images.std()),
+        "firing_mean": firing_rates.mean(axis=0).tolist(),  # Per neuron
+        "firing_std": firing_rates.std(axis=0).tolist(),    # Per neuron
+    }
+    return stats
+
+
+def apply_normalization(
+    images: np.ndarray,
+    firing_rates: np.ndarray,
+    stats: Dict[str, float],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Apply normalization using pre-computed statistics.
+    
+    Args:
+        images: Images to normalize
+        firing_rates: Firing rates to normalize
+        stats: Dictionary with normalization statistics
+    
+    Returns:
+        Normalized images and firing rates
+    """
+    # Normalize images using training set mean/std
+    images_norm = (images - stats["image_mean"]) / stats["image_std"]
+    
+    # Normalize firing rates per neuron
+    firing_mean = np.array(stats["firing_mean"])
+    firing_std = np.array(stats["firing_std"])
+    
+    # Handle zero std
+    firing_std = np.where(firing_std == 0, 1.0, firing_std)
+    
+    firing_norm = (firing_rates - firing_mean) / firing_std
+    
+    return images_norm, firing_norm
+
+
+def compute_and_apply_normalization(
+    train_images: np.ndarray,
+    train_firing: np.ndarray,
+    test_images: np.ndarray = None,
+    test_firing: np.ndarray = None,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict[str, float]]:
+    """
+    Compute normalization from training set and apply to both train and test.
+    This matches the paper's approach.
+    
+    Args:
+        train_images: Training images
+        train_firing: Training firing rates
+        test_images: Test images (optional)
+        test_firing: Test firing rates (optional)
+    
+    Returns:
+        train_images_norm, train_firing_norm, test_images_norm, test_firing_norm, stats
+        (test arrays are None if not provided)
+    """
+    # Compute stats from training set only
+    stats = compute_normalization_stats(train_images, train_firing)
+    
+    # Apply to training set
+    train_images_norm, train_firing_norm = apply_normalization(
+        train_images, train_firing, stats
+    )
+    
+    # Apply to test set if provided
+    if test_images is not None and test_firing is not None:
+        test_images_norm, test_firing_norm = apply_normalization(
+            test_images, test_firing, stats
+        )
+    else:
+        test_images_norm, test_firing_norm = None, None
+    
+    return train_images_norm, train_firing_norm, test_images_norm, test_firing_norm, stats
