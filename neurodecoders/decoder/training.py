@@ -15,10 +15,7 @@ from pytorch_lightning.callbacks import (
 )
 
 from neurodecoders.data import NeuralDataModule
-from neurodecoders.decoder.models import (
-    MirrorSimpleEncoderDecoder,
-    SimpleDecoder,
-)
+from neurodecoders.decoder.models import get_decoder_model
 
 # MLflow utilities are no longer needed in this module
 # They are handled by the calling script (mlflow_training.py)
@@ -100,7 +97,7 @@ class DecoderLightningModule(pl.LightningModule):
     def __init__(
         self,
         in_neurons: int,
-        image_size: int = 64,
+        image_size: int = 32,
         learning_rate: float = 1e-4,
         loss_fn: str = "mse",
         optimizer_type: str = "adam",
@@ -108,11 +105,14 @@ class DecoderLightningModule(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
-        if model_type == "mirror_simple":
-            self.model = MirrorSimpleEncoderDecoder(in_neurons, image_size)
-        else:
-            # Default and legacy types map to SimpleDecoder
-            self.model = SimpleDecoder(in_neurons, image_size)
+        
+        # Use model factory for consistent interface
+        self.model = get_decoder_model(
+            model_type=model_type,
+            in_neurons=in_neurons,
+            image_size=image_size,
+        )
+        
         self.learning_rate = learning_rate
         self.optimizer_type = optimizer_type
 

@@ -149,3 +149,37 @@ class MirrorSimpleEncoderDecoder(nn.Module):
             align_corners=False,
         )
         return x
+
+
+def get_decoder_model(
+    model_type: str,
+    in_neurons: int,
+    image_size: int = 32,
+    **kwargs
+) -> nn.Module:
+    """
+    Factory function to create decoder models with consistent interface.
+    
+    Args:
+        model_type: Type of decoder model ('simple', 'mirror')
+        in_neurons: Number of input neurons
+        image_size: Output image size (default: 32 for CIFAR-10)
+        **kwargs: Additional model-specific parameters
+    
+    Returns:
+        Initialized decoder model
+    
+    Example:
+        model = get_decoder_model('simple', in_neurons=100, image_size=32)
+    """
+    model_type = model_type.lower()
+    
+    if model_type == "simple":
+        return SimpleDecoder(in_neurons=in_neurons, image_size=image_size)
+    elif model_type == "mirror":
+        return MirrorSimpleEncoderDecoder(in_neurons=in_neurons, image_size=image_size)
+    else:
+        raise ValueError(
+            f"Unknown decoder model type: {model_type}. "
+            f"Supported types: 'simple', 'mirror'"
+        )
