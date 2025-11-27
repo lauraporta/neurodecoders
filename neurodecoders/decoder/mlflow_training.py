@@ -50,7 +50,7 @@ def main(config: Dict[str, Any]):
         from neurodecoders.data.loading import load_npz_dataset
         
         # Use existing decoder test dataset
-        dataset_path = config 
+        dataset_path = config["dataset_path"]
         images, firing = load_npz_dataset(dataset_path)
         images, firing, H, W = normalize_images_and_rates(images, firing)
         
