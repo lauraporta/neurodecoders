@@ -47,8 +47,8 @@ def main(config: Dict[str, Any]):
     ):
         log_training_config(config)
 
-        # Load synthetic data with train/test split (matches encoder approach)
-        print("Loading training data for normalization statistics...")
+        # Load synthetic data with train/test split
+        print("Loading training data...")
         train_images, train_firing, _, train_metadata = load_synthetic_split_data(
             config, split="train"
         )
@@ -58,26 +58,20 @@ def main(config: Dict[str, Any]):
             config, split="test"
         )
         
-        # Compute normalization from training set and apply to both
-        from neurodecoders.data.loading import compute_and_apply_normalization
-        
-        train_images, train_firing, test_images, test_firing, norm_stats = \
-            compute_and_apply_normalization(
-                train_images, train_firing, test_images, test_firing
-            )
-        
-        # Use test set for decoder training (since we're decoding from responses)
+        # Use data as-is without additional normalization
+        # Synthetic images are already in [0, 1] from ToTensor()
+        # Firing rates are raw simulated responses
         images, firing = test_images, test_firing
         
-        print(f"✅ Normalized using training set statistics:")
-        print(f"   Image mean={norm_stats['image_mean']:.4f}, std={norm_stats['image_std']:.4f}")
         print(f"Images shape: {images.shape}")
+        print(f"Images range: [{images.min():.4f}, {images.max():.4f}]")
         print(f"Firing rates shape: {firing.shape}")
+        print(f"Firing rates range: [{firing.min():.4f}, {firing.max():.4f}]")
         
-        # Log normalization stats and dataset metadata as parameters
+        # Log dataset metadata as parameters
         mlflow.log_params({
-            "norm_image_mean": norm_stats["image_mean"],
-            "norm_image_std": norm_stats["image_std"],
+            "image_min": float(images.min()),
+            "image_max": float(images.max()),
             "train_dataset_path": train_metadata.get("dataset_path", "unknown"),
             "test_dataset_path": test_metadata.get("dataset_path", "unknown"),
         })
@@ -90,7 +84,7 @@ def main(config: Dict[str, Any]):
             firing_rates=firing,
             labels=None,  # No labels for decoder training
             batch_size=config["batch_size"],
-            dataset_metadata={},  # Empty metadata for now
+            dataset_metadata=test_metadata,  # Use actual test metadata instead of empty dict
             use_memory_mapping=False,
             chunk_size=100,
             prefetch_factor=2,
@@ -101,6 +95,30 @@ def main(config: Dict[str, Any]):
         # Log dataset metadata
         log_dataset_input_and_params(data_module_for_logging)
 
+        # Build model-specific kwargs based on model type
+        model_kwargs = {}
+        if config["model_type"] == "transformer":
+            model_kwargs = {
+                "patch_size": config.get("patch_size", 4),
+                "embed_dim": config.get("embed_dim", 256),
+                "num_heads": config.get("num_heads", 8),
+                "num_layers": config.get("num_layers", 6),
+                "mlp_ratio": config.get("mlp_ratio", 4.0),
+                "dropout": config.get("transformer_dropout", 0.1),
+            }
+        elif config["model_type"] == "diffusion":
+            model_kwargs = {
+                "base_channels": config.get("base_channels", 64),
+                "channel_mults": config.get("channel_mults", (1, 2, 4)),
+                "timesteps": config.get("timesteps", 1000),
+                "beta_start": config.get("beta_start", 1e-4),
+                "beta_end": config.get("beta_end", 0.02),
+            }
+        
+        # Log model-specific parameters
+        if model_kwargs:
+            mlflow.log_params({f"model_{k}": v for k, v in model_kwargs.items()})
+
         trainer, model, data_module = train_decoder(
             images=images,
             firing_rates=firing,
@@ -110,6 +128,7 @@ def main(config: Dict[str, Any]):
             optimizer=config["optimizer"],
             loss_fn=config["loss_function"],
             model_type=config["model_type"],
+            model_kwargs=model_kwargs,
             num_workers=config["num_workers"],
             pin_memory=config["pin_memory"],
             enable_mixed_precision=config["enable_mixed_precision"],

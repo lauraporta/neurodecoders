@@ -18,7 +18,12 @@ import torch
 import torch.nn as nn
 from mlflow.tracking import MlflowClient
 
-from neurodecoders.decoder.models import MirrorSimpleEncoderDecoder, SimpleDecoder
+from neurodecoders.decoder.models import (
+    SimpleDecoder,
+    TransformerDecoder,
+    DiffusionDecoder,
+    get_decoder_model,
+)
 from neurodecoders.data.loading import load_npz_dataset, normalize_images_and_rates
 from neurodecoders.paths import get_path
 
@@ -128,10 +133,7 @@ def load_decoder_model(model_path: str, device: torch.device) -> nn.Module:
         image_size = hparams.get("image_size", 64)
         model_type = hparams.get("model_type", "simple")
         
-        if model_type == "mirror_simple":
-            model = MirrorSimpleEncoderDecoder(in_neurons, image_size)
-        else:
-            model = SimpleDecoder(in_neurons, image_size)
+        model = get_decoder_model(model_type, in_neurons, image_size)
         
         # Load the state dict
         model.load_state_dict(checkpoint["state_dict"])
@@ -186,9 +188,11 @@ def load_test_data(dataset_path: str, n_images: int = 10) -> Tuple[np.ndarray, n
         
     Returns:
         Tuple of (images, firing_rates, selected_indices)
+        Images and firing rates are returned as-is from the dataset (z-scored).
     """
     images, firing_rates = load_npz_dataset(dataset_path)
-    images, firing_rates, _, _ = normalize_images_and_rates(images, firing_rates)
+    
+    # Use data as-is - no additional normalization
     
     # Select random images
     n_total = len(images)
@@ -206,13 +210,13 @@ def create_decoder_comparison_plots(
     generated_images: List[np.ndarray], 
     image_ids: List[int],
     output_path: str,
-    figsize: Tuple[int, int] = (12, 8),
+    figsize: Tuple[int, int] = (8, 6),
 ) -> None:
     """Create comprehensive comparison plots for decoder-generated images.
     
     Args:
-        original_images: List of original images as numpy arrays
-        generated_images: List of decoder-generated images as numpy arrays
+        original_images: List of original images as numpy arrays (z-scored)
+        generated_images: List of decoder-generated images as numpy arrays (z-scored)
         image_ids: List of image IDs for labeling
         output_path: Path to save the comparison plot
         figsize: Figure size tuple (width, height)
@@ -223,24 +227,26 @@ def create_decoder_comparison_plots(
     if n_images == 0:
         return
     
-    # Adjust figure size based on number of images
-    if n_images == 1:
-        figsize = (6, 8)  # Taller for single image
-    elif n_images <= 3:
-        figsize = (4 * n_images, 8)  # 4 units per image
-    else:
-        figsize = (12, 8)  # Cap at reasonable size for many images
+    # Adjust figure size based on number of images - keep it compact
+    fig_width = min(2.5 * n_images, 10)  # 2.5 units per image, max 10
+    fig_height = 6
+    figsize = (fig_width, fig_height)
     
     # Create subplots: 3 rows (original, generated, difference) x n_images cols
     fig, axes = plt.subplots(3, n_images, figsize=figsize)
     if n_images == 1:
         axes = axes.reshape(3, 1)
     
+    # Determine display range from all images (handles z-scored data)
+    all_orig = np.concatenate([img.flatten() for img in original_images])
+    all_gen = np.concatenate([img.flatten() for img in generated_images])
+    vmin = min(all_orig.min(), all_gen.min())
+    vmax = max(all_orig.max(), all_gen.max())
+    # Symmetric range around 0 for z-scored data
+    v_abs = max(abs(vmin), abs(vmax))
+    vmin, vmax = -v_abs, v_abs
+    
     for i, (orig, gen, img_id) in enumerate(zip(original_images, generated_images, image_ids)):
-        # Ensure images are in [0, 1] range
-        orig = np.clip(orig, 0, 1)
-        gen = np.clip(gen, 0, 1)
-        
         # Resize original image to match generated image dimensions if needed
         if orig.shape != gen.shape:
             from PIL import Image
@@ -251,16 +257,21 @@ def create_decoder_comparison_plots(
                     orig_2d = orig[0]
             else:
                 orig_2d = orig
-                
-            pil_img = Image.fromarray((orig_2d * 255).astype(np.uint8))
+            
+            # Normalize to [0, 255] for PIL, then back after resize
+            orig_min, orig_max = orig_2d.min(), orig_2d.max()
+            orig_normalized = (orig_2d - orig_min) / (orig_max - orig_min + 1e-8) * 255
+            pil_img = Image.fromarray(orig_normalized.astype(np.uint8))
             target_size = (gen.shape[2], gen.shape[1]) if len(gen.shape) == 3 else (gen.shape[1], gen.shape[0])
             pil_img = pil_img.resize(target_size, Image.LANCZOS)
-            orig = np.array(pil_img) / 255.0
+            orig_resized = np.array(pil_img) / 255.0 * (orig_max - orig_min) + orig_min
             
-            if len(gen.shape) == 3 and len(orig.shape) == 2:
-                orig = orig.reshape(1, orig.shape[0], orig.shape[1])
-            elif len(gen.shape) == 2 and len(orig.shape) == 3:
-                orig = orig.squeeze()
+            if len(gen.shape) == 3 and len(orig_resized.shape) == 2:
+                orig = orig_resized.reshape(1, orig_resized.shape[0], orig_resized.shape[1])
+            elif len(gen.shape) == 2 and len(orig_resized.shape) == 3:
+                orig = orig_resized.squeeze()
+            else:
+                orig = orig_resized
         
         # Calculate difference
         diff = np.abs(orig - gen)
@@ -270,8 +281,8 @@ def create_decoder_comparison_plots(
             orig_display = orig.squeeze(0) if orig.shape[0] == 1 else orig[0]
         else:
             orig_display = orig
-        axes[0, i].imshow(orig_display, cmap='gray', vmin=0, vmax=1)
-        axes[0, i].set_title(f'Original {img_id}')
+        axes[0, i].imshow(orig_display, cmap='gray', vmin=vmin, vmax=vmax)
+        axes[0, i].set_title(f'Original {img_id}', fontsize=8)
         axes[0, i].axis('off')
         
         # Plot generated image
@@ -279,8 +290,8 @@ def create_decoder_comparison_plots(
             gen_display = gen.squeeze(0) if gen.shape[0] == 1 else gen[0]
         else:
             gen_display = gen
-        axes[1, i].imshow(gen_display, cmap='gray', vmin=0, vmax=1)
-        axes[1, i].set_title(f'Generated {img_id}')
+        axes[1, i].imshow(gen_display, cmap='gray', vmin=vmin, vmax=vmax)
+        axes[1, i].set_title(f'Generated {img_id}', fontsize=8)
         axes[1, i].axis('off')
         
         # Plot difference
@@ -288,17 +299,17 @@ def create_decoder_comparison_plots(
             diff_display = diff.squeeze(0) if diff.shape[0] == 1 else diff[0]
         else:
             diff_display = diff
-        im = axes[2, i].imshow(diff_display, cmap='hot', vmin=0, vmax=1)
-        axes[2, i].set_title(f'Difference {img_id}')
+        im = axes[2, i].imshow(diff_display, cmap='hot', vmin=0, vmax=diff.max())
+        axes[2, i].set_title(f'Difference {img_id}', fontsize=8)
         axes[2, i].axis('off')
     
     # Add row labels
-    axes[0, 0].set_ylabel('Original', rotation=90, size='large')
-    axes[1, 0].set_ylabel('Generated', rotation=90, size='large')
-    axes[2, 0].set_ylabel('Difference', rotation=90, size='large')
+    axes[0, 0].set_ylabel('Original', rotation=90, size='medium')
+    axes[1, 0].set_ylabel('Generated', rotation=90, size='medium')
+    axes[2, 0].set_ylabel('Difference', rotation=90, size='medium')
     
     plt.tight_layout()
-    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
     print(f"Decoder comparison plot saved: {output_path}")
 
@@ -307,6 +318,7 @@ def generate_decoder_images(
     decoder: nn.Module,
     firing_rates: np.ndarray,
     device: torch.device,
+    num_inference_steps: Optional[int] = None,
 ) -> np.ndarray:
     """Generate images from neural firing rates using the decoder.
     
@@ -314,21 +326,33 @@ def generate_decoder_images(
         decoder: Trained decoder model
         firing_rates: Neural firing rates array
         device: Device to run inference on
+        num_inference_steps: Number of inference steps for diffusion models (optional)
         
     Returns:
-        Generated images as numpy array
+        Generated images as numpy array (same range as training data, typically z-scored)
     """
     decoder.eval()
     decoder.to(device)
     
     with torch.no_grad():
         firing_rates_tensor = torch.tensor(firing_rates, dtype=torch.float32).to(device)
-        generated_images = decoder(firing_rates_tensor)
+        
+        # Check if this is a diffusion model
+        is_diffusion = isinstance(decoder, DiffusionDecoder)
+        
+        if is_diffusion:
+            # Use the sample method for diffusion models (inference mode)
+            if num_inference_steps is not None:
+                generated_images = decoder.sample(firing_rates_tensor, num_inference_steps)
+            else:
+                generated_images = decoder.sample(firing_rates_tensor)
+        else:
+            # Standard forward pass for other models
+            generated_images = decoder(firing_rates_tensor)
+        
         generated_images = generated_images.cpu().numpy()
     
-    # Ensure images are in [0, 1] range
-    generated_images = np.clip(generated_images, 0, 1)
-    
+    # Return images as-is without clipping - they should match the z-scored training data range
     return generated_images
 
 

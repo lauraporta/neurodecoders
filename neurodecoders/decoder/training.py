@@ -102,19 +102,26 @@ class DecoderLightningModule(pl.LightningModule):
         loss_fn: str = "mse",
         optimizer_type: str = "adam",
         model_type: str = "simple",
+        model_kwargs: Optional[dict] = None,
     ):
         super().__init__()
         self.save_hyperparameters()
+        
+        # Build model kwargs
+        kwargs = model_kwargs or {}
         
         # Use model factory for consistent interface
         self.model = get_decoder_model(
             model_type=model_type,
             in_neurons=in_neurons,
             image_size=image_size,
+            **kwargs,
         )
         
         self.learning_rate = learning_rate
         self.optimizer_type = optimizer_type
+        self.model_type = model_type
+        self.is_diffusion = model_type == "diffusion"
 
         if loss_fn == "mse":
             self.criterion = nn.MSELoss()
@@ -128,13 +135,22 @@ class DecoderLightningModule(pl.LightningModule):
         self.train_losses: list[float] = []
         self.val_losses: list[float] = []
 
-    def forward(self, x):
+    def forward(self, x, target_images=None):
+        if self.is_diffusion:
+            # Diffusion model has different interface
+            return self.model(x, target_images)
         return self.model(x)
 
     def training_step(self, batch, batch_idx):
         images, firing_rates = batch
-        pred = self(firing_rates)
-        loss = self.criterion(pred, images)
+        
+        if self.is_diffusion:
+            # Diffusion returns loss directly when target_images provided
+            loss = self.model(firing_rates, images)
+        else:
+            pred = self(firing_rates)
+            loss = self.criterion(pred, images)
+        
         self.log(
             "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True
         )
@@ -142,15 +158,27 @@ class DecoderLightningModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         images, firing_rates = batch
-        pred = self(firing_rates)
-        loss = self.criterion(pred, images)
+        
+        if self.is_diffusion:
+            # Diffusion returns loss directly when target_images provided
+            loss = self.model(firing_rates, images)
+        else:
+            pred = self(firing_rates)
+            loss = self.criterion(pred, images)
+        
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
     def test_step(self, batch, batch_idx):
         images, firing_rates = batch
-        pred = self(firing_rates)
-        loss = self.criterion(pred, images)
+        
+        if self.is_diffusion:
+            # Diffusion returns loss directly when target_images provided
+            loss = self.model(firing_rates, images)
+        else:
+            pred = self(firing_rates)
+            loss = self.criterion(pred, images)
+        
         self.log(
             "test_loss", loss, on_step=False, on_epoch=True, prog_bar=False
         )
@@ -193,6 +221,7 @@ def train_decoder(
     optimizer: str = "adam",
     loss_fn: str = "mse",
     model_type: str = "simple",
+    model_kwargs: Optional[dict] = None,
     num_workers: int = 0,
     pin_memory: bool = True,
     enable_mixed_precision: bool = True,
@@ -204,6 +233,30 @@ def train_decoder(
 ):
     """
     Train a decoder using Lightning and shared data module.
+    
+    Args:
+        images: Training images array
+        firing_rates: Neural firing rates array
+        batch_size: Batch size for training
+        epochs: Number of training epochs
+        learning_rate: Learning rate
+        optimizer: Optimizer type ('adam', 'adamw', 'sgd')
+        loss_fn: Loss function ('mse', 'l1', 'smooth_l1')
+        model_type: Type of decoder model ('simple', 'transformer', 'diffusion')
+        model_kwargs: Additional model-specific parameters:
+            For 'transformer': patch_size, embed_dim, num_heads, num_layers, mlp_ratio, dropout
+            For 'diffusion': base_channels, channel_mults, timesteps, beta_start, beta_end
+        num_workers: Number of data loader workers
+        pin_memory: Whether to pin memory for GPU transfer
+        enable_mixed_precision: Enable 16-bit mixed precision
+        enable_early_stopping: Enable early stopping
+        early_stopping_patience: Patience for early stopping
+        enable_checkpointing: Enable model checkpointing
+        mlflow_experiment_name: MLflow experiment name
+        mlflow_run_name: MLflow run name
+    
+    Returns:
+        Tuple of (trainer, lightning_model, data_module)
     """
     data_module = NeuralDataModule(
         images=images,
@@ -225,6 +278,7 @@ def train_decoder(
         loss_fn=loss_fn,
         optimizer_type=optimizer,
         model_type=model_type,
+        model_kwargs=model_kwargs,
     )
 
     callbacks: List[pl.Callback] = [
