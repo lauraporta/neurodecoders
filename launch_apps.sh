@@ -25,9 +25,36 @@ if [ -f .env ]; then
     set +a
 fi
 
+# Auto-detect current node and update .env if needed
+CURRENT_HOST=$(hostname)
+if [ -f .env ]; then
+    # Check if POSTGRES_HOST in .env differs from current host
+    ENV_POSTGRES_HOST=$(grep "^POSTGRES_HOST=" .env | cut -d'=' -f2)
+    if [ -n "$ENV_POSTGRES_HOST" ] && [ "$ENV_POSTGRES_HOST" != "$CURRENT_HOST" ]; then
+        echo "📍 Detected hostname change: $ENV_POSTGRES_HOST → $CURRENT_HOST"
+        echo "   Updating .env file..."
+        
+        # Update POSTGRES_HOST in .env
+        sed -i.bak "s|^POSTGRES_HOST=.*|POSTGRES_HOST=$CURRENT_HOST|" .env
+        
+        # Update MLFLOW_TRACKING_URI in .env
+        if [ -n "$POSTGRES_USER" ] && [ -n "$POSTGRES_PASSWORD" ] && [ -n "$POSTGRES_DB" ]; then
+            POSTGRES_PORT=${POSTGRES_PORT:-5432}
+            NEW_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${CURRENT_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+            sed -i.bak "s|^MLFLOW_TRACKING_URI=.*|MLFLOW_TRACKING_URI=$NEW_URI|" .env
+            echo "   ✅ Updated .env with new hostname"
+        fi
+        
+        # Reload environment variables
+        set -a
+        source .env
+        set +a
+    fi
+fi
+
 # Construct MLflow tracking URI from environment variables
 if [ -n "$POSTGRES_USER" ] && [ -n "$POSTGRES_PASSWORD" ] && [ -n "$POSTGRES_DB" ]; then
-    POSTGRES_HOST=${POSTGRES_HOST:-localhost}
+    POSTGRES_HOST=${POSTGRES_HOST:-$CURRENT_HOST}
     POSTGRES_PORT=${POSTGRES_PORT:-5432}
     export MLFLOW_TRACKING_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
     
