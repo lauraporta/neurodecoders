@@ -450,3 +450,75 @@ class SimpleEncoderWithSkipConnection(nn.Module):
         x = self.adaptive_pool(x4).squeeze(-1).squeeze(-1)
         x = self.fc(x)
         return x + 1
+
+
+def get_encoder_model(
+    model_type: str,
+    out_neurons: int,
+    **kwargs,
+) -> nn.Module:
+    """
+    Factory function to create encoder models with consistent interface.
+
+    Args:
+        model_type: Type of encoder model ('simple', 'simple3layer', 'skip',
+                    'resnet', 'resnet_scratch', 'resnet_conv_only',
+                    'resnet_conv_2layer')
+        out_neurons: Number of output neurons to predict
+        **kwargs: Additional model-specific parameters
+            For 'simple3layer':
+                - image_height: Input image height (default: 32)
+                - image_width: Input image width (default: 32)
+                - learn_positions: Whether to learn RF positions (default: True)
+            For ResNet variants ('resnet', 'resnet_scratch', 'resnet_conv_only',
+                                 'resnet_conv_2layer'):
+                - freeze_backbone: Whether to freeze backbone weights
+                                   (default: True for 'resnet', False otherwise)
+
+    Returns:
+        Initialized encoder model
+
+    Example:
+        model = get_encoder_model('simple', out_neurons=100)
+        model = get_encoder_model('resnet', out_neurons=100, freeze_backbone=True)
+        model = get_encoder_model('simple3layer', out_neurons=100, learn_positions=False)
+    """
+    model_type = model_type.lower()
+
+    if model_type == "simple":
+        return SimpleEncoder(out_neurons=out_neurons)
+    elif model_type == "simple3layer":
+        return Simple3LayerEncoder(
+            out_neurons=out_neurons,
+            image_height=kwargs.get("image_height", 32),
+            image_width=kwargs.get("image_width", 32),
+            learn_positions=kwargs.get("learn_positions", True),
+        )
+    elif model_type == "skip":
+        return SimpleEncoderWithSkipConnection(out_neurons=out_neurons)
+    elif model_type == "resnet":
+        return ResNetEncoder(
+            out_neurons=out_neurons,
+            freeze_backbone=kwargs.get("freeze_backbone", True),
+        )
+    elif model_type == "resnet_scratch":
+        return ResNetFromScratch(
+            out_neurons=out_neurons,
+            freeze_backbone=kwargs.get("freeze_backbone", False),
+        )
+    elif model_type == "resnet_conv_only":
+        return ResNetConvOnly(
+            out_neurons=out_neurons,
+            freeze_backbone=kwargs.get("freeze_backbone", False),
+        )
+    elif model_type == "resnet_conv_2layer":
+        return ResNetConv_2layerHead(
+            out_neurons=out_neurons,
+            freeze_backbone=kwargs.get("freeze_backbone", False),
+        )
+    else:
+        raise ValueError(
+            f"Unknown encoder model type: {model_type}. "
+            f"Supported types: 'simple', 'simple3layer', 'skip', "
+            f"'resnet', 'resnet_scratch', 'resnet_conv_only', 'resnet_conv_2layer'"
+        )

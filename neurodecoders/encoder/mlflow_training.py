@@ -20,74 +20,12 @@ from neurodecoders.data import NeuralDataModule
 from neurodecoders.data.loading import (
     load_synthetic_split_data,
 )
-from neurodecoders.encoder.models import (
-    ResNetConvOnly,
-    ResNetConv_2layerHead,
-    ResNetEncoder,
-    ResNetFromScratch,
-    Simple3LayerEncoder,
-    SimpleEncoder,
-    SimpleEncoderWithSkipConnection,
-)
+from neurodecoders.encoder.models import get_encoder_model
 from neurodecoders.encoder.training import train_encoder
 from neurodecoders.mlflow_utils.argument_parsers import (
     create_encoder_parser,
     parse_encoder_args,
 )
-
-
-# get_model remains encoder-specific
-def get_model(config: Dict[str, Any]) -> torch.nn.Module:
-    """
-    Create model based on configuration.
-
-    Args:
-        config: Configuration dictionary with model parameters
-
-    Returns:
-        model: PyTorch model
-    """
-    model_type = config["model_type"]
-    out_neurons = config.get("out_neurons")
-
-    if out_neurons is None:
-        raise ValueError(
-            "out_neurons must be specified or inferred from dataset before "
-            "calling get_model"
-        )
-
-    if model_type == "simple":
-        return SimpleEncoder(out_neurons=out_neurons)
-    elif model_type == "simple3layer":
-        return Simple3LayerEncoder(out_neurons=out_neurons)
-    elif model_type == "skip":
-        return SimpleEncoderWithSkipConnection(out_neurons=out_neurons)
-    elif model_type == "resnet":
-        freeze_backbone = config["freeze_backbone"]
-        return ResNetEncoder(
-            out_neurons=out_neurons,
-            freeze_backbone=freeze_backbone,
-        )
-    elif model_type == "resnet_scratch":
-        freeze_backbone = config["freeze_backbone"]
-        return ResNetFromScratch(
-            out_neurons=out_neurons,
-            freeze_backbone=freeze_backbone,
-        )
-    elif model_type == "resnet_conv_only":
-        freeze_backbone = config["freeze_backbone"]
-        return ResNetConvOnly(
-            out_neurons=out_neurons,
-            freeze_backbone=freeze_backbone,
-        )
-    elif model_type == "resnet_conv_2layer":
-        freeze_backbone = config["freeze_backbone"]
-        return ResNetConv_2layerHead(
-            out_neurons=out_neurons,
-            freeze_backbone=freeze_backbone,
-        )
-    else:
-        raise ValueError(f"Unknown model_type: {model_type}")
 
 
 def train_with_config(config: Dict[str, Any]):
@@ -164,8 +102,18 @@ def train_with_config(config: Dict[str, Any]):
         "gamma": config["scheduler_gamma"],
     }
 
-    # Create model
-    model = get_model(config)
+    # Create model using the factory function
+    out_neurons = config.get("out_neurons")
+    if out_neurons is None:
+        raise ValueError(
+            "out_neurons must be specified or inferred from dataset before "
+            "creating the model"
+        )
+    model = get_encoder_model(
+        model_type=config["model_type"],
+        out_neurons=out_neurons,
+        freeze_backbone=config.get("freeze_backbone", False),
+    )
 
     # Train the model using the main training function
     fold_results = train_encoder(
