@@ -2,97 +2,27 @@
 Training utilities for neural decoders.
 """
 
-from typing import List, Optional
+from typing import Any, Dict, Optional
 
-import pytorch_lightning as pl
 import torch
-import torch.nn as nn
-from pytorch_lightning.callbacks import (
-    Callback,
-    EarlyStopping,
-    LearningRateMonitor,
-    ModelCheckpoint,
-)
 
+from neurodecoders.core.base_lightning_module import BaseLightningModule
+from neurodecoders.core.training_runner import TrainingConfig, create_trainer
 from neurodecoders.data import NeuralDataModule
 from neurodecoders.decoder.models import get_decoder_model
 
-# MLflow utilities are no longer needed in this module
-# They are handled by the calling script (mlflow_training.py)
-from neurodecoders.paths import get_path
 
+class DecoderLightningModule(BaseLightningModule):
+    """
+    PyTorch Lightning module for training neural decoders.
 
-class MLflowMetricsCallback(Callback):
-    """Custom callback to log metrics to MLflow during training."""
+    Inherits from BaseLightningModule and adds decoder-specific functionality:
+    - Special handling for diffusion models
+    - Batch order (images, firing_rates) for decoder training
+    - Model factory integration via get_decoder_model
 
-    def __init__(self):
-        self.current_epoch = 0
-        self.logged_train_epochs = set()
-        self.logged_val_epochs = set()
-
-    def on_train_epoch_end(self, trainer, pl_module):
-        """Log training metrics at the end of each epoch."""
-        try:
-            import mlflow
-
-            # Get the current epoch
-            current_epoch = trainer.current_epoch
-
-            # Only log during training phase, not during test
-            if trainer.state.fn != "fit":
-                return
-
-            # Only log once per epoch
-            if current_epoch in self.logged_train_epochs:
-                return
-
-            self.logged_train_epochs.add(current_epoch)
-
-            # Get training loss from callback metrics
-            train_loss = trainer.callback_metrics.get("train_loss")
-            if train_loss is not None:
-                if isinstance(train_loss, torch.Tensor):
-                    train_loss = train_loss.item()
-                mlflow.log_metric(
-                    "train_loss", float(train_loss), step=current_epoch
-                )
-
-        except Exception as e:
-            print(f"Warning: Could not log training metrics to MLflow: {e}")
-
-    def on_validation_epoch_end(self, trainer, pl_module):
-        """Log validation metrics at the end of each epoch."""
-        try:
-            import mlflow
-
-            # Get the current epoch
-            current_epoch = trainer.current_epoch
-
-            # Only log during training phase, not during test
-            if trainer.state.fn != "fit":
-                return
-
-            # Only log once per epoch
-            if current_epoch in self.logged_val_epochs:
-                return
-
-            self.logged_val_epochs.add(current_epoch)
-
-            # Get validation loss from callback metrics
-            val_loss = trainer.callback_metrics.get("val_loss")
-            if val_loss is not None:
-                if isinstance(val_loss, torch.Tensor):
-                    val_loss = val_loss.item()
-                mlflow.log_metric(
-                    "val_loss", float(val_loss), step=current_epoch
-                )
-
-        except Exception as e:
-            print(f"Warning: Could not log validation metrics to MLflow: {e}")
-
-
-class DecoderLightningModule(pl.LightningModule):
-    """Generic Lightning module for decoder training."""
+    Note: Decoders predict images FROM firing rates (reverse of encoders).
+    """
 
     def __init__(
         self,
@@ -102,160 +32,144 @@ class DecoderLightningModule(pl.LightningModule):
         loss_fn: str = "mse",
         optimizer_type: str = "adam",
         model_type: str = "simple",
-        model_kwargs: Optional[dict] = None,
+        model_kwargs: Optional[Dict[str, Any]] = None,
         scheduler_type: str = "none",
         scheduler_step_size: int = 30,
         scheduler_gamma: float = 0.1,
         max_epochs: int = 100,
     ):
-        super().__init__()
-        self.save_hyperparameters()
-        
-        # Build model kwargs
+        """Initialize the decoder lightning module.
+
+        Args:
+            in_neurons: Number of input neurons (firing rate dimension)
+            image_size: Output image size (assumed square)
+            learning_rate: Learning rate for optimizer
+            loss_fn: Loss function ('mse', 'l1', 'smooth_l1')
+            optimizer_type: Optimizer type ('adam', 'adamw', 'sgd')
+            model_type: Decoder model type ('simple', 'transformer', 'diffusion')
+            model_kwargs: Additional model-specific parameters
+            scheduler_type: LR scheduler type ('none', 'step', 'cosine', 'reduce_on_plateau')
+            scheduler_step_size: Step size for step scheduler
+            scheduler_gamma: Gamma for scheduler
+            max_epochs: Maximum epochs (used for cosine scheduler)
+        """
+        # Build model using factory
         kwargs = model_kwargs or {}
-        
-        # Use model factory for consistent interface
-        self.model = get_decoder_model(
+        model = get_decoder_model(
             model_type=model_type,
             in_neurons=in_neurons,
             image_size=image_size,
             **kwargs,
         )
-        
-        self.learning_rate = learning_rate
-        self.optimizer_type = optimizer_type
+
+        # Convert scheduler_type for base class compatibility
+        base_scheduler = (
+            "plateau" if scheduler_type == "reduce_on_plateau" else scheduler_type
+        )
+
+        super().__init__(
+            model=model,
+            learning_rate=learning_rate,
+            optimizer_type=optimizer_type,
+            optimizer_config={"type": optimizer_type},
+            loss_fn=loss_fn,
+            scheduler_type=base_scheduler,
+            scheduler_config={
+                "step_size": scheduler_step_size,
+                "gamma": scheduler_gamma,
+            },
+            max_epochs=max_epochs,
+        )
+
+        # Store decoder-specific attributes
         self.model_type = model_type
         self.is_diffusion = model_type == "diffusion"
-        
-        # Scheduler config
-        self.scheduler_type = scheduler_type
-        self.scheduler_step_size = scheduler_step_size
-        self.scheduler_gamma = scheduler_gamma
-        self.max_epochs = max_epochs
+        self.in_neurons = in_neurons
+        self.image_size = image_size
 
-        if loss_fn == "mse":
-            self.criterion = nn.MSELoss()
-        elif loss_fn == "l1":
-            self.criterion = nn.L1Loss()
-        elif loss_fn == "smooth_l1":
-            self.criterion = nn.SmoothL1Loss()
-        else:
-            raise ValueError(f"Unsupported loss function: {loss_fn}")
+    def forward(
+        self, x: torch.Tensor, target_images: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Forward pass through the decoder.
 
-        self.train_losses: list[float] = []
-        self.val_losses: list[float] = []
+        Args:
+            x: Input firing rates
+            target_images: Target images (only used for diffusion models)
 
-    def forward(self, x, target_images=None):
+        Returns:
+            Reconstructed images (or loss for diffusion models)
+        """
         if self.is_diffusion:
-            # Diffusion model has different interface
             return self.model(x, target_images)
         return self.model(x)
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Decoder training step: predict images from firing rates.
+
+        Args:
+            batch: Tuple of (images, firing_rates)
+            batch_idx: Index of the batch
+
+        Returns:
+            Loss tensor
+        """
         images, firing_rates = batch
-        
+
         if self.is_diffusion:
             # Diffusion returns loss directly when target_images provided
             loss = self.model(firing_rates, images)
         else:
             pred = self(firing_rates)
-            loss = self.criterion(pred, images)
-        
+            loss = self.loss_fn(pred, images)
+
         self.log(
             "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True
         )
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Decoder validation step.
+
+        Args:
+            batch: Tuple of (images, firing_rates)
+            batch_idx: Index of the batch
+
+        Returns:
+            Loss tensor
+        """
         images, firing_rates = batch
-        
+
         if self.is_diffusion:
-            # Diffusion returns loss directly when target_images provided
             loss = self.model(firing_rates, images)
         else:
             pred = self(firing_rates)
-            loss = self.criterion(pred, images)
-        
+            loss = self.loss_fn(pred, images)
+
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Decoder test step.
+
+        Args:
+            batch: Tuple of (images, firing_rates)
+            batch_idx: Index of the batch
+
+        Returns:
+            Loss tensor
+        """
         images, firing_rates = batch
-        
+
         if self.is_diffusion:
-            # Diffusion returns loss directly when target_images provided
             loss = self.model(firing_rates, images)
         else:
             pred = self(firing_rates)
-            loss = self.criterion(pred, images)
-        
+            loss = self.loss_fn(pred, images)
+
         self.log(
             "test_loss", loss, on_step=False, on_epoch=True, prog_bar=False
         )
         return loss
-
-    def on_train_epoch_end(self):
-        loss = self.trainer.callback_metrics.get("train_loss")
-        if isinstance(loss, torch.Tensor):
-            loss = loss.item()
-        if loss is not None:
-            self.train_losses.append(loss)
-
-    def on_validation_epoch_end(self):
-        loss = self.trainer.callback_metrics.get("val_loss")
-        if isinstance(loss, torch.Tensor):
-            loss = loss.item()
-        if loss is not None:
-            self.val_losses.append(loss)
-
-    def configure_optimizers(self):
-        if self.optimizer_type == "adam":
-            opt = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        elif self.optimizer_type == "adamw":
-            opt = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-        elif self.optimizer_type == "sgd":
-            opt = torch.optim.SGD(
-                self.parameters(), lr=self.learning_rate, momentum=0.9
-            )
-        else:
-            raise ValueError(f"Unsupported optimizer: {self.optimizer_type}")
-        
-        # Return optimizer only if no scheduler
-        if self.scheduler_type == "none":
-            return opt
-        
-        # Configure scheduler
-        if self.scheduler_type == "step":
-            scheduler = torch.optim.lr_scheduler.StepLR(
-                opt,
-                step_size=self.scheduler_step_size,
-                gamma=self.scheduler_gamma,
-            )
-        elif self.scheduler_type == "cosine":
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                opt,
-                T_max=self.max_epochs,
-                eta_min=self.learning_rate * 0.01,  # Min LR is 1% of initial
-            )
-        elif self.scheduler_type == "reduce_on_plateau":
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                opt,
-                mode="min",
-                factor=self.scheduler_gamma,
-                patience=10,
-                verbose=True,
-            )
-            return {
-                "optimizer": opt,
-                "lr_scheduler": {
-                    "scheduler": scheduler,
-                    "monitor": "val_loss",
-                },
-            }
-        else:
-            raise ValueError(f"Unsupported scheduler: {self.scheduler_type}")
-        
-        return {"optimizer": opt, "lr_scheduler": scheduler}
 
 
 def train_decoder(
@@ -344,43 +258,29 @@ def train_decoder(
         max_epochs=epochs,
     )
 
-    callbacks: List[pl.Callback] = [
-        LearningRateMonitor(logging_interval="epoch"),
-        MLflowMetricsCallback(),
-    ]
-    if enable_early_stopping:
-        callbacks.append(
-            EarlyStopping(
-                monitor="val_loss",
-                patience=early_stopping_patience,
-                mode="min",
-            )
-        )
-    if enable_checkpointing:
-        callbacks.append(
-            ModelCheckpoint(
-                monitor="val_loss",
-                dirpath=get_path("workspace/checkpoints"),
-                filename="decoder-{epoch:02d}-{val_loss:.4f}",
-                save_top_k=3,
-                mode="min",
-            )
-        )
-
-    # MLflow setup is handled by the calling script (mlflow_training.py)
-    # No need to set up experiments or start runs here
-
-    trainer = pl.Trainer(
-        max_epochs=epochs,
-        callbacks=callbacks,
-        accelerator="auto",
-        devices="auto",
-        precision="16-mixed" if enable_mixed_precision else "32",
-        log_every_n_steps=10,
+    # Use shared TrainingConfig and create_trainer infrastructure
+    config = TrainingConfig(
+        epochs=epochs,
+        batch_size=batch_size,
+        learning_rate=learning_rate,
+        optimizer_type=optimizer,
+        scheduler_type=scheduler,
+        scheduler_step_size=scheduler_step_size,
+        scheduler_gamma=scheduler_gamma,
+        loss_fn=loss_fn,
+        enable_mixed_precision=enable_mixed_precision,
+        enable_early_stopping=enable_early_stopping,
+        early_stopping_patience=early_stopping_patience,
         enable_checkpointing=enable_checkpointing,
         gradient_clip_val=1.0,  # Prevent NaN loss from gradient explosion
+        enable_mlflow=True,  # MLflow setup handled by mlflow_training.py
+        log_every_n_steps=10,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        model_name="decoder",
     )
 
+    trainer = create_trainer(config)
     trainer.fit(lightning_model, data_module)
 
     return trainer, lightning_model, data_module

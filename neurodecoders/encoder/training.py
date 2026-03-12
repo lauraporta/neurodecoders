@@ -4,21 +4,23 @@ Training utilities for neural encoders.
 
 import os
 import traceback
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import mlflow
 import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from pytorch_lightning.callbacks import (
-    Callback,
-    EarlyStopping,
-    LearningRateMonitor,
-    ModelCheckpoint,
-)
+from pytorch_lightning.callbacks import Callback
 from sklearn.model_selection import KFold
 
+from neurodecoders.core.base_lightning_module import BaseLightningModule
+from neurodecoders.core.training_runner import (
+    TrainingConfig,
+    UnfreezeCallback,
+    create_standard_callbacks,
+    create_trainer,
+)
 from neurodecoders.encoder.verification_callback import (
     EncoderVerificationCallback,
 )
@@ -32,101 +34,13 @@ from neurodecoders.mlflow_utils.utils import (
 from neurodecoders.paths import get_path
 
 
-class MLflowHistoryCallback(Callback):
+class EncoderLightningModule(BaseLightningModule):
     """
-    Callback to log training and validation history to MLflow for every epoch.
+    PyTorch Lightning module for training neural encoders.
 
-    This callback captures epoch-level metrics and logs them to MLflow with
-    the epoch number as the step, enabling proper history tracking.
-    """
-
-    def __init__(self):
-        super().__init__()
-        self.current_epoch = 0
-        self.logged_train_epochs = set()
-        self.logged_val_epochs = set()
-
-    def on_train_epoch_end(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ):
-        """Log training metrics to MLflow at the end of each training epoch."""
-        # Only log during fit, not during test
-        if getattr(trainer, "state", None) and getattr(trainer.state, "fn", None) != "fit":
-            return
-
-        self.current_epoch = trainer.current_epoch
-
-        # Only log once per epoch
-        if self.current_epoch in self.logged_train_epochs:
-            return
-
-        # Get training loss from callback metrics
-        if trainer.callback_metrics:
-            train_loss = trainer.callback_metrics.get("train_loss")
-            if train_loss is not None:
-                if isinstance(train_loss, torch.Tensor):
-                    train_loss = train_loss.item()
-
-                # Use shared metric logger
-                log_training_metrics(
-                    {"train_loss": float(train_loss)}, step=self.current_epoch
-                )
-
-                if not hasattr(pl_module, "train_losses"):
-                    pl_module.train_losses = []
-                pl_module.train_losses.append(train_loss)
-
-        # Mark this train epoch as logged
-        self.logged_train_epochs.add(self.current_epoch)
-
-        # Log learning rate if available
-        if hasattr(pl_module, "optimizers") and pl_module.optimizers():
-            optimizer = pl_module.optimizers()
-            if hasattr(optimizer, "param_groups") and optimizer.param_groups:
-                current_lr = optimizer.param_groups[0]["lr"]
-                log_training_metrics(
-                    {"learning_rate": float(current_lr)},
-                    step=self.current_epoch,
-                )
-
-    def on_validation_epoch_end(
-        self, trainer: pl.Trainer, pl_module: pl.LightningModule
-    ):
-        """
-        Log validation metrics to MLflow at the end of each validation epoch.
-        """
-        # Only log during fit, not during test
-        if getattr(trainer, "state", None) and getattr(trainer.state, "fn", None) != "fit":
-            return
-
-        self.current_epoch = trainer.current_epoch
-
-        # Only log once per epoch for validation
-        if self.current_epoch in self.logged_val_epochs:
-            return
-
-        # Get validation loss from callback metrics
-        if trainer.callback_metrics:
-            val_loss = trainer.callback_metrics.get("val_loss")
-            if val_loss is not None:
-                if isinstance(val_loss, torch.Tensor):
-                    val_loss = val_loss.item()
-
-                log_training_metrics(
-                    {"val_loss": float(val_loss)}, step=self.current_epoch
-                )
-
-                if not hasattr(pl_module, "val_losses"):
-                    pl_module.val_losses = []
-                pl_module.val_losses.append(val_loss)
-
-        # Mark this val epoch as logged
-        self.logged_val_epochs.add(self.current_epoch)
-
-
-class EncoderLightningModule(pl.LightningModule):
-    """
-    Generic PyTorch Lightning module for training neural encoders.
+    Inherits from BaseLightningModule and adds encoder-specific functionality:
+    - Computing correlation metrics between predicted and true firing rates
+    - Flexible optimizer_config/scheduler_config dict interface
 
     This module can work with any model architecture by accepting the model
     as a parameter instead of hardcoding it.
@@ -136,80 +50,104 @@ class EncoderLightningModule(pl.LightningModule):
         self,
         model: nn.Module,
         learning_rate: float = 1e-3,
-        optimizer_config: Optional[dict] = None,
-        loss_fn: str = "mse",  # "mse", "l1", "smooth_l1", "huber"
-        scheduler_config: Optional[dict] = None,
+        optimizer_config: Optional[Dict[str, Any]] = None,
+        loss_fn: str = "mse",
+        scheduler_config: Optional[Dict[str, Any]] = None,
     ):
-        super().__init__()
-        self.save_hyperparameters(ignore=["model"])
+        """Initialize the encoder lightning module.
 
-        self.model = model
-        self.learning_rate = learning_rate
-        self.optimizer_config = optimizer_config or {"type": "adam"}
-        self.scheduler_config = scheduler_config or {"type": "none"}
+        Args:
+            model: The encoder model to train
+            learning_rate: Learning rate for optimizer
+            optimizer_config: Dict with 'type' (adam/adamw/sgd) and optional
+                            'weight_decay', 'momentum' keys
+            loss_fn: Loss function ('mse', 'l1', 'smooth_l1', 'huber')
+            scheduler_config: Dict with 'type' (none/step/cosine/plateau) and
+                            optional 'step_size', 'gamma', 'patience' keys
+        """
+        # Convert config format
+        opt_config = optimizer_config or {"type": "adam"}
+        sched_config = scheduler_config or {"type": "none"}
 
-        # Set up loss function
-        if loss_fn == "mse":
-            self.loss_fn = nn.MSELoss()
-        elif loss_fn == "l1":
-            self.loss_fn = nn.L1Loss()
-        elif loss_fn == "smooth_l1":
-            self.loss_fn = nn.SmoothL1Loss()
-        elif loss_fn == "huber":
-            self.loss_fn = nn.HuberLoss()
-        else:
-            raise ValueError(f"Unsupported loss function: {loss_fn}")
+        super().__init__(
+            model=model,
+            learning_rate=learning_rate,
+            optimizer_type=opt_config.get("type", "adam"),
+            optimizer_config=opt_config,
+            loss_fn=loss_fn,
+            scheduler_type=sched_config.get("type", "none"),
+            scheduler_config=sched_config,
+        )
 
-        # Store training history for plotting
-        self.train_losses: list[float] = []
-        self.val_losses: list[float] = []
-        self.test_losses: list[float] = []
+        # Store config for logging/debugging access
+        self.optimizer_config = opt_config
+        self.scheduler_config = sched_config
 
-    def forward(self, x):
-        return self.model(x)
+    def training_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Encoder training step: predict firing rates from images.
 
-    def training_step(self, batch, batch_idx):
+        Args:
+            batch: Tuple of (images, firing_rates)
+            batch_idx: Index of the batch
+
+        Returns:
+            Loss tensor
+        """
         x, y = batch
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
 
-        # Log training loss - epoch level only
         self.log(
             "train_loss", loss, on_step=False, on_epoch=True, prog_bar=True
         )
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Encoder validation step.
+
+        Args:
+            batch: Tuple of (images, firing_rates)
+            batch_idx: Index of the batch
+
+        Returns:
+            Loss tensor
+        """
         x, y = batch
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
 
-        # Log validation loss (epoch-level only)
         self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
-    def test_step(self, batch, batch_idx):
+    def test_step(self, batch: tuple, batch_idx: int) -> torch.Tensor:
+        """Encoder test step with correlation metrics.
+
+        Computes both loss and neuron-wise correlation between predicted
+        and true firing rates.
+
+        Args:
+            batch: Tuple of (images, firing_rates)
+            batch_idx: Index of the batch
+
+        Returns:
+            Loss tensor
+        """
         x, y = batch
         pred = self.model(x)
         loss = self.loss_fn(pred, y)
 
-        # Log test loss
         self.log("test_loss", loss, on_step=False, on_epoch=True)
 
-        # Calculate correlation coefficient between true and predicted firing
-        # rates
-        # Convert to numpy for correlation calculation
+        # Calculate correlation coefficient between true and predicted firing rates
         y_np = y.detach().cpu().numpy()
         pred_np = pred.detach().cpu().numpy()
 
-        # Calculate correlation for each neuron
         correlations = []
         for i in range(y_np.shape[1]):
             corr = np.corrcoef(y_np[:, i], pred_np[:, i])[0, 1]
             if not np.isnan(corr):
                 correlations.append(corr)
 
-        # Log average correlation
         if correlations:
             avg_corr = np.mean(correlations)
             self.log(
@@ -217,129 +155,6 @@ class EncoderLightningModule(pl.LightningModule):
             )
 
         return loss
-
-    def configure_optimizers(self):
-        """Configure optimizer and scheduler."""
-        optimizer_type = self.optimizer_config.get("type", "adam")
-        weight_decay = self.optimizer_config.get("weight_decay", 0.0)
-
-        if optimizer_type == "adam":
-            optimizer = torch.optim.Adam(
-                self.parameters(),
-                lr=self.learning_rate,
-                weight_decay=weight_decay,
-            )
-        elif optimizer_type == "adamw":
-            optimizer = torch.optim.AdamW(
-                self.parameters(),
-                lr=self.learning_rate,
-                weight_decay=weight_decay,
-            )
-        elif optimizer_type == "sgd":
-            optimizer = torch.optim.SGD(
-                self.parameters(),
-                lr=self.learning_rate,
-                weight_decay=weight_decay,
-                momentum=0.9,
-            )
-        else:
-            raise ValueError(f"Unsupported optimizer: {optimizer_type}")
-
-        # Configure scheduler
-        scheduler_type = self.scheduler_config.get("type", "none")
-        if scheduler_type == "none":
-            return optimizer
-        elif scheduler_type == "step":
-            step_size = self.scheduler_config.get("step_size", 30)
-            gamma = self.scheduler_config.get("gamma", 0.1)
-            scheduler = torch.optim.lr_scheduler.StepLR(
-                optimizer, step_size=step_size, gamma=gamma
-            )
-        elif scheduler_type == "cosine":
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, T_max=self.trainer.max_epochs
-            )
-        elif scheduler_type == "plateau":
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode="min",
-                factor=0.1,
-                patience=5,
-            )
-        else:
-            raise ValueError(f"Unsupported scheduler: {scheduler_type}")
-
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "monitor": "val_loss" if scheduler_type == "plateau" else None,
-            },
-        }
-
-
-class TestEvaluationCallback(pl.Callback):
-    """Callback to evaluate test set during training epochs."""
-    
-    def __init__(self, test_dataloader):
-        self.test_dataloader = test_dataloader
-        self.test_losses = []
-    
-    def on_train_epoch_end(self, trainer, pl_module):
-        """Evaluate test set at the end of each training epoch."""
-        if self.test_dataloader is None:
-            return
-            
-        # Set model to evaluation mode
-        pl_module.eval()
-        
-        test_losses = []
-        with torch.no_grad():
-            for batch in self.test_dataloader:
-                if isinstance(batch, (list, tuple)) and len(batch) == 2:
-                    x, y = batch
-                    # Move to device
-                    x = x.to(pl_module.device)
-                    y = y.to(pl_module.device)
-                    
-                    # Forward pass
-                    pred = pl_module.model(x)
-                    loss = pl_module.loss_fn(pred, y)
-                    test_losses.append(loss.item())
-        
-        if test_losses:
-            avg_test_loss = np.mean(test_losses)
-            self.test_losses.append(avg_test_loss)
-            
-            # Store in the module
-            if not hasattr(pl_module, "test_losses"):
-                pl_module.test_losses = []
-            pl_module.test_losses.append(avg_test_loss)
-            
-            # Log to PyTorch Lightning
-            pl_module.log("test_loss_epoch", avg_test_loss, on_step=False, on_epoch=True)
-        
-        # Set model back to training mode
-        pl_module.train()
-
-
-class UnfreezeCallback(pl.Callback):
-    """Callback to unfreeze backbone layers at a specific epoch."""
-
-    def __init__(self, unfreeze_epoch: int):
-        super().__init__()
-        self.unfreeze_epoch = unfreeze_epoch
-
-    def on_train_epoch_start(self, trainer, pl_module):
-        if trainer.current_epoch == self.unfreeze_epoch:
-            print(f"Unfreezing backbone at epoch {self.unfreeze_epoch}")
-            # Use the model's unfreeze_backbone method if available
-            if hasattr(pl_module.model, "unfreeze_backbone"):
-                pl_module.model.unfreeze_backbone()
-            else:
-                # Fallback for models without the method
-                for param in pl_module.model.backbone.parameters():
-                    param.requires_grad = True
 
 
 def _train_single_model(
@@ -374,49 +189,56 @@ def _train_single_model(
         scheduler_config=scheduler_config,
     )
 
-    # Setup callbacks
-    if callbacks is None:
-        callbacks = []
-
-    # Add early stopping if enabled
-    if enable_early_stopping:
-        callbacks.append(
-            EarlyStopping(
-                monitor="val_loss",
-                patience=early_stopping_patience,
-                mode="min",
-                verbose=True,
-            )
-        )
-
-    # Add model checkpointing if enabled
-    if enable_checkpointing:
-        checkpoint_callback = ModelCheckpoint(
-            monitor="val_loss",
-            dirpath=get_path("workspace/checkpoints"),
-            filename=f"{model_name}-{{epoch:02d}}-{{val_loss:.4f}}",
-            save_top_k=3,
-            mode="min",
-            verbose=True,
-        )
-        callbacks.append(checkpoint_callback)
+    # Build additional callbacks for encoder-specific needs
+    additional_callbacks: List[Callback] = []
+    if callbacks:
+        additional_callbacks.extend(callbacks)
 
     # Add unfreeze callback if specified
     if unfreeze_epoch is not None:
-        callbacks.append(UnfreezeCallback(unfreeze_epoch=unfreeze_epoch))
+        additional_callbacks.append(UnfreezeCallback(unfreeze_epoch=unfreeze_epoch))
 
-    # Add MLflow history callback if MLflow is enabled
+    # Add verification callback if MLflow is enabled
     if enable_mlflow:
-        callbacks.append(MLflowHistoryCallback())
-
-        # Add verification callback
         verification_callback = EncoderVerificationCallback(
             data_module=data_module,
             save_model=True,
             model_save_dir=get_path("workspace/models/encoders"),
             enable_mlflow_logging=True,
         )
-        callbacks.append(verification_callback)
+        additional_callbacks.append(verification_callback)
+
+    # Create shared TrainingConfig
+    config = TrainingConfig(
+        epochs=epochs,
+        batch_size=data_module.batch_size if hasattr(data_module, "batch_size") else 32,
+        learning_rate=learning_rate,
+        optimizer_type=optimizer_config.get("type", "adam") if optimizer_config else "adam",
+        scheduler_type=scheduler_config.get("type", "none") if scheduler_config else "none",
+        loss_fn=loss_fn,
+        enable_mixed_precision=enable_mixed_precision,
+        enable_early_stopping=enable_early_stopping,
+        early_stopping_patience=early_stopping_patience,
+        enable_checkpointing=enable_checkpointing,
+        enable_mlflow=enable_mlflow,
+        enable_progress_bar=enable_progress_bar,
+        log_every_n_steps=log_every_n_steps,
+        model_name=model_name,
+    )
+
+    # Create callbacks using shared infrastructure
+    all_callbacks = create_standard_callbacks(
+        config,
+        checkpoint_filename_prefix=model_name,
+        additional_callbacks=additional_callbacks,
+    )
+
+    # Find checkpoint_callback for later use (MLflow logging)
+    checkpoint_callback = None
+    for cb in all_callbacks:
+        if hasattr(cb, "best_model_path"):
+            checkpoint_callback = cb
+            break
 
     # Setup loggers
     loggers: List[pl.loggers.Logger] = []
@@ -511,27 +333,8 @@ def _train_single_model(
             print(f"Warning: Could not log dataset metadata to MLflow: {e}")
             traceback.print_exc()
 
-    # Add LearningRateMonitor for learning rate tracking
-    # Only add when not using MLflow,
-    # since MLflowHistoryCallback already logs LR
-    if not enable_mlflow and loggers:
-        callbacks.extend([LearningRateMonitor(logging_interval="epoch")])
-
-    # Create trainer with enhanced configuration
-    trainer = pl.Trainer(
-        max_epochs=epochs,
-        callbacks=callbacks,
-        logger=loggers,
-        enable_progress_bar=enable_progress_bar,
-        log_every_n_steps=log_every_n_steps,
-        accelerator="auto",
-        devices="auto",
-        strategy="auto",
-        deterministic=False,  # set to true for reproducibility (pseudorandom)
-        enable_checkpointing=enable_checkpointing,
-        precision="16-mixed" if enable_mixed_precision else "32",
-        num_sanity_val_steps=0,
-    )
+    # Create trainer using shared infrastructure
+    trainer = create_trainer(config, callbacks=all_callbacks, loggers=loggers)
 
     # Train the model
     trainer.fit(lightning_model, data_module)
@@ -542,8 +345,7 @@ def _train_single_model(
     # Log final metrics to MLflow if enabled
     if enable_mlflow:
         try:
-            # Log final test loss if available (train_loss and val_loss
-            # are already logged by MLflowHistoryCallback)
+            # Log final test loss if available
             if test_results:
                 test_loss = test_results[0].get("test_loss")
                 if test_loss is not None:
@@ -552,7 +354,7 @@ def _train_single_model(
                     )
 
             # Log checkpoint path as parameter (not metric)
-            if enable_checkpointing and checkpoint_callback.best_model_path:
+            if enable_checkpointing and checkpoint_callback and checkpoint_callback.best_model_path:
                 mlflow.log_param(
                     "best_checkpoint_path", checkpoint_callback.best_model_path
                 )
