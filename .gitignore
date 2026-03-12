@@ -95,6 +95,7 @@ neurodecoders/decoder/output/*
 neurodecoders/synthetic/output/*
 
 workspace/*
+notebooks/*/workspace/*
 
 # .cursor
 .cursor/
@@ -107,3 +108,6 @@ mlruns/
 
 # lightning logs
 lightning_logs/
+
+tmp*/** 
+
