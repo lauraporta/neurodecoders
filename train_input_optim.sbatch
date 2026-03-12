@@ -7,7 +7,6 @@
 #SBATCH -n 1
 #SBATCH -t 00-00:20 # time (D-HH:MM)
 #SBATCH --exclude=gpu-sr670-21  # Exclude nodes with CUDA driver issues
-#SBATCH --array=0-6
 #SBATCH -o /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.out.txt
 #SBATCH -e /ceph/margrie/laura/neurodecoders/slurm/input_optim_%j.err.txt
 
@@ -46,7 +45,7 @@ IMAGE_SIZE=32  # Match encoder training size (CIFAR-10 resized to 32x32)
 
 # Define hyperparameter arrays
 LEARNING_RATES=(0.001) 
-IMAGE_IDS=("250" "0" "50" "100" "350" "400")  # Space-separated image IDs to reconstruct
+IMAGE_IDS=("250") # "0" "50" "100" "350" "400")  # Space-separated image IDs to reconstruct
 SCHEDULERS=("none")  # Learning rate scheduler options
 LOSS_FUNCTIONS=("poisson_mean")  # Loss function options
 BLUR_SIGMAS=(0)  # Gaussian blur sigma values for gradient smoothing

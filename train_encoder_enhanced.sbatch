@@ -44,7 +44,7 @@ EPOCHS=100
 # Define hyperparameter arrays
 LEARNING_RATES=(1e-3)
 BATCH_SIZES=(32)
-MODEL_TYPES=("resnet_conv_only" "simple3layer")  # New spatial readout model
+MODEL_TYPES=("resnet_scratch" "resnet_conv_2layer")  # New spatial readout model
 OPTIMIZERS=("adam")
 SCHEDULERS=("plateau")  # Reduce LR on plateau for better convergence
 DATASETS=("gabor,11,11")  # Small kernels for 32x32 images
@@ -99,7 +99,7 @@ DATASET=${DATASETS[$DATASET_IDX]}
 DATASET_TYPE=${DATASET_TYPES[$DATASET_TYPE_IDX]}
 
 # Create run name with all hyperparameters
-RUN_NAME="model_${MODEL_TYPE}_dataset_${DATASET}_lr_${LEARNING_RATE}_sched_${SCHEDULER}_type_${DATASET_TYPE}_paper_approach"
+RUN_NAME="model_${MODEL_TYPE}_dataset_${DATASET}_lr_${LEARNING_RATE}_sched_${SCHEDULER}_type_${DATASET_TYPE}_test_fixed"
 EXPERIMENT_NAME="long_training_paper_approach"
 
 echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNING_RATE, batch_size=$BATCH_SIZE, optimizer=$OPTIMIZER, scheduler=$SCHEDULER, epochs=$EPOCHS, dataset=$DATASET, dataset_type=$DATASET_TYPE"
@@ -119,7 +119,8 @@ echo "Array Task $TASK_ID of $TOTAL_COMBINATIONS: model=$MODEL_TYPE, lr=$LEARNIN
     --sta-type "$DATASET" \
     --dataset-type "$DATASET_TYPE" \
     --n-neurons 5000 \
-    --n-images 8000 \
+    --n-train-images 8000 \
+    --n-test-images 2000 \
     --cv-folds 1 \
     --experiment-name "$EXPERIMENT_NAME" \
     --run-name "$RUN_NAME" 
