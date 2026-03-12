@@ -28,7 +28,7 @@ import torch.nn as nn
 import mlflow
 
 from neurodecoders.input_optim.optimizer import load_encoder_from_mlflow
-from neurodecoders.input_optim.mlflow_run import _load_original_images_from_dataset
+from neurodecoders.input_optim.mlflow_run import _load_dataset_info
 from neurodecoders.paths import get_path
 
 #%% 
@@ -187,7 +187,8 @@ def run_inspect(
     encoder.eval()
 
     print("Loading original images from dataset")
-    original_images = _load_original_images_from_dataset(model_id, image_ids)
+    dataset_info = _load_dataset_info(model_id)
+    original_images = dataset_info.get_images(image_ids)
 
     # Ensure images are torch tensors with correct shape (N, C, H, W)
     imgs = np.stack(original_images, axis=0)
