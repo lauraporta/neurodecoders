@@ -37,6 +37,7 @@ from tqdm import tqdm
 from neurodecoders.config import get_base_path, get_mlflow_tracking_uri
 from neurodecoders.data.loading import (
     compute_and_apply_normalization,
+    DatasetConfig,
     load_synthetic_split_data,
 )
 from neurodecoders.mlflow_utils.utils import (
@@ -366,13 +367,13 @@ def train_encoder(config: ExperimentConfig) -> Tuple[str, float]:
     print("="*80)
     
     # Load data
-    data_config = {
-        "n_neurons": config.n_neurons,
-        "n_train_images": config.n_train_images,
-        "n_test_images": config.n_test_images,
-        "dataset_type": config.dataset_type,
-        "sta_type": config.sta_type,
-    }
+    data_config = DatasetConfig(
+        n_neurons=config.n_neurons,
+        n_train_images=config.n_train_images,
+        n_test_images=config.n_test_images,
+        dataset_type=config.dataset_type,
+        sta_type=config.sta_type,
+    )
     
     train_images, train_firing, train_labels, train_meta = load_synthetic_split_data(
         data_config, split="train"
@@ -497,13 +498,13 @@ def run_input_optimization(
     encoder.eval()
     
     # Load test data
-    data_config = {
-        "n_neurons": config.n_neurons,
-        "n_train_images": config.n_train_images,
-        "n_test_images": config.n_test_images,
-        "dataset_type": config.dataset_type,
-        "sta_type": config.sta_type,
-    }
+    data_config = DatasetConfig(
+        n_neurons=config.n_neurons,
+        n_train_images=config.n_train_images,
+        n_test_images=config.n_test_images,
+        dataset_type=config.dataset_type,
+        sta_type=config.sta_type,
+    )
     
     test_images, test_firing, _, test_meta = load_synthetic_split_data(data_config, split="test")
     
@@ -583,13 +584,13 @@ def run_diffusion_decoder(
     device = get_device()
     
     # Load data
-    data_config = {
-        "n_neurons": config.n_neurons,
-        "n_train_images": config.n_train_images,
-        "n_test_images": config.n_test_images,
-        "dataset_type": config.dataset_type,
-        "sta_type": config.sta_type,
-    }
+    data_config = DatasetConfig(
+        n_neurons=config.n_neurons,
+        n_train_images=config.n_train_images,
+        n_test_images=config.n_test_images,
+        dataset_type=config.dataset_type,
+        sta_type=config.sta_type,
+    )
     
     train_images, train_firing, _, _ = load_synthetic_split_data(data_config, split="train")
     test_images, test_firing, _, _ = load_synthetic_split_data(data_config, split="test")
@@ -694,13 +695,13 @@ def run_encoder_guided_decoder(
     encoder.eval()
     
     # Load data
-    data_config = {
-        "n_neurons": config.n_neurons,
-        "n_train_images": config.n_train_images,
-        "n_test_images": config.n_test_images,
-        "dataset_type": config.dataset_type,
-        "sta_type": config.sta_type,
-    }
+    data_config = DatasetConfig(
+        n_neurons=config.n_neurons,
+        n_train_images=config.n_train_images,
+        n_test_images=config.n_test_images,
+        dataset_type=config.dataset_type,
+        sta_type=config.sta_type,
+    )
     
     train_images, train_firing, _, _ = load_synthetic_split_data(data_config, split="train")
     test_images, test_firing, _, _ = load_synthetic_split_data(data_config, split="test")
@@ -830,13 +831,13 @@ def run_comparison_experiment(config: ExperimentConfig):
             raise ValueError(f"--encoder-run-id required for mode '{config.mode}'")
         
         # Load test data for metrics
-        data_config = {
-            "n_neurons": config.n_neurons,
-            "n_train_images": config.n_train_images,
-            "n_test_images": config.n_test_images,
-            "dataset_type": config.dataset_type,
-            "sta_type": config.sta_type,
-        }
+        data_config = DatasetConfig(
+            n_neurons=config.n_neurons,
+            n_train_images=config.n_train_images,
+            n_test_images=config.n_test_images,
+            dataset_type=config.dataset_type,
+            sta_type=config.sta_type,
+        )
         
         test_images, test_firing, _, test_meta = load_synthetic_split_data(data_config, split="test")
         train_images, train_firing, _, _ = load_synthetic_split_data(data_config, split="train")

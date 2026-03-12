@@ -4,11 +4,69 @@ Shared data loading and preprocessing utilities for encoder and decoder.
 
 import datetime
 import os
-from typing import Any, Dict, Tuple
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 
 from neurodecoders.paths import get_path
+
+
+@dataclass
+class DatasetConfig:
+    """
+    Configuration for dataset selection criteria.
+    
+    This dataclass separates dataset selection parameters from training
+    parameters, providing a clean interface for data loading.
+    
+    Attributes:
+        n_neurons: Number of neurons to match in the dataset.
+        n_images: Number of images (fallback if split-specific not provided).
+        n_train_images: Number of training images (overrides n_images for train).
+        n_test_images: Number of test images (overrides n_images for test).
+        dataset_type: Dataset type (e.g., 'cifar10', 'mnist').
+        sta_type: STA type (e.g., 'gabor,11,11').
+        use_memory_mapping: Whether to use memory mapping for large datasets.
+    
+    Example:
+        config = DatasetConfig(
+            n_neurons=5000,
+            n_train_images=8000,
+            n_test_images=2000,
+            dataset_type="cifar10",
+            sta_type="gabor,11,11"
+        )
+        train_data = load_synthetic_split_data(config, split="train")
+    """
+    n_neurons: Optional[int] = None
+    n_images: Optional[int] = None
+    n_train_images: Optional[int] = None
+    n_test_images: Optional[int] = None
+    dataset_type: str = ""
+    sta_type: str = ""
+    use_memory_mapping: bool = False
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for backward compatibility."""
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, config: Dict[str, Any]) -> "DatasetConfig":
+        """
+        Create DatasetConfig from a dictionary.
+        
+        Only extracts dataset-relevant keys, ignoring training parameters.
+        """
+        return cls(
+            n_neurons=config.get("n_neurons"),
+            n_images=config.get("n_images"),
+            n_train_images=config.get("n_train_images"),
+            n_test_images=config.get("n_test_images"),
+            dataset_type=config.get("dataset_type", ""),
+            sta_type=config.get("sta_type", ""),
+            use_memory_mapping=config.get("use_memory_mapping", False),
+        )
 
 
 def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
@@ -57,27 +115,39 @@ def parse_dataset_metadata(filename: str) -> Dict[str, Any]:
 
 
 def load_synthetic_split_data(
-    config: Dict[str, Any],
+    config: Union[Dict[str, Any], DatasetConfig],
     split: str = "train",
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     """
     Load synthetic data from workspace/datasets/synthetic split structure.
     
     Args:
-        config: Configuration dictionary. Supports:
+        config: DatasetConfig or dictionary with dataset selection parameters:
             - n_neurons: Number of neurons to match
             - n_images: Number of images (used if n_train_images/n_test_images not specified)
             - n_train_images: Number of training images (overrides n_images for train split)
             - n_test_images: Number of test images (overrides n_images for test split)
             - dataset_type: Dataset type (e.g., 'cifar10')
             - sta_type: STA type (e.g., 'gabor,100,100')
+            - use_memory_mapping: Whether to use memory mapping (default: False)
         split: Which split to load - "train" or "test" (default: "train")
     
     Returns:
         images, firing_rates, labels, and metadata.
         
     Example:
-        # Load train data with 8000 images and test data with 2000 images
+        # Using DatasetConfig (recommended)
+        config = DatasetConfig(
+            n_neurons=5000,
+            n_train_images=8000,
+            n_test_images=2000,
+            dataset_type="cifar10",
+            sta_type="gabor,11,11"
+        )
+        train_data = load_synthetic_split_data(config, split="train")
+        test_data = load_synthetic_split_data(config, split="test")
+        
+        # Using dictionary (backward compatible)
         config = {
             "n_neurons": 5000,
             "n_train_images": 8000,
@@ -86,10 +156,15 @@ def load_synthetic_split_data(
             "sta_type": "gabor,11,11"
         }
         train_data = load_synthetic_split_data(config, split="train")
-        test_data = load_synthetic_split_data(config, split="test")
     """
     if split not in ["train", "test"]:
         raise ValueError(f"split must be 'train' or 'test', got '{split}'")
+    
+    # Convert DatasetConfig to dict for internal processing
+    if isinstance(config, DatasetConfig):
+        config_dict = config.to_dict()
+    else:
+        config_dict = config
     
     synthetic_dir = get_path("workspace/datasets/synthetic")
     train_dir = os.path.join(synthetic_dir, "train")
@@ -101,7 +176,7 @@ def load_synthetic_split_data(
             "Please run the synthetic data generation first."
         )
 
-    return _load_from_split_structure(config, synthetic_dir, split)
+    return _load_from_split_structure(config_dict, synthetic_dir, split)
 
 
 def _load_from_split_structure(
@@ -117,14 +192,16 @@ def _load_from_split_structure(
         )
 
     n_neurons = (
-        str(int(config["n_neurons"])) if "n_neurons" in config else None
+        str(int(config["n_neurons"])) 
+        if config.get("n_neurons") is not None 
+        else None
     )
     
     # Use split-specific n_images if provided, otherwise fall back to n_images
     n_images_key = f"n_{split}_images"
-    if n_images_key in config and config[n_images_key] is not None:
+    if config.get(n_images_key) is not None:
         n_images = str(int(config[n_images_key]))
-    elif "n_images" in config and config["n_images"] is not None:
+    elif config.get("n_images") is not None:
         n_images = str(int(config["n_images"]))
     else:
         n_images = None

@@ -3,6 +3,7 @@ Shared data utilities for encoder and decoder modules.
 """
 
 from .datasets import NeuralDataset, NeuralDataModule  # noqa: F401
+from .loading import DatasetConfig, load_synthetic_split_data  # noqa: F401
 from .preprocessing import (  # noqa: F401
     apply_normalization,
     compute_and_apply_normalization,
