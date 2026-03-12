@@ -6,7 +6,7 @@ neural firing rates.
 """
 
 import math
-from typing import Optional
+from typing import Optional, Literal
 
 import torch
 import torch.nn as nn
@@ -30,28 +30,28 @@ class SimpleDecoder(nn.Module):
 
         self.fc = nn.Sequential(
             nn.Linear(in_neurons, 512),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Dropout(0.3),
             nn.Linear(512, 1024),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Dropout(0.3),
             nn.Linear(1024, 8 * 8 * 128),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
         )
 
         self.deconv = nn.Sequential(
             nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
             nn.Conv2d(128, 64, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(64),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
             nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(32),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
             nn.Conv2d(32, 16, kernel_size=3, stride=1, padding=1),
             nn.BatchNorm2d(16),
-            nn.ReLU(),
+            nn.LeakyReLU(0.1),
             nn.Conv2d(16, 1, kernel_size=3, stride=1, padding=1),
             nn.Tanh(),  # Output [-1, 1], then scaled by output_scale
         )
@@ -210,6 +210,11 @@ class ConditionalUNet(nn.Module):
     U-Net architecture conditioned on neural activity and timestep.
     
     Used as the denoising network in the diffusion decoder.
+    
+    Args:
+        neural_embed_type: Type of neural embedding
+            - 'simple': 2-layer MLP (default)
+            - 'deep': 4-layer MLP with residual connections
     """
     
     def __init__(
@@ -219,9 +224,11 @@ class ConditionalUNet(nn.Module):
         channel_mults: tuple = (1, 2, 4),
         neural_dim: int = 100,
         time_dim: int = 128,
+        neural_embed_type: str = 'simple',
     ):
         super().__init__()
         self.time_dim = time_dim
+        self.neural_embed_type = neural_embed_type
         
         # Time embedding
         self.time_mlp = nn.Sequential(
@@ -232,11 +239,29 @@ class ConditionalUNet(nn.Module):
         )
         
         # Neural activity embedding
-        self.neural_mlp = nn.Sequential(
-            nn.Linear(neural_dim, time_dim * 2),
-            nn.GELU(),
-            nn.Linear(time_dim * 2, time_dim),
-        )
+        if neural_embed_type == 'deep':
+            # Deeper MLP with residual-like structure
+            hidden_dim = time_dim * 4
+            self.neural_mlp = nn.Sequential(
+                nn.Linear(neural_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU(),
+                nn.Dropout(0.1),
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.LayerNorm(hidden_dim),
+                nn.GELU(),
+                nn.Linear(hidden_dim, time_dim),
+            )
+        else:  # 'simple'
+            self.neural_mlp = nn.Sequential(
+                nn.Linear(neural_dim, time_dim * 2),
+                nn.GELU(),
+                nn.Linear(time_dim * 2, time_dim),
+            )
         
         # Encoder path
         self.enc_blocks = nn.ModuleList()
@@ -362,6 +387,7 @@ class DiffusionDecoder(nn.Module):
         beta_start: Starting beta for noise schedule (default: 1e-4)
         beta_end: Ending beta for noise schedule (default: 0.02)
         output_scale: Scale factor for output clipping to match z-scored image range (default: 2.5)
+        neural_embed_type: Type of neural embedding ('simple' or 'deep')
     """
     
     def __init__(
@@ -374,6 +400,7 @@ class DiffusionDecoder(nn.Module):
         beta_start: float = 1e-4,
         beta_end: float = 0.02,
         output_scale: float = 2.5,
+        neural_embed_type: str = 'simple',
     ):
         super().__init__()
         self.image_size = image_size
@@ -387,6 +414,7 @@ class DiffusionDecoder(nn.Module):
             channel_mults=channel_mults,
             neural_dim=in_neurons,
             time_dim=128,
+            neural_embed_type=neural_embed_type,
         )
         
         # Setup noise schedule
@@ -614,3 +642,279 @@ def get_decoder_model(
             f"Unknown decoder model type: {model_type}. "
             f"Supported types: 'simple', 'transformer', 'diffusion'"
         )
+
+
+# ==============================================================================
+# Encoder-Guided Decoder
+# ==============================================================================
+
+class EncoderGuidedDecoder(nn.Module):
+    """
+    Decoder trained with a frozen encoder in the loop.
+    
+    Architecture:
+        firing_rates -> decoder (trainable) -> image -> encoder (frozen) -> predicted_firing_rates
+    
+    The loss is computed on firing rates, encouraging the decoder to generate
+    images that drive the encoder (proxy for real neurons) to produce the
+    desired neural activity pattern.
+    
+    This approach focuses on functional similarity (matching neural responses)
+    rather than pixel-level reconstruction.
+    
+    Args:
+        decoder: Base decoder model (SimpleDecoder or TransformerDecoder)
+        encoder: Pre-trained encoder model (will be frozen)
+        loss_type: Loss function for comparing firing rates
+            - 'mse': Mean squared error
+            - 'poisson': Poisson negative log-likelihood
+            - 'correlation': Negative correlation (1 - corr)
+            - 'combined': MSE + correlation
+        loss_weights: Dict of weights for combined loss (default: {'mse': 1.0, 'correlation': 0.1})
+        tv_weight: Weight for Total Variation loss (regularizes high-frequency noise)
+    """
+    
+    def __init__(
+        self,
+        decoder: nn.Module,
+        encoder: nn.Module,
+        loss_type: Literal['mse', 'poisson', 'correlation', 'combined'] = 'mse',
+        loss_weights: Optional[dict] = None,
+        tv_weight: float = 0.0,
+    ):
+        super().__init__()
+        self.decoder = decoder
+        self.encoder = encoder
+        self.loss_type = loss_type
+        self.loss_weights = loss_weights or {'mse': 1.0, 'correlation': 0.1}
+        self.tv_weight = tv_weight
+        
+        # Freeze encoder weights
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+        self.encoder.eval()
+        
+        # Loss functions
+        self.mse_loss = nn.MSELoss()
+        self.poisson_loss = nn.PoissonNLLLoss(log_input=False, reduction='mean')
+        self.softplus = nn.Softplus()
+    
+    def forward(
+        self, 
+        firing_rates: torch.Tensor,
+        return_images: bool = False,
+    ) -> torch.Tensor:
+        """
+        Forward pass: decode firing rates to images.
+        
+        Args:
+            firing_rates: Input firing rates (B, N_neurons)
+            return_images: If True, return generated images instead of predicted rates
+        
+        Returns:
+            Generated images if return_images=True, else predicted firing rates
+        """
+        # Decode firing rates to images
+        images = self.decoder(firing_rates)
+        
+        if return_images:
+            return images
+        
+        # Pass through frozen encoder to get predicted firing rates
+        with torch.no_grad():
+            # Ensure encoder is in eval mode
+            self.encoder.eval()
+        
+        # Forward through encoder (gradients flow through decoder only)
+        predicted_rates = self.encoder(images)
+        
+        return predicted_rates
+    
+    def compute_loss(
+        self,
+        firing_rates: torch.Tensor,
+        target_images: Optional[torch.Tensor] = None,
+    ) -> dict:
+        """
+        Compute the training loss.
+        
+        Args:
+            firing_rates: Target firing rates (B, N_neurons)
+            target_images: Original images (optional, for logging pixel loss)
+        
+        Returns:
+            Dict with 'loss' (total), 'firing_rate_loss', and optionally 'pixel_loss'
+        """
+        # Generate images
+        images = self.decoder(firing_rates)
+        
+        # Get predicted firing rates from encoder
+        predicted_rates = self.encoder(images)
+        
+        # Compute firing rate loss based on loss type
+        losses = {}
+        
+        if self.loss_type == 'mse':
+            fr_loss = self.mse_loss(predicted_rates, firing_rates)
+            losses['firing_rate_loss'] = fr_loss
+            losses['loss'] = fr_loss
+            
+        elif self.loss_type == 'poisson':
+            # Ensure positive rates for Poisson loss
+            pred_positive = self.softplus(predicted_rates)
+            target_positive = self.softplus(firing_rates)
+            fr_loss = self.poisson_loss(pred_positive, target_positive)
+            losses['firing_rate_loss'] = fr_loss
+            losses['loss'] = fr_loss
+            
+        elif self.loss_type == 'correlation':
+            # Negative correlation (we want to maximize correlation, so minimize negative)
+            corr_loss = self._correlation_loss(predicted_rates, firing_rates)
+            losses['firing_rate_loss'] = corr_loss
+            losses['correlation'] = 1.0 - corr_loss  # Actual correlation value
+            losses['loss'] = corr_loss
+            
+        elif self.loss_type == 'combined':
+            mse_loss = self.mse_loss(predicted_rates, firing_rates)
+            corr_loss = self._correlation_loss(predicted_rates, firing_rates)
+            
+            total_loss = (
+                self.loss_weights.get('mse', 1.0) * mse_loss + 
+                self.loss_weights.get('correlation', 0.1) * corr_loss
+            )
+            
+            losses['mse_loss'] = mse_loss
+            losses['correlation_loss'] = corr_loss
+            losses['correlation'] = 1.0 - corr_loss
+            losses['firing_rate_loss'] = total_loss
+            losses['loss'] = total_loss
+        else:
+            raise ValueError(f"Unknown loss type: {self.loss_type}")
+        
+        # Total Variation loss for smoothness (reduces high-frequency noise)
+        if self.tv_weight > 0:
+            tv_loss = self._total_variation_loss(images)
+            losses['tv_loss'] = tv_loss
+            losses['loss'] = losses['loss'] + self.tv_weight * tv_loss
+        
+        # Optionally compute pixel loss for monitoring (not used in training)
+        if target_images is not None:
+            pixel_loss = self.mse_loss(images, target_images)
+            losses['pixel_loss'] = pixel_loss
+        
+        return losses
+    
+    def _total_variation_loss(self, images: torch.Tensor) -> torch.Tensor:
+        """
+        Compute Total Variation loss to encourage spatial smoothness.
+        
+        TV loss penalizes differences between adjacent pixels,
+        reducing high-frequency noise in generated images.
+        
+        Args:
+            images: Generated images (B, C, H, W)
+        
+        Returns:
+            Scalar TV loss
+        """
+        # Horizontal differences
+        diff_h = torch.abs(images[:, :, :, 1:] - images[:, :, :, :-1])
+        # Vertical differences  
+        diff_v = torch.abs(images[:, :, 1:, :] - images[:, :, :-1, :])
+        
+        # Mean over all pixels
+        tv_loss = diff_h.mean() + diff_v.mean()
+        return tv_loss
+    
+    def _correlation_loss(
+        self, 
+        pred: torch.Tensor, 
+        target: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Compute negative Pearson correlation as a loss.
+        
+        Correlation is computed across neurons for each sample, then averaged.
+        Returns 1 - correlation so that minimizing loss maximizes correlation.
+        """
+        # Compute correlation for each sample in batch
+        # pred, target: (B, N_neurons)
+        
+        # Center the data
+        pred_centered = pred - pred.mean(dim=1, keepdim=True)
+        target_centered = target - target.mean(dim=1, keepdim=True)
+        
+        # Compute correlation
+        numerator = (pred_centered * target_centered).sum(dim=1)
+        denominator = torch.sqrt(
+            (pred_centered ** 2).sum(dim=1) * (target_centered ** 2).sum(dim=1)
+        )
+        
+        # Add small epsilon for numerical stability
+        correlation = numerator / (denominator + 1e-8)
+        
+        # Return 1 - mean_correlation as loss (to minimize)
+        return 1.0 - correlation.mean()
+    
+    def get_generated_images(self, firing_rates: torch.Tensor) -> torch.Tensor:
+        """Generate images from firing rates (convenience method)."""
+        return self.forward(firing_rates, return_images=True)
+
+
+def create_encoder_guided_decoder(
+    encoder: nn.Module,
+    in_neurons: int,
+    image_size: int = 64,
+    base_decoder_type: str = 'simple',
+    loss_type: str = 'mse',
+    loss_weights: Optional[dict] = None,
+    tv_weight: float = 0.0,
+    **decoder_kwargs,
+) -> EncoderGuidedDecoder:
+    """
+    Factory function to create an encoder-guided decoder.
+    
+    Args:
+        encoder: Pre-trained encoder model
+        in_neurons: Number of input neurons
+        image_size: Output image size
+        base_decoder_type: Type of base decoder ('simple' or 'transformer')
+        loss_type: Loss function type ('mse', 'poisson', 'correlation', 'combined')
+        loss_weights: Weights for combined loss
+        tv_weight: Weight for Total Variation loss (0.0 = disabled, try 0.001-0.1)
+        **decoder_kwargs: Additional kwargs passed to base decoder
+    
+    Returns:
+        EncoderGuidedDecoder instance
+    
+    Example:
+        encoder = load_encoder_from_mlflow(run_id)
+        model = create_encoder_guided_decoder(
+            encoder=encoder,
+            in_neurons=5000,
+            image_size=64,
+            base_decoder_type='simple',
+            loss_type='combined',
+        )
+    """
+    # Create base decoder (only simple and transformer supported)
+    if base_decoder_type.lower() not in ['simple', 'transformer']:
+        raise ValueError(
+            f"base_decoder_type must be 'simple' or 'transformer', got '{base_decoder_type}'"
+        )
+    
+    base_decoder = get_decoder_model(
+        model_type=base_decoder_type,
+        in_neurons=in_neurons,
+        image_size=image_size,
+        **decoder_kwargs,
+    )
+    
+    return EncoderGuidedDecoder(
+        decoder=base_decoder,
+        encoder=encoder,
+        loss_type=loss_type,
+        loss_weights=loss_weights,
+        tv_weight=tv_weight,
+    )
+
