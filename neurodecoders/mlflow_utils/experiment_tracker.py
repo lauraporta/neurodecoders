@@ -4,6 +4,10 @@ Enhanced MLflow experiment tracker for neurodecoders.
 This module provides a unified interface for tracking experiments,
 logging hyperparameters, metrics, and model artifacts for both
 encoder and decoder training.
+
+Note: The MLflowExperimentTracker class delegates to setup_mlflow_experiment()
+from utils.py to avoid code duplication. For simple use cases, you can also
+use setup_mlflow_experiment() directly.
 """
 
 import json
@@ -15,6 +19,8 @@ import mlflow.pytorch
 import torch.nn as nn
 from pytorch_lightning import LightningModule
 
+from neurodecoders.mlflow_utils.utils import setup_mlflow_experiment
+
 
 class MLflowExperimentTracker:
     """
@@ -23,6 +29,9 @@ class MLflowExperimentTracker:
     This class provides a unified interface for tracking experiments,
     logging hyperparameters, metrics, and model artifacts for both
     encoder and decoder training.
+
+    For simpler use cases, you can directly use setup_mlflow_experiment()
+    from neurodecoders.mlflow_utils.utils instead of this class.
     """
 
     def __init__(
@@ -41,39 +50,12 @@ class MLflowExperimentTracker:
         """
         self.experiment_name = experiment_name
 
-        # Set tracking URI if provided, otherwise use config
-        if tracking_uri:
-            mlflow.set_tracking_uri(tracking_uri)
-        else:
-            # Load from config (supports both database and file system)
-            try:
-                from neurodecoders.config import get_mlflow_tracking_uri
-                config_uri = get_mlflow_tracking_uri()
-                if config_uri:
-                    mlflow.set_tracking_uri(config_uri)
-            except Exception as e:
-                print(f"Warning: Could not load tracking URI from config: {e}")
-
-        # Resolve or create the experiment in a race-safe way
-        exp = mlflow.get_experiment_by_name(experiment_name)
-        if exp is None:
-            try:
-                experiment_id = mlflow.create_experiment(
-                    experiment_name, artifact_location=artifact_location
-                )
-            except Exception:
-                # Another process may have created it; fetch again
-                fetched = mlflow.get_experiment_by_name(experiment_name)
-                if fetched is None:
-                    # Fall back to Default to avoid crashes
-                    mlflow.set_experiment("Default")
-                    return
-                else:
-                    experiment_id = fetched.experiment_id
-        else:
-            experiment_id = exp.experiment_id
-
-        mlflow.set_experiment(experiment_id=experiment_id)
+        # Delegate to the canonical setup function to avoid code duplication
+        setup_mlflow_experiment(
+            experiment_name=experiment_name,
+            tracking_uri=tracking_uri,
+            artifact_location=artifact_location,
+        )
 
     def start_run(
         self,
