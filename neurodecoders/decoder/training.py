@@ -103,6 +103,10 @@ class DecoderLightningModule(pl.LightningModule):
         optimizer_type: str = "adam",
         model_type: str = "simple",
         model_kwargs: Optional[dict] = None,
+        scheduler_type: str = "none",
+        scheduler_step_size: int = 30,
+        scheduler_gamma: float = 0.1,
+        max_epochs: int = 100,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -122,6 +126,12 @@ class DecoderLightningModule(pl.LightningModule):
         self.optimizer_type = optimizer_type
         self.model_type = model_type
         self.is_diffusion = model_type == "diffusion"
+        
+        # Scheduler config
+        self.scheduler_type = scheduler_type
+        self.scheduler_step_size = scheduler_step_size
+        self.scheduler_gamma = scheduler_gamma
+        self.max_epochs = max_epochs
 
         if loss_fn == "mse":
             self.criterion = nn.MSELoss()
@@ -209,12 +219,50 @@ class DecoderLightningModule(pl.LightningModule):
             )
         else:
             raise ValueError(f"Unsupported optimizer: {self.optimizer_type}")
-        return opt
+        
+        # Return optimizer only if no scheduler
+        if self.scheduler_type == "none":
+            return opt
+        
+        # Configure scheduler
+        if self.scheduler_type == "step":
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                opt,
+                step_size=self.scheduler_step_size,
+                gamma=self.scheduler_gamma,
+            )
+        elif self.scheduler_type == "cosine":
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                opt,
+                T_max=self.max_epochs,
+                eta_min=self.learning_rate * 0.01,  # Min LR is 1% of initial
+            )
+        elif self.scheduler_type == "reduce_on_plateau":
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+                opt,
+                mode="min",
+                factor=self.scheduler_gamma,
+                patience=10,
+                verbose=True,
+            )
+            return {
+                "optimizer": opt,
+                "lr_scheduler": {
+                    "scheduler": scheduler,
+                    "monitor": "val_loss",
+                },
+            }
+        else:
+            raise ValueError(f"Unsupported scheduler: {self.scheduler_type}")
+        
+        return {"optimizer": opt, "lr_scheduler": scheduler}
 
 
 def train_decoder(
     images,
     firing_rates,
+    test_images=None,
+    test_firing_rates=None,
     batch_size: int = 32,
     epochs: int = 100,
     learning_rate: float = 1e-4,
@@ -222,6 +270,9 @@ def train_decoder(
     loss_fn: str = "mse",
     model_type: str = "simple",
     model_kwargs: Optional[dict] = None,
+    scheduler: str = "none",
+    scheduler_step_size: int = 30,
+    scheduler_gamma: float = 0.1,
     num_workers: int = 0,
     pin_memory: bool = True,
     enable_mixed_precision: bool = True,
@@ -237,6 +288,8 @@ def train_decoder(
     Args:
         images: Training images array
         firing_rates: Neural firing rates array
+        test_images: Test images array (optional, recommended to prevent data leakage)
+        test_firing_rates: Test firing rates array (optional, recommended to prevent data leakage)
         batch_size: Batch size for training
         epochs: Number of training epochs
         learning_rate: Learning rate
@@ -246,6 +299,9 @@ def train_decoder(
         model_kwargs: Additional model-specific parameters:
             For 'transformer': patch_size, embed_dim, num_heads, num_layers, mlp_ratio, dropout
             For 'diffusion': base_channels, channel_mults, timesteps, beta_start, beta_end
+        scheduler: Learning rate scheduler ('none', 'step', 'cosine', 'reduce_on_plateau')
+        scheduler_step_size: Step size for step scheduler
+        scheduler_gamma: Gamma for step scheduler
         num_workers: Number of data loader workers
         pin_memory: Whether to pin memory for GPU transfer
         enable_mixed_precision: Enable 16-bit mixed precision
@@ -262,6 +318,9 @@ def train_decoder(
         images=images,
         firing_rates=firing_rates,
         labels=None,
+        test_images=test_images,
+        test_firing_rates=test_firing_rates,
+        test_labels=None,
         batch_size=batch_size,
         dataset_metadata={},
         use_memory_mapping=False,
@@ -279,6 +338,10 @@ def train_decoder(
         optimizer_type=optimizer,
         model_type=model_type,
         model_kwargs=model_kwargs,
+        scheduler_type=scheduler,
+        scheduler_step_size=scheduler_step_size,
+        scheduler_gamma=scheduler_gamma,
+        max_epochs=epochs,
     )
 
     callbacks: List[pl.Callback] = [
@@ -315,6 +378,7 @@ def train_decoder(
         precision="16-mixed" if enable_mixed_precision else "32",
         log_every_n_steps=10,
         enable_checkpointing=enable_checkpointing,
+        gradient_clip_val=1.0,  # Prevent NaN loss from gradient explosion
     )
 
     trainer.fit(lightning_model, data_module)

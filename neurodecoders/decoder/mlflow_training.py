@@ -10,7 +10,7 @@ import mlflow
 import numpy as np
 
 from neurodecoders.data.loading import (
-    normalize_images_and_rates,
+    compute_and_apply_normalization,
     load_synthetic_split_data,
 )
 from neurodecoders.decoder.training import train_decoder
@@ -53,38 +53,67 @@ def main(config: Dict[str, Any]):
             config, split="train"
         )
         
-        print("Loading test data for decoder training...")
+        print("Loading test data for decoder evaluation...")
         test_images, test_firing, _, test_metadata = load_synthetic_split_data(
             config, split="test"
         )
         
-        # Use data as-is without additional normalization
+        # Use training data for model training
         # Synthetic images are already in [0, 1] from ToTensor()
         # Firing rates are raw simulated responses
-        images, firing = test_images, test_firing
+        print(f"Train images shape: {train_images.shape}")
+        print(f"Train images range: [{train_images.min():.4f}, {train_images.max():.4f}]")
+        print(f"Train firing rates shape: {train_firing.shape}")
+        print(f"Train firing rates range: [{train_firing.min():.4f}, {train_firing.max():.4f}]")
         
-        print(f"Images shape: {images.shape}")
-        print(f"Images range: [{images.min():.4f}, {images.max():.4f}]")
-        print(f"Firing rates shape: {firing.shape}")
-        print(f"Firing rates range: [{firing.min():.4f}, {firing.max():.4f}]")
+        print(f"Test images shape: {test_images.shape}")
+        print(f"Test images range: [{test_images.min():.4f}, {test_images.max():.4f}]")
+        print(f"Test firing rates shape: {test_firing.shape}")
+        print(f"Test firing rates range: [{test_firing.min():.4f}, {test_firing.max():.4f}]")
+        
+        # CRITICAL: Normalize firing rates to prevent gradient explosion
+        # Compute normalization stats from training set and apply to both
+        print("\nApplying normalization (computed from training set)...")
+        train_images, train_firing, test_images, test_firing, norm_stats = compute_and_apply_normalization(
+            train_images, train_firing, test_images, test_firing
+        )
+        
+        print(f"After normalization:")
+        print(f"  Train images range: [{train_images.min():.4f}, {train_images.max():.4f}]")
+        print(f"  Train firing rates range: [{train_firing.min():.4f}, {train_firing.max():.4f}]")
+        print(f"  Train firing rates mean: {train_firing.mean():.4f}, std: {train_firing.std():.4f}")
+        print(f"  Test images range: [{test_images.min():.4f}, {test_images.max():.4f}]")
+        print(f"  Test firing rates range: [{test_firing.min():.4f}, {test_firing.max():.4f}]")
+        
+        # Log normalization stats
+        mlflow.log_params({
+            "norm_image_mean": norm_stats["image_mean"],
+            "norm_image_std": norm_stats["image_std"],
+            "firing_rates_normalized": True,
+        })
         
         # Log dataset metadata as parameters
         mlflow.log_params({
-            "image_min": float(images.min()),
-            "image_max": float(images.max()),
+            "train_image_min": float(train_images.min()),
+            "train_image_max": float(train_images.max()),
+            "test_image_min": float(test_images.min()),
+            "test_image_max": float(test_images.max()),
             "train_dataset_path": train_metadata.get("dataset_path", "unknown"),
             "test_dataset_path": test_metadata.get("dataset_path", "unknown"),
         })
 
-        # Create data module for dataset logging
+        # Create data module for dataset logging (using train data)
         from neurodecoders.data import NeuralDataModule
 
         data_module_for_logging = NeuralDataModule(
-            images=images,
-            firing_rates=firing,
+            images=train_images,
+            firing_rates=train_firing,
             labels=None,  # No labels for decoder training
+            test_images=test_images,
+            test_firing_rates=test_firing,
+            test_labels=None,
             batch_size=config["batch_size"],
-            dataset_metadata=test_metadata,  # Use actual test metadata instead of empty dict
+            dataset_metadata=train_metadata,
             use_memory_mapping=False,
             chunk_size=100,
             prefetch_factor=2,
@@ -120,8 +149,10 @@ def main(config: Dict[str, Any]):
             mlflow.log_params({f"model_{k}": v for k, v in model_kwargs.items()})
 
         trainer, model, data_module = train_decoder(
-            images=images,
-            firing_rates=firing,
+            images=train_images,
+            firing_rates=train_firing,
+            test_images=test_images,
+            test_firing_rates=test_firing,
             batch_size=config["batch_size"],
             epochs=config["epochs"],
             learning_rate=config["learning_rate"],
@@ -129,6 +160,9 @@ def main(config: Dict[str, Any]):
             loss_fn=config["loss_function"],
             model_type=config["model_type"],
             model_kwargs=model_kwargs,
+            scheduler=config.get("scheduler", "none"),
+            scheduler_step_size=config.get("scheduler_step_size", 30),
+            scheduler_gamma=config.get("scheduler_gamma", 0.1),
             num_workers=config["num_workers"],
             pin_memory=config["pin_memory"],
             enable_mixed_precision=config["enable_mixed_precision"],
@@ -187,9 +221,9 @@ def main(config: Dict[str, Any]):
             dataset_info={
                 "dataset_type": config["dataset_type"],
                 "sta_type": config["sta_type"],
-                "n_images": len(images),
-                "n_neurons": firing.shape[1],
-                "image_shape": images.shape[1:],
+                "n_images": len(train_images),
+                "n_neurons": train_firing.shape[1],
+                "image_shape": train_images.shape[1:],
             },
             training_info={
                 "epochs": config["epochs"],
@@ -216,10 +250,10 @@ def main(config: Dict[str, Any]):
             os.makedirs(plot_dir, exist_ok=True)
             
             # Select a few test samples for visualization
-            n_vis_samples = min(5, len(images))
-            vis_indices = np.random.choice(len(images), n_vis_samples, replace=False)
-            vis_images = images[vis_indices]
-            vis_firing = firing[vis_indices]
+            n_vis_samples = min(5, len(test_images))
+            vis_indices = np.random.choice(len(test_images), n_vis_samples, replace=False)
+            vis_images = test_images[vis_indices]
+            vis_firing = test_firing[vis_indices]
             
             print(f"Selected {n_vis_samples} samples for visualization")
             print(f"Original images shape: {vis_images.shape}")

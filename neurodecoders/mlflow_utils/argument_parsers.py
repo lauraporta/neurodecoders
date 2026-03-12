@@ -295,7 +295,7 @@ def create_decoder_parser() -> argparse.ArgumentParser:
     # Model configuration
     parser.add_argument(
         "--model-type",
-        choices=["simple", "enhanced", "mirror_simple"],
+        choices=["simple", "transformer", "diffusion"],
         default="simple",
         help="Type of decoder model",
     )
@@ -304,6 +304,82 @@ def create_decoder_parser() -> argparse.ArgumentParser:
         type=int,
         default=32,
         help="Output image size (default: 32 for CIFAR-10 native resolution)",
+    )
+    
+    # Transformer-specific arguments
+    parser.add_argument(
+        "--patch-size",
+        type=int,
+        default=4,
+        help="Patch size for transformer decoder (default: 4)",
+    )
+    parser.add_argument(
+        "--embed-dim",
+        type=int,
+        default=256,
+        help="Embedding dimension for transformer decoder (default: 256)",
+    )
+    parser.add_argument(
+        "--num-heads",
+        type=int,
+        default=8,
+        help="Number of attention heads for transformer decoder (default: 8)",
+    )
+    parser.add_argument(
+        "--num-layers",
+        type=int,
+        default=6,
+        help="Number of transformer layers (default: 6)",
+    )
+    parser.add_argument(
+        "--mlp-ratio",
+        type=float,
+        default=4.0,
+        help="MLP hidden dim ratio for transformer (default: 4.0)",
+    )
+    parser.add_argument(
+        "--transformer-dropout",
+        type=float,
+        default=0.1,
+        help="Dropout rate for transformer (default: 0.1)",
+    )
+    
+    # Diffusion-specific arguments
+    parser.add_argument(
+        "--base-channels",
+        type=int,
+        default=64,
+        help="Base channels for diffusion U-Net (default: 64)",
+    )
+    parser.add_argument(
+        "--channel-mults",
+        type=str,
+        default="1,2,4",
+        help="Channel multipliers for diffusion U-Net, comma-separated (default: '1,2,4')",
+    )
+    parser.add_argument(
+        "--timesteps",
+        type=int,
+        default=1000,
+        help="Number of diffusion timesteps (default: 1000)",
+    )
+    parser.add_argument(
+        "--inference-steps",
+        type=int,
+        default=50,
+        help="Number of inference steps for diffusion sampling (default: 50)",
+    )
+    parser.add_argument(
+        "--beta-start",
+        type=float,
+        default=1e-4,
+        help="Starting beta for diffusion noise schedule (default: 1e-4)",
+    )
+    parser.add_argument(
+        "--beta-end",
+        type=float,
+        default=0.02,
+        help="Ending beta for diffusion noise schedule (default: 0.02)",
     )
 
     # Training configuration
@@ -470,6 +546,9 @@ def parse_decoder_args(args: argparse.Namespace) -> Dict[str, Any]:
     n_train_images = args.n_train_images if args.n_train_images is not None else args.n_images
     n_test_images = args.n_test_images if args.n_test_images is not None else args.n_images
     
+    # Parse channel multipliers for diffusion model
+    channel_mults = tuple(int(x) for x in args.channel_mults.split(","))
+    
     config = {
         "dataset_type": args.dataset_type,
         "sta_type": args.sta_type,
@@ -497,6 +576,20 @@ def parse_decoder_args(args: argparse.Namespace) -> Dict[str, Any]:
         "mlflow_run_name": args.run_name,
         "enable_mlflow": True,
         "tracking_uri": getattr(args, "tracking_uri", None),
+        # Transformer-specific parameters
+        "patch_size": args.patch_size,
+        "embed_dim": args.embed_dim,
+        "num_heads": args.num_heads,
+        "num_layers": args.num_layers,
+        "mlp_ratio": args.mlp_ratio,
+        "transformer_dropout": args.transformer_dropout,
+        # Diffusion-specific parameters
+        "base_channels": args.base_channels,
+        "channel_mults": channel_mults,
+        "timesteps": args.timesteps,
+        "inference_steps": args.inference_steps,
+        "beta_start": args.beta_start,
+        "beta_end": args.beta_end,
     }
 
     return config
