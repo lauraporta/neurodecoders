@@ -6,25 +6,31 @@
 # Single script for all architecture comparison experiments.
 #
 # MODES (set via --export=MODE=<mode>):
-#   encoder      - Train encoder (single job, ~6 hours)
-#   approaches   - Run 3 reconstruction approaches (array 0-2, ~12 hours)
-#   tv_sweep     - TV weight sweep for guided decoder (array 0-5, ~4 hours)
-#   improvements - Run improved decoder variants (array 0-1, ~6 hours)
+#   encoder         - Train encoder (single job, ~6 hours)
+#   approaches      - Run 4 reconstruction approaches (array 0-3, ~12 hours)
+#   ddim_steps      - Compare DDIM at different step counts (array 0-4, ~2 hours)
+#   tv_sweep        - TV weight sweep for guided decoder (array 0-5, ~4 hours)
+#   improvements    - Run improved decoder variants (array 0-1, ~6 hours)
 #
 # USAGE EXAMPLES:
 #   # Train encoder first
 #   sbatch --export=MODE=encoder architecture_comparison.sbatch
 #
 #   # Run all approaches (after encoder completes)
-#   sbatch --array=0-2 --export=MODE=approaches architecture_comparison.sbatch
+#   sbatch --array=0-4 --export=MODE=approaches architecture_comparison.sbatch
 #
 #   # With dependency on encoder job
-#   sbatch --array=0-2 --dependency=afterok:12345 --export=MODE=approaches architecture_comparison.sbatch
+#   sbatch --array=0-4 --dependency=afterok:12345 --export=MODE=approaches architecture_comparison.sbatch
 #
 #   # Single approach only
 #   sbatch --array=0 --export=MODE=approaches architecture_comparison.sbatch   # input_optim
-#   sbatch --array=1 --export=MODE=approaches architecture_comparison.sbatch   # diffusion
-#   sbatch --array=2 --export=MODE=approaches architecture_comparison.sbatch   # guided
+#   sbatch --array=1 --export=MODE=approaches architecture_comparison.sbatch   # diffusion (DDPM)
+#   sbatch --array=2 --export=MODE=approaches architecture_comparison.sbatch   # diffusion_ddim
+#   sbatch --array=3 --export=MODE=approaches architecture_comparison.sbatch   # guided
+#   sbatch --array=4 --export=MODE=approaches architecture_comparison.sbatch   # pure_decoder
+#
+#   # DDIM step count comparison (requires trained model - runs inference only)
+#   sbatch --array=0-4 --export=MODE=ddim_steps architecture_comparison.sbatch
 #
 #   # TV weight sweep
 #   sbatch --array=0-5 --export=MODE=tv_sweep architecture_comparison.sbatch
@@ -84,17 +90,19 @@ mkdir -p /ceph/margrie/laura/neurodecoders/slurm
 # COMMON PARAMETERS
 # ============================================================
 ENCODER_RUN_ID_FILE="/ceph/margrie/laura/neurodecoders/workspace/encoder_run_id.txt"
-EXPERIMENT_NAME="architecture_comparison"
+EXPERIMENT_NAME="input_optim_debug"
 
 # Dataset configuration (shared across all modes)
 N_NEURONS=5000
 N_TRAIN_IMAGES=8000
-N_TEST_IMAGES=2000
+N_TEST_IMAGES=2000        # Revert to full test set size (must match generated data)
+N_RECONSTRUCT_IMAGES=5    # Only reconstruct 5 images for speed
+
 DATASET_TYPE="cifar10"
 STA_TYPE="gabor,11,11"
 
 # Common args for all python calls
-COMMON_ARGS="--n-neurons $N_NEURONS --n-train-images $N_TRAIN_IMAGES --n-test-images $N_TEST_IMAGES --dataset-type $DATASET_TYPE --sta-type $STA_TYPE --experiment-name $EXPERIMENT_NAME"
+COMMON_ARGS="--n-neurons $N_NEURONS --n-train-images $N_TRAIN_IMAGES --n-test-images $N_TEST_IMAGES --dataset-type $DATASET_TYPE --sta-type $STA_TYPE --experiment-name $EXPERIMENT_NAME --n-reconstruct-images $N_RECONSTRUCT_IMAGES"
 
 # ============================================================
 # HELPER FUNCTIONS
@@ -137,11 +145,11 @@ run_encoder() {
 }
 
 # ============================================================
-# MODE: approaches (array 0-2)
+# MODE: approaches (array 0-3)
 # ============================================================
 
 run_approaches() {
-    APPROACHES=("input_optim" "diffusion" "guided")
+    APPROACHES=("input_optim" "diffusion" "diffusion_ddim" "guided" "pure_decoder")
     APPROACH=${APPROACHES[$SLURM_ARRAY_TASK_ID]}
     echo "[INFO] Running approach: $APPROACH"
     
@@ -160,11 +168,28 @@ run_approaches() {
             ;;
         
         "diffusion")
+            # Standard DDPM with 1000 steps (stochastic)
             python -m neurodecoders.experiments.architecture_comparison \
                 --mode diffusion \
                 $COMMON_ARGS \
                 --diffusion-epochs 100 \
-                --diffusion-lr 0.001
+                --diffusion-lr 0.001 \
+                --diffusion-optimizer adam \
+                --diffusion-sampler ddpm \
+                --diffusion-inference-steps 1000
+            ;;
+        
+        "diffusion_ddim")
+            # DDIM with 50 steps (deterministic, ~20x faster inference)
+            python -m neurodecoders.experiments.architecture_comparison \
+                --mode diffusion_ddim \
+                $COMMON_ARGS \
+                --diffusion-epochs 100 \
+                --diffusion-lr 0.001 \
+                --diffusion-optimizer adam \
+                --diffusion-sampler ddim \
+                --diffusion-inference-steps 50 \
+                --diffusion-eta 0.0
             ;;
         
         "guided")
@@ -173,9 +198,20 @@ run_approaches() {
                 --mode guided \
                 --encoder-run-id "$ENCODER_RUN_ID" \
                 $COMMON_ARGS \
-                --guided-epochs 100 \
+                --guided-epochs 150 \
                 --guided-lr 0.0001 \
                 --guided-tv-weight 0.01
+            ;;
+
+        "pure_decoder")
+            # Pure Decoder (Baseline)
+            python -m neurodecoders.experiments.architecture_comparison \
+                --mode pure_decoder \
+                $COMMON_ARGS \
+                --pure-decoder-epochs 100 \
+                --pure-decoder-lr 0.001 \
+                --pure-decoder-type simple \
+                --pure-decoder-loss-fn mse
             ;;
     esac
 }
@@ -195,9 +231,30 @@ run_tv_sweep() {
         --mode guided \
         --encoder-run-id "$ENCODER_RUN_ID" \
         $COMMON_ARGS \
-        --guided-epochs 100 \
+        --guided-epochs 150 \
         --guided-lr 0.0001 \
         --guided-tv-weight "$TV_WEIGHT"
+}
+
+# ============================================================
+# MODE: ddim_steps (array 0-4)
+# Compare DDIM quality at different step counts
+# ============================================================
+
+run_ddim_steps() {
+    DDIM_STEPS=(10 20 50 100 200)
+    STEPS=${DDIM_STEPS[$SLURM_ARRAY_TASK_ID]}
+    echo "[INFO] DDIM step comparison: $STEPS steps"
+    
+    python -m neurodecoders.experiments.architecture_comparison \
+        --mode diffusion_ddim \
+        $COMMON_ARGS \
+        --diffusion-epochs 100 \
+        --diffusion-lr 0.001 \
+        --diffusion-optimizer adam \
+        --diffusion-sampler ddim \
+        --diffusion-inference-steps "$STEPS" \
+        --diffusion-eta 0.0
 }
 
 # ============================================================
@@ -216,6 +273,7 @@ run_improvements() {
                 $COMMON_ARGS \
                 --diffusion-epochs 100 \
                 --diffusion-lr 0.001 \
+                --diffusion-optimizer adam \
                 --diffusion-embed-type deep
             ;;
         
@@ -225,7 +283,7 @@ run_improvements() {
                 --mode guided \
                 --encoder-run-id "$ENCODER_RUN_ID" \
                 $COMMON_ARGS \
-                --guided-epochs 100 \
+                --guided-epochs 150 \
                 --guided-lr 0.0001 \
                 --guided-decoder-type simple \
                 --guided-tv-weight 0.01
@@ -247,12 +305,15 @@ case ${MODE:-encoder} in
     "tv_sweep")
         run_tv_sweep
         ;;
+    "ddim_steps")
+        run_ddim_steps
+        ;;
     "improvements")
         run_improvements
         ;;
     *)
         echo "[ERROR] Unknown MODE: $MODE"
-        echo "[ERROR] Valid modes: encoder, approaches, tv_sweep, improvements"
+        echo "[ERROR] Valid modes: encoder, approaches, tv_sweep, ddim_steps, improvements"
         exit 1
         ;;
 esac
