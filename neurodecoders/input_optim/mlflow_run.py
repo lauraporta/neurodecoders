@@ -21,7 +21,10 @@ import torch
 import torch.nn as nn
 from skimage.metrics import structural_similarity as ssim
 
-from neurodecoders.data.loading import load_npz_dataset
+from neurodecoders.data.loading import (
+    compute_normalization_stats, 
+    load_npz_dataset
+)
 from neurodecoders.input_optim.optimizer import (
     ImageOptimizer,
     OptimConfig,
@@ -625,8 +628,24 @@ def main(args: argparse.Namespace) -> None:
         os.makedirs(out_dir, exist_ok=True)
 
         # Get target firing rates from dataset info
-        target: np.ndarray = dataset_info.get_firing_rates(image_ids[0])
-        mlflow.log_param("target_source", "mlflow_dataset")
+        target_raw: np.ndarray = dataset_info.get_firing_rates(image_ids[0])
+
+        # Compute normalization stats from training set
+        print("[INFO] Computing normalization statistics...")
+        norm_stats = compute_normalization_stats(
+            dataset_info.images, dataset_info.firing_rates
+        )
+        
+        # Normalize the target firing rates
+        firing_mean = np.array(norm_stats["firing_mean"])
+        firing_std = np.array(norm_stats["firing_std"])
+        # Avoid division by zero
+        firing_std = np.where(firing_std == 0, 1.0, firing_std)
+        
+        target = (target_raw - firing_mean) / firing_std
+        print(f"[INFO] Target normalized range: [{target.min():.4f}, {target.max():.4f}]")
+        
+        mlflow.log_param("target_source", "mlflow_dataset_normalized")
         mlflow.log_param("n_neurons", int(target.shape[0]))
 
         # Try to load original image for comparison
