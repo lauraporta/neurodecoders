@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""
+Generic MLflow training script for neural decoders.
+"""
+
+import os
+from typing import Any, Dict
+
+import mlflow
+import numpy as np
+
+from neurodecoders.data.loading import (
+    compute_and_apply_normalization,
+    load_synthetic_split_data,
+)
+from neurodecoders.decoder.training import train_decoder
+from neurodecoders.mlflow_utils.argument_parsers import (
+    create_decoder_parser,
+    parse_decoder_args,
+)
+from neurodecoders.mlflow_utils.utils import (
+    log_dataset_input_and_params,
+    log_model_artifacts,
+    log_training_config,
+    log_training_metrics,
+    setup_mlflow_experiment,
+)
+from neurodecoders.paths import get_path
+
+
+def main(config: Dict[str, Any]):
+    print("=== Neural Decoder Training (MLflow) ===")
+    
+    # Set up MLflow with proper artifact location
+    from neurodecoders.config import get_base_path
+    artifact_location = f"file://{get_base_path()}/mlruns"
+    
+    setup_mlflow_experiment(
+        config["mlflow_experiment_name"], 
+        config.get("tracking_uri"),
+        artifact_location=artifact_location
+    )
+    print(f"Using MLflow artifact location: {artifact_location}")
+
+    with mlflow.start_run(
+        run_name=config["mlflow_run_name"], log_system_metrics=True
+    ):
+        log_training_config(config)
+
+        # Load synthetic data with train/test split
+        print("Loading training data...")
+        train_images, train_firing, _, train_metadata = load_synthetic_split_data(
+            config, split="train"
+        )
+        
+        print("Loading test data for decoder evaluation...")
+        test_images, test_firing, _, test_metadata = load_synthetic_split_data(
+            config, split="test"
+        )
+        
+        # Use training data for model training
+        # Synthetic images are already in [0, 1] from ToTensor()
+        # Firing rates are raw simulated responses
+        print(f"Train images shape: {train_images.shape}")
+        print(f"Train images range: [{train_images.min():.4f}, {train_images.max():.4f}]")
+        print(f"Train firing rates shape: {train_firing.shape}")
+        print(f"Train firing rates range: [{train_firing.min():.4f}, {train_firing.max():.4f}]")
+        
+        print(f"Test images shape: {test_images.shape}")
+        print(f"Test images range: [{test_images.min():.4f}, {test_images.max():.4f}]")
+        print(f"Test firing rates shape: {test_firing.shape}")
+        print(f"Test firing rates range: [{test_firing.min():.4f}, {test_firing.max():.4f}]")
+        
+        # CRITICAL: Normalize firing rates to prevent gradient explosion
+        # Compute normalization stats from training set and apply to both
+        print("\nApplying normalization (computed from training set)...")
+        train_images, train_firing, test_images, test_firing, norm_stats = compute_and_apply_normalization(
+            train_images, train_firing, test_images, test_firing
+        )
+        
+        print(f"After normalization:")
+        print(f"  Train images range: [{train_images.min():.4f}, {train_images.max():.4f}]")
+        print(f"  Train firing rates range: [{train_firing.min():.4f}, {train_firing.max():.4f}]")
+        print(f"  Train firing rates mean: {train_firing.mean():.4f}, std: {train_firing.std():.4f}")
+        print(f"  Test images range: [{test_images.min():.4f}, {test_images.max():.4f}]")
+        print(f"  Test firing rates range: [{test_firing.min():.4f}, {test_firing.max():.4f}]")
+        
+        # Log normalization stats
+        mlflow.log_params({
+            "norm_image_mean": norm_stats["image_mean"],
+            "norm_image_std": norm_stats["image_std"],
+            "firing_rates_normalized": True,
+        })
+        
+        # Log dataset metadata as parameters
+        mlflow.log_params({
+            "train_image_min": float(train_images.min()),
+            "train_image_max": float(train_images.max()),
+            "test_image_min": float(test_images.min()),
+            "test_image_max": float(test_images.max()),
+            "train_dataset_path": train_metadata.get("dataset_path", "unknown"),
+            "test_dataset_path": test_metadata.get("dataset_path", "unknown"),
+        })
+
+        # Create data module for dataset logging (using train data)
+        from neurodecoders.data import NeuralDataModule
+
+        data_module_for_logging = NeuralDataModule(
+            images=train_images,
+            firing_rates=train_firing,
+            labels=None,  # No labels for decoder training
+            test_images=test_images,
+            test_firing_rates=test_firing,
+            test_labels=None,
+            batch_size=config["batch_size"],
+            dataset_metadata=train_metadata,
+            use_memory_mapping=False,
+            chunk_size=100,
+            prefetch_factor=2,
+            num_workers=config["num_workers"],
+            pin_memory=config["pin_memory"],
+        )
+
+        # Log dataset metadata
+        log_dataset_input_and_params(data_module_for_logging)
+
+        # Build model-specific kwargs based on model type
+        model_kwargs = {}
+        if config["model_type"] == "transformer":
+            model_kwargs = {
+                "patch_size": config.get("patch_size", 4),
+                "embed_dim": config.get("embed_dim", 256),
+                "num_heads": config.get("num_heads", 8),
+                "num_layers": config.get("num_layers", 6),
+                "mlp_ratio": config.get("mlp_ratio", 4.0),
+                "dropout": config.get("transformer_dropout", 0.1),
+            }
+        elif config["model_type"] == "diffusion":
+            model_kwargs = {
+                "base_channels": config.get("base_channels", 64),
+                "channel_mults": config.get("channel_mults", (1, 2, 4)),
+                "timesteps": config.get("timesteps", 1000),
+                "beta_start": config.get("beta_start", 1e-4),
+                "beta_end": config.get("beta_end", 0.02),
+            }
+        
+        # Log model-specific parameters
+        if model_kwargs:
+            mlflow.log_params({f"model_{k}": v for k, v in model_kwargs.items()})
+
+        trainer, model, data_module = train_decoder(
+            images=train_images,
+            firing_rates=train_firing,
+            test_images=test_images,
+            test_firing_rates=test_firing,
+            batch_size=config["batch_size"],
+            epochs=config["epochs"],
+            learning_rate=config["learning_rate"],
+            optimizer=config["optimizer"],
+            loss_fn=config["loss_function"],
+            model_type=config["model_type"],
+            model_kwargs=model_kwargs,
+            scheduler=config.get("scheduler", "none"),
+            scheduler_step_size=config.get("scheduler_step_size", 30),
+            scheduler_gamma=config.get("scheduler_gamma", 0.1),
+            num_workers=config["num_workers"],
+            pin_memory=config["pin_memory"],
+            enable_mixed_precision=config["enable_mixed_precision"],
+            enable_early_stopping=config["enable_early_stopping"],
+            early_stopping_patience=config["early_stopping_patience"],
+            enable_checkpointing=True,
+            mlflow_experiment_name=config["mlflow_experiment_name"],
+            mlflow_run_name=None,
+        )
+
+        # Evaluate on test split to get final test loss
+        test_result = trainer.test(
+            model, datamodule=data_module, verbose=False
+        )
+        final_test_loss = None
+        if test_result and isinstance(test_result, list) and test_result[0]:
+            final_test_loss = test_result[0].get("test_loss")
+            if final_test_loss is not None:
+                log_training_metrics({"test_loss": float(final_test_loss)})
+
+        # Save final model weights path as artifact and metadata
+        model_dir = get_path("workspace/models/decoders")
+        os.makedirs(model_dir, exist_ok=True)
+        dataset_name = (
+            f"{config['dataset_type']}"
+            f"_{config['sta_type'].replace(',', '_')}"
+            f"_{config['n_neurons']}n_{config['n_images']}i"
+        )
+        model_path = f"{model_dir}/decoder_{dataset_name}.pth"
+        import torch
+
+        torch.save(model.state_dict(), model_path)
+
+        # Log final losses as params/metrics
+        final_train = (
+            float(model.train_losses[-1]) if model.train_losses else None
+        )
+        final_val = float(model.val_losses[-1]) if model.val_losses else None
+        if final_train is not None:
+            log_training_metrics(
+                {"train_loss": final_train}, step=config["epochs"]
+            )
+        if final_val is not None:
+            log_training_metrics(
+                {"val_loss": final_val}, step=config["epochs"]
+            )
+        if final_test_loss is not None:
+            log_training_metrics(
+                {"test_loss": float(final_test_loss)}, step=config["epochs"]
+            )
+
+        log_model_artifacts(
+            model=model,
+            model_name="decoder_model",
+            model_type="decoder",
+            dataset_info={
+                "dataset_type": config["dataset_type"],
+                "sta_type": config["sta_type"],
+                "n_images": len(train_images),
+                "n_neurons": train_firing.shape[1],
+                "image_shape": train_images.shape[1:],
+            },
+            training_info={
+                "epochs": config["epochs"],
+                "learning_rate": config["learning_rate"],
+                "batch_size": config["batch_size"],
+                "train_loss": final_train,
+                "val_loss": final_val,
+                "test_loss": float(final_test_loss)
+                if final_test_loss is not None
+                else None,
+            },
+        )
+
+        # Generate and log decoder comparison plots
+        try:
+            from neurodecoders.decoder.generate_images import (
+                create_decoder_comparison_plots,
+                generate_decoder_images,
+            )
+            import matplotlib.pyplot as plt
+            
+            # Create output directory for plots
+            plot_dir = get_path("workspace/plots/decoder_training")
+            os.makedirs(plot_dir, exist_ok=True)
+            
+            # Select a few test samples for visualization
+            n_vis_samples = min(5, len(test_images))
+            vis_indices = np.random.choice(len(test_images), n_vis_samples, replace=False)
+            vis_images = test_images[vis_indices]
+            vis_firing = test_firing[vis_indices]
+            
+            print(f"Selected {n_vis_samples} samples for visualization")
+            print(f"Original images shape: {vis_images.shape}")
+            print(f"Firing rates shape: {vis_firing.shape}")
+            print(f"Original images range: [{vis_images.min():.3f}, {vis_images.max():.3f}]")
+            print(f"Firing rates range: [{vis_firing.min():.3f}, {vis_firing.max():.3f}]")
+            
+            # Generate images using the trained decoder
+            device = torch.device("cuda" if torch.cuda.is_available() 
+                                else "mps" if torch.backends.mps.is_available() 
+                                else "cpu")
+            
+            # Extract the underlying PyTorch model from Lightning module
+            pytorch_model = model.model
+            pytorch_model.to(device)
+            pytorch_model.eval()  # Ensure eval mode
+            
+            generated_images = generate_decoder_images(pytorch_model, vis_firing, device)
+            
+            print(f"Generated images shape: {generated_images.shape}")
+            print(f"Generated images range: [{generated_images.min():.3f}, {generated_images.max():.3f}]")
+            
+            # Create comparison plot
+            comparison_path = os.path.join(plot_dir, "decoder_training_comparison.png")
+            create_decoder_comparison_plots(
+                original_images=list(vis_images),
+                generated_images=list(generated_images),
+                image_ids=vis_indices.tolist(),
+                output_path=comparison_path,
+            )
+            
+            # Log the comparison plot
+            mlflow.log_artifact(comparison_path, "decoder_training_comparison.png")
+            print(f"✅ Decoder training comparison plot logged: {comparison_path}")
+            
+            # Create and log training loss plot
+            if model.train_losses and model.val_losses:
+                loss_plot_path = os.path.join(plot_dir, "training_losses.png")
+                plt.figure(figsize=(10, 6))
+                plt.plot(model.train_losses, label='Training Loss', alpha=0.8)
+                plt.plot(model.val_losses, label='Validation Loss', alpha=0.8)
+                plt.xlabel('Epoch')
+                plt.ylabel('Loss')
+                plt.title('Decoder Training Progress')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.savefig(loss_plot_path, dpi=300, bbox_inches='tight')
+                plt.close()
+                
+                # Log the loss plot
+                mlflow.log_artifact(loss_plot_path, "training_losses.png")
+                print(f"✅ Training loss plot logged: {loss_plot_path}")
+            
+        except Exception as e:
+            print(f"⚠️  Could not generate decoder training plots: {e}")
+            import traceback
+            traceback.print_exc()
+
+    print("Training complete. View runs with: mlflow ui")
+
+
+if __name__ == "__main__":
+    parser = create_decoder_parser()
+    args = parser.parse_args()
+    config = parse_decoder_args(args)
+    main(config)

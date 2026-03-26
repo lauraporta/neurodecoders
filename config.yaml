@@ -1,0 +1,5 @@
+# Neurodecoders Configuration
+# Change this single path to point to your desired root directory
+# This directory should contain both workspace/ and mlruns/ folders
+base_path: "/ceph/margrie/laura/neurodecoders/"
+

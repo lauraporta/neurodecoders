@@ -1,0 +1,118 @@
+#!/bin/bash
+
+# Launch script for MLflow UI
+# This script launches MLflow UI for experiment tracking
+# Usage: ./launch_apps.sh [PORT]
+# Example: ./launch_apps.sh 5001
+# Default port: 5002
+
+# Get port from command line argument or use default
+PORT=${1:-5002}
+
+echo "🚀 Launching MLflow UI..."
+
+# Check if MLflow is installed
+if ! command -v mlflow &> /dev/null; then
+    echo "❌ MLflow is not installed. Please install it first:"
+    echo "   pip install mlflow"
+    exit 1
+fi
+
+# Load environment variables from .env file
+if [ -f .env ]; then
+    set -a  # automatically export all variables
+    source .env
+    set +a
+fi
+
+# Auto-detect current node and update .env if needed
+CURRENT_HOST=$(hostname)
+if [ -f .env ]; then
+    # Check if POSTGRES_HOST in .env differs from current host
+    ENV_POSTGRES_HOST=$(grep "^POSTGRES_HOST=" .env | cut -d'=' -f2)
+    if [ -n "$ENV_POSTGRES_HOST" ] && [ "$ENV_POSTGRES_HOST" != "$CURRENT_HOST" ]; then
+        echo "📍 Detected hostname change: $ENV_POSTGRES_HOST → $CURRENT_HOST"
+        echo "   Updating .env file..."
+        
+        # Update POSTGRES_HOST in .env
+        sed -i.bak "s|^POSTGRES_HOST=.*|POSTGRES_HOST=$CURRENT_HOST|" .env
+        
+        # Update MLFLOW_TRACKING_URI in .env
+        if [ -n "$POSTGRES_USER" ] && [ -n "$POSTGRES_PASSWORD" ] && [ -n "$POSTGRES_DB" ]; then
+            POSTGRES_PORT=${POSTGRES_PORT:-5432}
+            NEW_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${CURRENT_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+            sed -i.bak "s|^MLFLOW_TRACKING_URI=.*|MLFLOW_TRACKING_URI=$NEW_URI|" .env
+            echo "   ✅ Updated .env with new hostname"
+        fi
+        
+        # Reload environment variables
+        set -a
+        source .env
+        set +a
+    fi
+fi
+
+# Construct MLflow tracking URI from environment variables
+if [ -n "$POSTGRES_USER" ] && [ -n "$POSTGRES_PASSWORD" ] && [ -n "$POSTGRES_DB" ]; then
+    POSTGRES_HOST=${POSTGRES_HOST:-$CURRENT_HOST}
+    POSTGRES_PORT=${POSTGRES_PORT:-5432}
+    export MLFLOW_TRACKING_URI="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST}:${POSTGRES_PORT}/${POSTGRES_DB}"
+    
+    # Check if PostgreSQL is running
+    echo "🔍 Checking PostgreSQL service..."
+    # Use full path to pg_isready if available in conda environment
+    PG_ISREADY=$(which pg_isready 2>/dev/null || echo "${CONDA_PREFIX}/bin/pg_isready")
+    if ! ${PG_ISREADY} -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} &> /dev/null; then
+        echo "⚠️  PostgreSQL is not running. Attempting to start..."
+        
+        # Check if PGDATA is set, otherwise use default
+        if [ -z "$PGDATA" ]; then
+            PGDATA="${HOME}/postgres_data"
+            echo "ℹ️  PGDATA not set, using default: $PGDATA"
+        fi
+        
+        # Try to start PostgreSQL using pg_ctl (conda environment)
+        if [ -d "$PGDATA" ]; then
+            LOG_FILE="${HOME}/postgres_logfile.log"
+            pg_ctl -D "$PGDATA" -l "$LOG_FILE" start
+            sleep 3  # Wait for server to start
+            
+            # Check again if it's running
+            if ${PG_ISREADY} -h ${POSTGRES_HOST} -p ${POSTGRES_PORT} -U ${POSTGRES_USER} &> /dev/null; then
+                echo "✅ PostgreSQL service started successfully"
+            else
+                echo "❌ Failed to start PostgreSQL service"
+                echo "   Check log file: $LOG_FILE"
+                echo "   Or start manually: pg_ctl -D $PGDATA -l $LOG_FILE start"
+                exit 1
+            fi
+        else
+            echo "❌ PostgreSQL data directory not found: $PGDATA"
+            echo "   Please initialize PostgreSQL first. See database_migration.md for instructions."
+            exit 1
+        fi
+    else
+        echo "✅ PostgreSQL is running"
+    fi
+else
+    echo "⚠️  Warning: Database credentials not found in .env file"
+    echo "    Using default tracking URI"
+fi
+
+# Get current hostname
+HOSTNAME=$(hostname)
+USERNAME=$(whoami)
+
+# Launch MLflow UI
+echo "Starting MLflow UI on port ${PORT}..."
+echo "📊 MLflow UI will be available at: http://localhost:${PORT}"
+echo ""
+echo "🌐 For remote access, use SSH port forwarding:"
+echo "   ssh -N ${USERNAME}@${HOSTNAME} -J ${USERNAME}@ssh.swc.ucl.ac.uk,${USERNAME}@hpc-gw2 -L ${PORT}:localhost:${PORT}"
+echo ""
+echo "💡 To stop MLflow UI, press Ctrl+C"
+echo ""
+
+# Launch MLflow UI
+mlflow ui --host 0.0.0.0 --port ${PORT} --backend-store-uri "${MLFLOW_TRACKING_URI}" --gunicorn-opts "--timeout 3600"
+

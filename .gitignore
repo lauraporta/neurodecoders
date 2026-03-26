@@ -81,3 +81,33 @@ venv/
 
 # written by setuptools_scm
 **/_version.py
+
+# data
+data/*
+neurodecoders/encoder/data/*
+neurodecoders/decoder/data/*
+neurodecoders/synthetic/data/*
+
+# output
+output/*
+neurodecoders/encoder/output/*
+neurodecoders/decoder/output/*
+neurodecoders/synthetic/output/*
+
+workspace/*
+notebooks/*/workspace/*
+
+# .cursor
+.cursor/
+
+# Environment variables (contains secrets)
+.env
+
+# mlflow
+mlruns/
+
+# lightning logs
+lightning_logs/
+
+tmp*/** 
+

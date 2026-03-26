@@ -6,7 +6,23 @@ readme = "README.md"
 requires-python = ">=3.11.0"
 dynamic = ["version"]
 
-dependencies = []
+dependencies = [
+    "torch",
+    "torchvision",
+    "numpy",
+    "matplotlib",
+    "scikit-learn",
+    "tqdm",
+    "noise",
+    "pytorch-lightning",
+    "scikit-image",
+    "mlflow",
+    "pyyaml",
+    "pynvml",
+    "imageio",
+    "python-dotenv",
+    "psycopg2-binary",
+]
 
 license = {text = "BSD-3-Clause"}
 
@@ -80,7 +96,9 @@ ignore = [
 [tool.ruff]
 line-length = 79
 exclude = ["__init__.py", "build", ".eggs"]
-lint.select = [
+
+[tool.ruff.lint]
+select = [
   "E",   # pycodestyle errors
   "F",   # Pyflakes
   "I",   # isort
@@ -91,10 +109,12 @@ lint.select = [
   #"SIM", # flake8 simplify
   #"C90", # McCabe complexity
 ]
-fix = true
 
 [tool.ruff.format]
-docstring-code-format = true # Also format code in docstrings (e.g. examples)
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
 
 [tool.tox]
 legacy_tox_ini = """
