@@ -47,7 +47,7 @@ IMAGE_SIZE=32  # Match encoder training size (CIFAR-10 resized to 32x32)
 LEARNING_RATES=(0.001) 
 IMAGE_IDS=("250") # "0" "50" "100" "350" "400")  # Space-separated image IDs to reconstruct
 SCHEDULERS=("none")  # Learning rate scheduler options
-LOSS_FUNCTIONS=("poisson_mean")  # Loss function options
+LOSS_FUNCTIONS=("mse")  # Loss function options (changed from poisson_mean due to normalized targets)
 BLUR_SIGMAS=(0)  # Gaussian blur sigma values for gradient smoothing
 
 # ------------------------------------------
