@@ -441,6 +441,7 @@ def train_encoder_guided_decoder(
         loss_type=config['loss_type'],
         loss_weights=config.get('loss_weights'),
         tv_weight=config.get('tv_weight', 0.0),
+        pixel_weight=config.get('pixel_weight', 0.0),
         **decoder_kwargs,
     )
     
