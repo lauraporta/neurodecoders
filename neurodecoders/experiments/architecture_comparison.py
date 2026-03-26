@@ -37,7 +37,6 @@ from tqdm import tqdm
 from neurodecoders.config import get_base_path, get_mlflow_tracking_uri
 from neurodecoders.data.loading import (
     compute_and_apply_normalization,
-    DatasetConfig,
     load_synthetic_split_data,
 )
 from neurodecoders.mlflow_utils.utils import (
@@ -83,13 +82,23 @@ class ExperimentConfig:
     guided_epochs: int = 100
     guided_batch_size: int = 32
     guided_tv_weight: float = 0.0  # Total Variation loss weight for smoothness
+    guided_pixel_weight: float = 0.0  # Auxiliary pixel-level MSE loss weight
+    guided_optimizer: str = "adam"
+    guided_scheduler: str = "cosine"
+    guided_loss_weights_mse: float = 1.0  # MSE weight for combined loss
+    guided_loss_weights_corr: float = 0.1  # Correlation weight for combined loss
+    # Transformer-specific config
+    guided_embed_dim: int = 256
+    guided_num_layers: int = 6
+    guided_num_heads: int = 8
+    guided_patch_size: int = 4
     
     # Input optimization config
     input_optim_steps: int = 1000
-    input_optim_lr: float = 0.1  # Best config from sweep
-    input_optim_loss: str = "poisson_mean"  # Best config from sweep
-    input_optim_blur_sigma: float = 1.5  # Best config from sweep
-    input_optim_scheduler: str = "none"  # Best config from sweep
+    input_optim_lr: float = 0.1  # Best from sweep
+    input_optim_loss: str = "poisson_mean"  # Best from sweep (vs mse)
+    input_optim_blur_sigma: float = 1.5  # Best from sweep
+    input_optim_scheduler: str = "none"  # Best from sweep (vs cosine)
     
     # MLflow config
     experiment_name: str = "architecture_comparison"
@@ -367,13 +376,13 @@ def train_encoder(config: ExperimentConfig) -> Tuple[str, float]:
     print("="*80)
     
     # Load data
-    data_config = DatasetConfig(
-        n_neurons=config.n_neurons,
-        n_train_images=config.n_train_images,
-        n_test_images=config.n_test_images,
-        dataset_type=config.dataset_type,
-        sta_type=config.sta_type,
-    )
+    data_config = {
+        "n_neurons": config.n_neurons,
+        "n_train_images": config.n_train_images,
+        "n_test_images": config.n_test_images,
+        "dataset_type": config.dataset_type,
+        "sta_type": config.sta_type,
+    }
     
     train_images, train_firing, train_labels, train_meta = load_synthetic_split_data(
         data_config, split="train"
@@ -498,13 +507,13 @@ def run_input_optimization(
     encoder.eval()
     
     # Load test data
-    data_config = DatasetConfig(
-        n_neurons=config.n_neurons,
-        n_train_images=config.n_train_images,
-        n_test_images=config.n_test_images,
-        dataset_type=config.dataset_type,
-        sta_type=config.sta_type,
-    )
+    data_config = {
+        "n_neurons": config.n_neurons,
+        "n_train_images": config.n_train_images,
+        "n_test_images": config.n_test_images,
+        "dataset_type": config.dataset_type,
+        "sta_type": config.sta_type,
+    }
     
     test_images, test_firing, _, test_meta = load_synthetic_split_data(data_config, split="test")
     
@@ -584,13 +593,13 @@ def run_diffusion_decoder(
     device = get_device()
     
     # Load data
-    data_config = DatasetConfig(
-        n_neurons=config.n_neurons,
-        n_train_images=config.n_train_images,
-        n_test_images=config.n_test_images,
-        dataset_type=config.dataset_type,
-        sta_type=config.sta_type,
-    )
+    data_config = {
+        "n_neurons": config.n_neurons,
+        "n_train_images": config.n_train_images,
+        "n_test_images": config.n_test_images,
+        "dataset_type": config.dataset_type,
+        "sta_type": config.sta_type,
+    }
     
     train_images, train_firing, _, _ = load_synthetic_split_data(data_config, split="train")
     test_images, test_firing, _, _ = load_synthetic_split_data(data_config, split="test")
@@ -695,13 +704,13 @@ def run_encoder_guided_decoder(
     encoder.eval()
     
     # Load data
-    data_config = DatasetConfig(
-        n_neurons=config.n_neurons,
-        n_train_images=config.n_train_images,
-        n_test_images=config.n_test_images,
-        dataset_type=config.dataset_type,
-        sta_type=config.sta_type,
-    )
+    data_config = {
+        "n_neurons": config.n_neurons,
+        "n_train_images": config.n_train_images,
+        "n_test_images": config.n_test_images,
+        "dataset_type": config.dataset_type,
+        "sta_type": config.sta_type,
+    }
     
     train_images, train_firing, _, _ = load_synthetic_split_data(data_config, split="train")
     test_images, test_firing, _, _ = load_synthetic_split_data(data_config, split="test")
@@ -718,23 +727,41 @@ def run_encoder_guided_decoder(
     print(f"  Base decoder: {config.guided_decoder_type}")
     print(f"  Loss type: {config.guided_loss_type}")
     print(f"  TV weight: {config.guided_tv_weight}")
-    
+    print(f"  Pixel weight: {config.guided_pixel_weight}")
+    print(f"  Optimizer: {config.guided_optimizer}")
+    print(f"  Scheduler: {config.guided_scheduler}")
+    print(f"  LR: {config.guided_lr}")
+    print(f"  Epochs: {config.guided_epochs}")
+    if config.guided_loss_type == "combined":
+        print(f"  Loss weights: mse={config.guided_loss_weights_mse}, corr={config.guided_loss_weights_corr}")
+    if config.guided_decoder_type == "transformer":
+        print(f"  Transformer: embed_dim={config.guided_embed_dim}, layers={config.guided_num_layers}, heads={config.guided_num_heads}, patch={config.guided_patch_size}")
+
     # Training config
+    loss_weights = {"mse": config.guided_loss_weights_mse, "correlation": config.guided_loss_weights_corr}
+
     train_config = {
         "epochs": config.guided_epochs,
         "batch_size": config.guided_batch_size,
         "learning_rate": config.guided_lr,
         "base_decoder_type": config.guided_decoder_type,
         "loss_type": config.guided_loss_type,
+        "loss_weights": loss_weights,
         "tv_weight": config.guided_tv_weight,
-        "optimizer": "adam",
-        "scheduler": "cosine",
+        "pixel_weight": config.guided_pixel_weight,
+        "optimizer": config.guided_optimizer,
+        "scheduler": config.guided_scheduler,
         "num_workers": 4,
         "pin_memory": True,
         "enable_early_stopping": True,
         "early_stopping_patience": 30,
         "enable_checkpointing": True,
         "enable_mixed_precision": True,
+        # Transformer-specific
+        "patch_size": config.guided_patch_size,
+        "embed_dim": config.guided_embed_dim,
+        "num_heads": config.guided_num_heads,
+        "num_layers": config.guided_num_layers,
     }
     
     # Train
@@ -831,13 +858,13 @@ def run_comparison_experiment(config: ExperimentConfig):
             raise ValueError(f"--encoder-run-id required for mode '{config.mode}'")
         
         # Load test data for metrics
-        data_config = DatasetConfig(
-            n_neurons=config.n_neurons,
-            n_train_images=config.n_train_images,
-            n_test_images=config.n_test_images,
-            dataset_type=config.dataset_type,
-            sta_type=config.sta_type,
-        )
+        data_config = {
+            "n_neurons": config.n_neurons,
+            "n_train_images": config.n_train_images,
+            "n_test_images": config.n_test_images,
+            "dataset_type": config.dataset_type,
+            "sta_type": config.sta_type,
+        }
         
         test_images, test_firing, _, test_meta = load_synthetic_split_data(data_config, split="test")
         train_images, train_firing, _, _ = load_synthetic_split_data(data_config, split="train")
@@ -867,13 +894,52 @@ def run_comparison_experiment(config: ExperimentConfig):
         run_name = f"{config.mode}_{timestamp}"
         
         with mlflow.start_run(run_name=run_name, log_system_metrics=True):
-            mlflow.log_params({
+            log_params = {
                 "mode": config.mode,
                 "n_neurons": config.n_neurons,
                 "n_test_images": config.n_test_images,
                 "dataset_type": config.dataset_type,
                 "sta_type": config.sta_type,
-            })
+            }
+
+            # Log mode-specific hyperparameters
+            if config.mode == "guided":
+                log_params.update({
+                    "guided_decoder_type": config.guided_decoder_type,
+                    "guided_loss_type": config.guided_loss_type,
+                    "guided_lr": config.guided_lr,
+                    "guided_epochs": config.guided_epochs,
+                    "guided_batch_size": config.guided_batch_size,
+                    "guided_tv_weight": config.guided_tv_weight,
+                    "guided_pixel_weight": config.guided_pixel_weight,
+                    "guided_optimizer": config.guided_optimizer,
+                    "guided_scheduler": config.guided_scheduler,
+                    "guided_loss_weights_mse": config.guided_loss_weights_mse,
+                    "guided_loss_weights_corr": config.guided_loss_weights_corr,
+                })
+                if config.guided_decoder_type == "transformer":
+                    log_params.update({
+                        "guided_embed_dim": config.guided_embed_dim,
+                        "guided_num_layers": config.guided_num_layers,
+                        "guided_num_heads": config.guided_num_heads,
+                        "guided_patch_size": config.guided_patch_size,
+                    })
+            elif config.mode == "input_optim":
+                log_params.update({
+                    "input_optim_steps": config.input_optim_steps,
+                    "input_optim_lr": config.input_optim_lr,
+                    "input_optim_loss": config.input_optim_loss,
+                    "input_optim_blur_sigma": config.input_optim_blur_sigma,
+                    "input_optim_scheduler": config.input_optim_scheduler,
+                })
+            elif config.mode == "diffusion":
+                log_params.update({
+                    "diffusion_epochs": config.diffusion_epochs,
+                    "diffusion_lr": config.diffusion_lr,
+                    "diffusion_embed_type": config.diffusion_embed_type,
+                })
+
+            mlflow.log_params(log_params)
             
             if config.mode == "input_optim":
                 # Get encoder training time from MLflow
@@ -969,18 +1035,42 @@ def main():
                        help="Decoder architecture: 'simple' (CNN) or 'transformer'")
     parser.add_argument("--guided-tv-weight", type=float, default=0.0,
                        help="Total Variation loss weight for smoothness (0=disabled, try 0.001-0.1)")
+    parser.add_argument("--guided-pixel-weight", type=float, default=0.0,
+                       help="Auxiliary pixel-level MSE loss weight (0=disabled, try 0.1-0.5)")
+    parser.add_argument("--guided-loss-type", type=str, default="correlation",
+                       choices=["mse", "poisson", "correlation", "combined"],
+                       help="Loss function for guided decoder")
+    parser.add_argument("--guided-optimizer", type=str, default="adam",
+                       choices=["adam", "adamw", "sgd"],
+                       help="Optimizer for guided decoder")
+    parser.add_argument("--guided-scheduler", type=str, default="cosine",
+                       choices=["none", "cosine", "step", "reduce_on_plateau"],
+                       help="LR scheduler for guided decoder")
+    parser.add_argument("--guided-loss-weights-mse", type=float, default=1.0,
+                       help="MSE weight for combined loss")
+    parser.add_argument("--guided-loss-weights-corr", type=float, default=0.1,
+                       help="Correlation weight for combined loss")
+    parser.add_argument("--guided-batch-size", type=int, default=32)
+    # Guided transformer-specific
+    parser.add_argument("--guided-embed-dim", type=int, default=256,
+                       help="Transformer embedding dimension")
+    parser.add_argument("--guided-num-layers", type=int, default=6,
+                       help="Number of transformer layers")
+    parser.add_argument("--guided-num-heads", type=int, default=8,
+                       help="Number of attention heads")
+    parser.add_argument("--guided-patch-size", type=int, default=4,
+                       help="Transformer patch size")
     
     # Input optim
     parser.add_argument("--input-optim-steps", type=int, default=1000)
-    parser.add_argument("--input-optim-lr", type=float, default=0.1)
+    parser.add_argument("--input-optim-lr", type=float, default=0.1,
+                       help="Learning rate (best from sweep: 0.1)")
     parser.add_argument("--input-optim-loss", type=str, default="poisson_mean",
-                       choices=["mse", "poisson_mean", "poisson_sum"],
-                       help="Loss function for input optimization")
+                       help="Loss function: 'mse', 'poisson_mean', 'poisson_sum' (best: poisson_mean)")
     parser.add_argument("--input-optim-blur-sigma", type=float, default=1.5,
-                       help="Gaussian blur sigma for gradient smoothing")
+                       help="Gaussian blur sigma for gradient smoothing (best: 1.5)")
     parser.add_argument("--input-optim-scheduler", type=str, default="none",
-                       choices=["none", "cosine", "step", "exponential", "plateau"],
-                       help="Learning rate scheduler for input optimization")
+                       help="LR scheduler: 'none', 'cosine', 'step', etc. (best: none)")
     
     # MLflow
     parser.add_argument("--experiment-name", type=str, default="architecture_comparison")
@@ -1004,6 +1094,17 @@ def main():
         guided_lr=args.guided_lr,
         guided_decoder_type=args.guided_decoder_type,
         guided_tv_weight=args.guided_tv_weight,
+        guided_pixel_weight=args.guided_pixel_weight,
+        guided_loss_type=args.guided_loss_type,
+        guided_optimizer=args.guided_optimizer,
+        guided_scheduler=args.guided_scheduler,
+        guided_loss_weights_mse=args.guided_loss_weights_mse,
+        guided_loss_weights_corr=args.guided_loss_weights_corr,
+        guided_batch_size=args.guided_batch_size,
+        guided_embed_dim=args.guided_embed_dim,
+        guided_num_layers=args.guided_num_layers,
+        guided_num_heads=args.guided_num_heads,
+        guided_patch_size=args.guided_patch_size,
         input_optim_steps=args.input_optim_steps,
         input_optim_lr=args.input_optim_lr,
         input_optim_loss=args.input_optim_loss,
