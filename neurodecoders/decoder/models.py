@@ -8,6 +8,7 @@ neural firing rates.
 import math
 from typing import Optional, Literal
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -487,7 +488,7 @@ class DiffusionDecoder(nn.Module):
         t: int,
         neural_cond: torch.Tensor,
     ) -> torch.Tensor:
-        """Single denoising step."""
+        """Single DDPM denoising step (stochastic)."""
         batch_size = x.size(0)
         device = x.device
         
@@ -510,10 +511,75 @@ class DiffusionDecoder(nn.Module):
             return pred_x0
     
     @torch.no_grad()
+    def ddim_step(
+        self,
+        x: torch.Tensor,
+        t: int,
+        t_prev: int,
+        neural_cond: torch.Tensor,
+        eta: float = 0.0,
+    ) -> torch.Tensor:
+        """
+        Single DDIM denoising step.
+        
+        Implements Eq. 12 from "Denoising Diffusion Implicit Models" (Song et al., 2020).
+        When eta=0, the sampling is deterministic. When eta=1, it's equivalent to DDPM.
+        
+        Args:
+            x: Current noisy image (B, C, H, W)
+            t: Current timestep
+            t_prev: Previous timestep (t_prev < t)
+            neural_cond: Neural activity conditioning (B, N)
+            eta: Stochasticity parameter (0=deterministic DDIM, 1=DDPM)
+        
+        Returns:
+            Denoised image at timestep t_prev
+        """
+        batch_size = x.size(0)
+        device = x.device
+        
+        t_tensor = torch.full((batch_size,), t, device=device, dtype=torch.float32)
+        predicted_noise = self.unet(x, t_tensor, neural_cond)
+        
+        # Get alpha values
+        alpha_cumprod_t = self.alphas_cumprod[t]
+        alpha_cumprod_t_prev = self.alphas_cumprod[t_prev] if t_prev >= 0 else torch.tensor(1.0)
+        
+        # Predicted x_0 from current x_t and predicted noise
+        # x_0 = (x_t - sqrt(1 - alpha_cumprod_t) * eps) / sqrt(alpha_cumprod_t)
+        pred_x0 = (x - torch.sqrt(1 - alpha_cumprod_t) * predicted_noise) / torch.sqrt(alpha_cumprod_t)
+        
+        # Compute sigma for this step (controls stochasticity)
+        # sigma_t = eta * sqrt((1 - alpha_cumprod_t_prev) / (1 - alpha_cumprod_t)) * sqrt(1 - alpha_cumprod_t / alpha_cumprod_t_prev)
+        if eta > 0 and t_prev >= 0:
+            sigma = eta * torch.sqrt(
+                (1 - alpha_cumprod_t_prev) / (1 - alpha_cumprod_t) * 
+                (1 - alpha_cumprod_t / alpha_cumprod_t_prev)
+            )
+        else:
+            sigma = 0.0
+        
+        # Direction pointing to x_t (deterministic part)
+        # sqrt(1 - alpha_cumprod_t_prev - sigma^2) * predicted_noise
+        dir_xt = torch.sqrt(1 - alpha_cumprod_t_prev - sigma**2) * predicted_noise
+        
+        # Compute x_{t-1}
+        # x_{t-1} = sqrt(alpha_cumprod_t_prev) * pred_x0 + dir_xt + sigma * noise
+        x_prev = torch.sqrt(alpha_cumprod_t_prev) * pred_x0 + dir_xt
+        
+        if sigma > 0:
+            noise = torch.randn_like(x)
+            x_prev = x_prev + sigma * noise
+        
+        return x_prev
+    
+    @torch.no_grad()
     def sample(
         self,
         neural_cond: torch.Tensor,
         num_inference_steps: Optional[int] = None,
+        sampler: str = "ddpm",
+        eta: float = 0.0,
     ) -> torch.Tensor:
         """
         Generate images from neural activity via iterative denoising.
@@ -521,6 +587,8 @@ class DiffusionDecoder(nn.Module):
         Args:
             neural_cond: Neural activity (B, N)
             num_inference_steps: Number of denoising steps (default: self.timesteps)
+            sampler: Sampling method - 'ddpm' (stochastic) or 'ddim' (deterministic/ODE)
+            eta: DDIM stochasticity parameter (0=deterministic, 1=DDPM-like). Only used with 'ddim'.
         
         Returns:
             Generated images (B, 1, H, W)
@@ -534,12 +602,26 @@ class DiffusionDecoder(nn.Module):
         # Start from pure noise
         x = torch.randn(batch_size, 1, self.image_size, self.image_size, device=device)
         
-        # Subsample timesteps if using fewer steps
-        step_size = self.timesteps // num_inference_steps
-        timesteps = list(range(0, self.timesteps, step_size))[::-1]
+        # Create timestep schedule
+        # Use linear spacing for better coverage with fewer steps
+        if num_inference_steps < self.timesteps:
+            # Quadratic spacing works better for fewer steps (from DDIM paper)
+            timesteps = (
+                np.linspace(0, np.sqrt(self.timesteps - 1), num_inference_steps) ** 2
+            ).astype(int).tolist()
+            timesteps = sorted(set(timesteps), reverse=True)  # Remove duplicates, descending
+        else:
+            timesteps = list(range(self.timesteps - 1, -1, -1))
         
-        for t in timesteps:
-            x = self.p_sample(x, t, neural_cond)
+        if sampler == "ddim":
+            # DDIM sampling (can use fewer steps efficiently)
+            for i, t in enumerate(timesteps):
+                t_prev = timesteps[i + 1] if i + 1 < len(timesteps) else -1
+                x = self.ddim_step(x, t, t_prev, neural_cond, eta=eta)
+        else:
+            # DDPM sampling (standard stochastic)
+            for t in timesteps:
+                x = self.p_sample(x, t, neural_cond)
         
         # Clamp to valid range matching z-scored image range
         return torch.clamp(x, -self.output_scale, self.output_scale)
@@ -672,8 +754,11 @@ class EncoderGuidedDecoder(nn.Module):
             - 'combined': MSE + correlation
         loss_weights: Dict of weights for combined loss (default: {'mse': 1.0, 'correlation': 0.1})
         tv_weight: Weight for Total Variation loss (regularizes high-frequency noise)
+        pixel_weight: Weight for auxiliary pixel-level MSE loss against target images.
+            When > 0, adds pixel_weight * MSE(generated, target) to the total loss,
+            giving the decoder a preference for the original image among neurally-equivalent solutions.
     """
-    
+
     def __init__(
         self,
         decoder: nn.Module,
@@ -681,6 +766,7 @@ class EncoderGuidedDecoder(nn.Module):
         loss_type: Literal['mse', 'poisson', 'correlation', 'combined'] = 'mse',
         loss_weights: Optional[dict] = None,
         tv_weight: float = 0.0,
+        pixel_weight: float = 0.0,
     ):
         super().__init__()
         self.decoder = decoder
@@ -688,6 +774,7 @@ class EncoderGuidedDecoder(nn.Module):
         self.loss_type = loss_type
         self.loss_weights = loss_weights or {'mse': 1.0, 'correlation': 0.1}
         self.tv_weight = tv_weight
+        self.pixel_weight = pixel_weight
         
         # Freeze encoder weights
         for param in self.encoder.parameters():
@@ -797,10 +884,12 @@ class EncoderGuidedDecoder(nn.Module):
             losses['tv_loss'] = tv_loss
             losses['loss'] = losses['loss'] + self.tv_weight * tv_loss
         
-        # Optionally compute pixel loss for monitoring (not used in training)
+        # Pixel loss: auxiliary supervision against target images
         if target_images is not None:
             pixel_loss = self.mse_loss(images, target_images)
             losses['pixel_loss'] = pixel_loss
+            if self.pixel_weight > 0:
+                losses['loss'] = losses['loss'] + self.pixel_weight * pixel_loss
         
         return losses
     
@@ -869,11 +958,12 @@ def create_encoder_guided_decoder(
     loss_type: str = 'mse',
     loss_weights: Optional[dict] = None,
     tv_weight: float = 0.0,
+    pixel_weight: float = 0.0,
     **decoder_kwargs,
 ) -> EncoderGuidedDecoder:
     """
     Factory function to create an encoder-guided decoder.
-    
+
     Args:
         encoder: Pre-trained encoder model
         in_neurons: Number of input neurons
@@ -882,6 +972,7 @@ def create_encoder_guided_decoder(
         loss_type: Loss function type ('mse', 'poisson', 'correlation', 'combined')
         loss_weights: Weights for combined loss
         tv_weight: Weight for Total Variation loss (0.0 = disabled, try 0.001-0.1)
+        pixel_weight: Weight for auxiliary pixel-level MSE loss (0.0 = disabled)
         **decoder_kwargs: Additional kwargs passed to base decoder
     
     Returns:
@@ -916,5 +1007,6 @@ def create_encoder_guided_decoder(
         loss_type=loss_type,
         loss_weights=loss_weights,
         tv_weight=tv_weight,
+        pixel_weight=pixel_weight,
     )
 
